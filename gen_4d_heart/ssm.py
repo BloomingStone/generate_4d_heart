@@ -27,9 +27,27 @@ def _get_largest_connected_component(data: np.ndarray) -> np.ndarray:
     largest_component = sizes.argmax()
     return (labeled_data == largest_component).astype(np.uint8)
 
+def identify_faces(polydata: pv.PolyData) -> pv.PolyData:
+    """
+    Identify faces in the polydata and assign labels to them.
+    Args:
+        polydata (pv.PolyData): Input polydata with point data "label".
+    Returns:
+        pv.PolyData: Polydata with face labels.
+    """
+    labels = polydata.point_data["label"]
+    faces = polydata.faces.reshape(-1, 4)[:, 1:]
+    face_labels = np.array([
+        labels[faces[i, 0]] if labels[faces[i, 0]] == labels[faces[i, 1]] == labels[faces[i, 2]] else 0
+        for i in range(faces.shape[0])
+    ])
+    res= polydata.copy()
+    res.cell_data["label"] = face_labels
+    return res
+
 def get_surface_from_label(
         label: np.ndarray,
-        affine: np.ndarray
+        affine: np.ndarray | None
 ) -> pv.PolyData:
     """
     Get the cloud from the label. Copy from Phantom/script/get_surface_cloud.py
@@ -57,10 +75,10 @@ def get_surface_from_label(
         else:
             mask = (label == label_id).astype(np.uint8)
         
-        structure = ndimage.generate_binary_structure(3, 1)
+        structure = ndimage.generate_binary_structure(3, 3)
+        mask = ndimage.binary_opening(mask, iterations=1, structure=structure)
         mask = _get_largest_connected_component(mask)
         mask = ndimage.binary_closing(mask, iterations=1, structure=structure)
-        mask = ndimage.binary_opening(mask, iterations=1, structure=structure)
 
         surface = pv.wrap(mask).contour([1], method="flying_edges").triangulate().smooth_taubin(n_iter=50).clean()
         cluster = pyacvd.Clustering(surface)
@@ -172,7 +190,9 @@ class SSM:
             b_motion: np.ndarray, the dense deformation vector fields for each label,  shape = (num_labels(L), num_phases(N_j), num_components(N_m)),
             P_motion: np.ndarray, the dense displacement fields for each label, shape = (num_labels(L), num_components(N_m), num_points(M), 3)
         """
+        temp_path = None
         if isinstance(template_surface, Path):
+            temp_path = template_surface
             template_surface = pv.read(template_surface)
         if isinstance(b_motion, Path):
             b_motion = np.load(b_motion)
@@ -183,6 +203,13 @@ class SSM:
         num_labels_, num_phases = b_motion.shape[:2]
         assert num_labels == num_labels_ == NUM_TOTAL_CAVITY_LABEL and num_phases == NUM_TOTAL_PHASE and num_dim == 3 and NUM_TOTAL_POINTS == num_points
 
+        if 'label' not in template_surface.cell_data:
+            if 'label' not in template_surface.point_data:
+                raise ValueError("The template surface should have cell data 'label'.")
+            template_surface = identify_faces(template_surface)
+            if temp_path is not None:
+                template_surface.save(temp_path)
+        
         self.template_surface = template_surface
         self.b_motion = b_motion
         self.P_motion = P_motion
@@ -191,7 +218,7 @@ class SSM:
             self, 
             label: Nifti1Image,
             device: int,
-            num_components_used: int = 1,
+            num_components_used: int = 2,
     ) -> 'SSM_Result':
         """
         Apply the SSM to the label to generate 4d cavity label.
@@ -213,6 +240,7 @@ class SSM:
         zooming_rate = float(np.mean(landmark_size / template_size))
         cavity_labels = self._generate_4d_cavity(landmark_surface, zooming_rate, num_components_used)
         return SSM_Result(label, landmark_surface, cavity_labels)
+
 
     def _generate_4d_cavity(
             self,
@@ -279,7 +307,7 @@ class SSM_Result:
         motion_label = polydata_to_label_volume(cavity_label, self.original_label.shape)
         return Nifti1Image(self.flips(motion_label), affine=self.original_label.affine)
     
-    def get_landmark_volume(self):
+    def get_landmark_volume(self) -> Nifti1Image:
         landmark_volume = polydata_to_label_volume(self.landmark_vtk, self.original_label.shape)
         return Nifti1Image(self.flips(landmark_volume), affine=self.original_label.affine)
 
@@ -288,12 +316,15 @@ class SSM_Result:
         Args:
             save_path: Path, the path to save the gif
         """
-        plotter = pv.Plotter(off_screen=True)
-        plotter.open_gif(str(save_path))
-        for polydata in self.cavity_surfaces:
-            plotter.clear()
-            plotter.add_mesh(polydata, scalars="label", opacity=0.5)
-            plotter.write_frame()
-        plotter.close()
+        try:
+            plotter = pv.Plotter(off_screen=True)
+            plotter.open_gif(str(save_path))
+            for polydata in self.cavity_surfaces:
+                plotter.clear()
+                plotter.add_mesh(polydata, scalars="label", opacity=0.5)
+                plotter.write_frame()
+            plotter.close()
+        except Exception as e:
+            print(e)
 
 

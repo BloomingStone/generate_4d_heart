@@ -2,17 +2,14 @@ from pathlib import Path
 
 from monai.networks.nets.voxelmorph import VoxelMorphUNet
 from monai.networks.blocks.warp import DVF2DDF, Warp
-from monai.transforms import (EnsureChannelFirst, AsDiscrete, ToTensor, Compose, Transform) # type: ignore
+from monai.transforms import (EnsureChannelFirst, AsDiscrete, ToTensor, Compose) # type: ignore
 import torch
 from torch import nn
-from torch.nn import functional as F
 import numpy as np
 from nibabel.nifti1 import Nifti1Image
-from skimage.morphology import skeletonize
-from scipy.ndimage import distance_transform_edt, binary_dilation
 
-from . import SSM_SHAPE, NUM_TOTAL_CAVITY_LABEL, SSM_DIRECTION
-from .roi import ROI
+
+from . import NUM_TOTAL_CAVITY_LABEL
 from .utils import get_maybe_flip_transform
 
 class ShapeMorph(nn.Module):
@@ -65,84 +62,16 @@ class ShapeMorph(nn.Module):
         
         return x
 
-def get_coronary_centerline_ddf(
-        model: ShapeMorph,
-        dvf: torch.Tensor,
-        cropped_image: torch.Tensor,
-        cropped_coronary_mask: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    使用形变场对图像进行变形，并将冠脉区域的形变替换为中心线的形变
-    Args:
-        model: ShapeMorph
-        dvf: (B, C, W, H, D) 密集速度场
-        image: (B, C, W, H, D) 图像
-        coronary_mask: (W, H, D) 冠脉掩膜
-    Returns:
-        wrapped_image: (W, H, D) 变形后的图像
-        wrapped_coronary: (W, H, D) 按中心线变形后的冠脉
-        ddf: (C, W, H, D) 最终形变场
-    """
-    to_binary = AsDiscrete(threshold=0.5)
-    dvf2ddf = model.dvf2ddf
-    image_warp = model.warp
-    warp_label = Warp(mode='nearest', padding_mode='zeros')
-    ddf = dvf2ddf(dvf)
-    assert isinstance(ddf, torch.Tensor)
-    coronary_mask_np = binary_dilation(cropped_coronary_mask, iterations=5).astype(np.uint8)
-    coronary_mask_dilation = torch.from_numpy(coronary_mask_np).to(device=ddf.device, dtype=torch.float32)  # (W, H, D)
-
-    # step1 将形变后图像中的冠脉区域用边缘值替代，得到的图像作为底图
-    warped_image = image_warp(cropped_image, ddf)
-    assert isinstance(warped_image, torch.Tensor)
-    warped_coronary = to_binary(warp_label(coronary_mask_dilation[None, None], ddf))
-    assert isinstance(warped_coronary, torch.Tensor)
-    warped_coronary_np = warped_coronary.squeeze().cpu().numpy()
-    dte = distance_transform_edt(warped_coronary_np, return_indices=True)
-    assert isinstance(dte, tuple) and len(dte) == 2
-    _, (ix, iy, iz) = dte
-    warped_image_at_coronary_margin = warped_image[:, :, ix, iy, iz]
-    warped_image[warped_coronary==1] = warped_image_at_coronary_margin[warped_coronary==1]
-
-    # step2 将密集速度场中coronary区域形变替换为最近的中心线的速度，得到新的密集速度场，并使用dvf2ddf得到新的密集形变场
-    centerline = skeletonize(cropped_coronary_mask)
-    dte = distance_transform_edt(~centerline, return_indices=True)
-    assert isinstance(dte, tuple) and len(dte) == 2
-    _, (ix, iy, iz) = dte
-    dvf_at_nearest_centerline = dvf[:, :, ix, iy, iz]
-    dvf[:, :, coronary_mask_dilation==1] = dvf_at_nearest_centerline[:, :, coronary_mask_dilation==1]
-    # dvf[:, :, coronary_mask_dilation==0] = 0
-    ddf = dvf2ddf(dvf)
-    assert isinstance(ddf, torch.Tensor)
-
-    # step3 将形变场应用到图像和冠脉label上
-    warped_image_new = image_warp(cropped_image, ddf)
-    warped_coronary = to_binary(warp_label(torch.from_numpy(cropped_coronary_mask.copy()).to(device=ddf.device, dtype=torch.float32)[None, None], ddf))
-    warped_coronary_dilation = to_binary(warp_label(coronary_mask_dilation[None, None], ddf))
-
-    # step4 将最后形变得到的图像的冠脉区域提取出来，并替换到step1得到的底图上
-    warped_image[warped_coronary_dilation==1] = warped_image_new[warped_coronary_dilation==1]
-    assert isinstance(warped_coronary, torch.Tensor)
-    return (
-        warped_image.squeeze().cpu().numpy(),
-        warped_coronary.squeeze().cpu().numpy().astype(np.uint8),
-        ddf.squeeze().cpu().numpy()
-    )
-
 class ShapeMorphPredictor:
     def __init__(
             self, 
             checkpoint_path: Path, 
             device_id: int = 0,
-            return_wrapped_image: bool = False,
-            return_wrapped_coronary: bool = False
         ):
         self.device = torch.device(device_id)
         self.model = ShapeMorph(label_class_num=NUM_TOTAL_CAVITY_LABEL, norm='SyncBatch').to(self.device)
         self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
         self.model.eval()
-        self.return_wrapped_image = return_wrapped_image
-        self.return_wrapped_coronary = return_wrapped_coronary
 
         # persistent data
         self.source_cavity_zoomed = None
@@ -155,15 +84,9 @@ class ShapeMorphPredictor:
 
     def set_shared_inputs(
             self, 
-            source_cavity_zoomed: Nifti1Image,
-            coronary: Nifti1Image,
-            original_image: Nifti1Image,
-            roi: ROI
+            source_cavity_zoomed: Nifti1Image
         ):
         self.source_cavity_zoomed = source_cavity_zoomed
-        self.coronary = coronary
-        self.original_image = original_image
-        self.roi = roi
 
         assert source_cavity_zoomed.affine is not None
         self.flips = get_maybe_flip_transform(source_cavity_zoomed.affine)
@@ -186,12 +109,17 @@ class ShapeMorphPredictor:
     def predict(
             self, 
             target_cavity_zoomed: Nifti1Image
-    ) -> dict[str, Nifti1Image]:
+    ) -> Nifti1Image:
+        """predict the dvf from source cavity to target cavity
+
+        Args:
+            target_cavity_zoomed (Nifti1Image): target cavity zoomed image (shape = 144x144x128)
+
+        Returns:
+            Nifti1Image: dvf from source cavity to target cavity (shape = 144x144x128x1x3)
+        """
         assert (
-            self.roi is not None and
             self.flips is not None and
-            self.original_image is not None and
-            self.coronary is not None and
             self.source_cavity_zoomed is not None
         )
 
@@ -199,30 +127,10 @@ class ShapeMorphPredictor:
 
         with torch.no_grad():
             dvf: torch.Tensor = self.model(self.source_cavity_tensor, target_cavity_tensor, return_dvf=True)
-            zoom_rate = 1 / self.roi.get_zoom_rate().reshape(1, 3, 1, 1, 1)
-            dvf = F.interpolate(dvf, scale_factor=zoom_rate.flatten().tolist(), mode="trilinear", align_corners=False)
-            dvf = dvf * torch.from_numpy(zoom_rate).to(self.device, dtype=torch.float32)
 
-        # warp image and coronary
-        transform_image = Compose([ToTensor(), self.flips, EnsureChannelFirst(channel_dim='no_channel')])
-        cropped_image_tensor = self._get_tensor(self.roi.crop(self.original_image), transform_image)
-        cropped_coronary_np = self.flips(self.roi.crop(self.coronary).get_fdata().astype(np.int8))
+        dvf = self.flips(dvf)
+        dvf_np = dvf.squeeze().detach().cpu().numpy()
+        dvf_np = np.transpose(dvf_np, (1, 2, 3, 0))[:, :, :, None, :]  # shape = (W, H, D, 1, 3)
+        dvf_nii = Nifti1Image(dvf_np, self.source_cavity_zoomed.affine)
 
-        with torch.no_grad():
-            warped_image, warped_coronary, ddf = get_coronary_centerline_ddf(self.model, dvf, cropped_image_tensor, cropped_coronary_np)
-
-        ddf = self.flips(ddf)
-        ddf = np.transpose(ddf, (1, 2, 3, 0))[:, :, :, None, :]  # shape = (W, H, D, 1, 3)
-        ddf_nii = Nifti1Image(ddf, self.source_cavity_zoomed.affine)
-
-        res = {'ddf': ddf_nii}
-
-        if self.return_wrapped_image:
-            wrapped_image = self.roi.recover_cropped(self.flips(warped_image), background=self.original_image)
-            res['image'] = wrapped_image
-
-        if self.return_wrapped_coronary:
-            wrapped_coronary = self.roi.recover_cropped(self.flips(warped_coronary))
-            res['coronary'] = wrapped_coronary
-
-        return res
+        return dvf_nii

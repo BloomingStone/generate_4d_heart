@@ -7,7 +7,9 @@ from . import SSM_DIRECTION
 
 T = TypeVar('T', np.ndarray, torch.Tensor)
 
-def get_maybe_flip_transform(affine: np.ndarray) -> Callable[[T], T]:
+def get_maybe_flip_transform(affine: np.ndarray | None) -> Callable[[T], T]:
+    if affine is None:
+        return lambda x: x
     direction = np.diag(affine[:3, :3])
     axis = []
     for i in [-1, -2, -3]:

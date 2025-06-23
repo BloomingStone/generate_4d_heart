@@ -1,19 +1,51 @@
 from scipy import ndimage
 import numpy as np
 from nibabel.nifti1 import Nifti1Image
+from pathlib import Path
 
 from . import SSM_SHAPE
 
+def load_array(
+    array: tuple | list | np.ndarray | None, 
+    default_array: np.ndarray, 
+    target_shape: tuple[int, ...]
+) -> np.ndarray:
+    if array is None:
+        res = default_array
+    elif isinstance(array, np.ndarray):
+        res = array
+    elif isinstance(array, list) or isinstance(array, tuple):
+        res = np.array(array)
+    else:
+        raise ValueError("The array must be a tuple, list or numpy.ndarray")
+    
+    if res.shape != target_shape:
+        raise ValueError("The array must be a 144x144x128 numpy.ndarray")
+    
+    return res
 
+# TODO 考虑增加对ScalarImage的支持
 class ROI:
     """
     The cropped area and scaling ratio were calculated through the cardiac cavity label, with the aim of obtaining a cardiac cavity CTA of 144x144x128 for the subsequent 4D ddf generation
     """
     def __init__(
-            self, 
+            self,
+            cropped_box: tuple | list | np.ndarray | None = None,
+            zoom_rate: tuple | list | np.ndarray | None = None,
+            original_affine: tuple | list | np.ndarray | None = None,
+            original_shape: tuple[int, int, int] | None = None
+        ):
+        self.crop_box = load_array(cropped_box, np.array(((0, 144), (0, 144), (0, 128))), (3, 2))
+        self.zoom_rate = load_array(zoom_rate, np.array([1., 1., 1.]), (3,))
+        self.original_affine = load_array(original_affine, np.eye(4), (4, 4))
+        self.original_shape = original_shape if original_shape is not None else SSM_SHAPE
+    
+    @staticmethod
+    def get_from_cavity( 
             cavity: Nifti1Image, 
             padding: int = 10
-    ):
+    ) -> "ROI":
         """
         Args:
             cavity: Path to the cavity label
@@ -39,27 +71,50 @@ class ROI:
         y1 = y0 + size_xy
 
         cropped_shape_xy = min(mask.shape[0], mask.shape[1], size_xy+padding*2)
+        real_padding_xy = (cropped_shape_xy - size_xy) // 2
         cropped_shape_z = min(mask.shape[2], size_z+padding*2)
+        real_padding_z = (cropped_shape_z - size_z) // 2
         cropped_shape = (cropped_shape_xy, cropped_shape_xy, cropped_shape_z)
-        x0 = max(0, x0 - padding)
-        x1 = x0 + cropped_shape_xy
-        y0 = max(0, y0 - padding)
-        y1 = y0 + cropped_shape_xy
-        z0 = max(0, z0 - padding)
-        z1 = z0 + cropped_shape_z
-
-        self.crop_box = (
-            (x0, x1),
-            (y0, y1),
-            (z0, z1)
-        )
-        self.zoom_rate = np.array([
+        
+        dx1 = mask.shape[0] - x1
+        if dx1 > x0:
+            x0 = max(0, x0 - real_padding_xy)
+            x1 = x0 + cropped_shape_xy
+        else:
+            x1 = min(mask.shape[0], x1 + real_padding_xy)
+            x0 = max(0, x1 - cropped_shape_xy)
+            
+        dy1 = mask.shape[1] - y1
+        if dy1 > y0:
+            y0 = max(0, y0 - real_padding_xy)
+            y1 = y0 + cropped_shape_xy
+        else:
+            y1 = min(mask.shape[1], y1 + real_padding_xy)
+            y0 = max(0, y1 - cropped_shape_xy)
+        
+        dz1 = mask.shape[2] - z1
+        if dz1 > z0:
+            z0 = max(0, z0 - real_padding_z)
+            z1 = z0 + cropped_shape_z
+        else:
+            z1 = min(mask.shape[2], z1 + real_padding_z)
+            z0 = max(0, z1 - cropped_shape_z)
+        
+        assert x0 >= 0 and x1 <= mask.shape[0] and y0 >= 0 and y1 <= mask.shape[1] and z0 >= 0 and z1 <= mask.shape[2]
+        
+        roi = ROI()
+        roi.crop_box = np.array([
+            [x0, x1],
+            [y0, y1],
+            [z0, z1]
+        ])
+        roi.zoom_rate = np.array([
             SSM_SHAPE[i] / cropped_shape[i]
             for i in range(3)
         ])
-        self.original_affine = cavity.affine
-        assert self.original_affine is not None
-        self.original_shape = cavity.shape
+        roi.original_affine = cavity.affine if cavity.affine is not None else np.eye(4)
+        roi.original_shape = cavity.shape
+        return roi
 
     def crop(self, image: Nifti1Image) -> Nifti1Image:
         """
@@ -136,7 +191,6 @@ class ROI:
             assert (
                 background.shape == self.original_shape and
                 background.affine is not None and
-                self.original_affine is not None and 
                 np.allclose(background.affine, self.original_affine, rtol=1e-5, atol=1e-8)
             )
             output_data = background.get_fdata().copy()
@@ -171,7 +225,6 @@ class ROI:
             assert (
                 background.shape == self.original_shape and
                 background.affine is not None and
-                self.original_affine is not None and 
                 np.allclose(background.affine, self.original_affine, rtol=1e-5, atol=1e-8)
             )
             output_data = background.get_fdata().copy()
@@ -189,6 +242,40 @@ class ROI:
             dict: the dict format of the ROI
         """
         return {
-            "crop_box": self.crop_box,
-            "zoom_rate": self.zoom_rate.tolist()
+            "crop_box": self.crop_box.tolist(),
+            "zoom_rate": self.zoom_rate.tolist(),
+            "original_shape": self.original_shape,
+            "original_affine": self.original_affine.tolist()
         }
+    
+    @staticmethod
+    def from_dict(roi_dict: dict) -> "ROI":
+        """
+        Args:
+            roi_dict: the dict format of the ROI
+        Returns:
+            ROI: the ROI object
+        """
+        return ROI(
+            roi_dict["crop_box"],
+            roi_dict["zoom_rate"],
+            roi_dict["original_affine"],
+            roi_dict["original_shape"]
+        )
+    
+    @staticmethod
+    def from_json(json_path: Path) -> "ROI":
+        """
+        Args:
+            json_path: the path to the json file
+        Returns:
+            ROI: the ROI object
+        """
+        import json
+        with open(json_path, "r") as f:
+            roi_dict = json.load(f)
+        return ROI.from_dict(roi_dict)
+
+
+if __name__ == "__main__":
+    ROI()
