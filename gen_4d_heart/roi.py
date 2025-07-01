@@ -173,32 +173,61 @@ class ROI:
         Recover the cropped and zoomed image to the original size based on the crop box and zoom rate.
         Args:
             cropped_and_zoomed_image: the cropped and zoomed image
+            is_label: whether the image is a label. For label, the output will be binarized
             background: the background image which has the same shape as original image, if not provided, the background will be zeros
         Returns:
-            np.ndarray: the recovered image
+            Nifti1Image: the recovered image
         """
         if isinstance(cropped_and_zoomed_image, Nifti1Image):
             image_data = cropped_and_zoomed_image.get_fdata().copy()
         else:
             image_data = cropped_and_zoomed_image.copy()
 
-        if is_label:
-            image_data = ndimage.zoom(image_data, 1/self.zoom_rate, order=0).astype(np.uint8)
+        # Handle 4D case (3D + vector components)
+        if image_data.ndim == 4:
+            # Zoom each component separately
+            zoomed_components = []
+            for i in range(image_data.shape[-1]):
+                component = image_data[..., i]
+                if is_label:
+                    zoomed = ndimage.zoom(component, 1/self.zoom_rate, order=0).astype(np.uint8)
+                else:
+                    zoomed = ndimage.zoom(component, 1/self.zoom_rate, order=3)
+                zoomed_components.append(zoomed)
+            image_data = np.stack(zoomed_components, axis=-1)
         else:
-            image_data = ndimage.zoom(image_data, 1/self.zoom_rate, order=3)
+            # Standard 3D case
+            if is_label:
+                image_data = ndimage.zoom(image_data, 1/self.zoom_rate, order=0).astype(np.uint8)
+            else:
+                image_data = ndimage.zoom(image_data, 1/self.zoom_rate, order=3)
         
+        # Handle output shape for vector fields (4D) vs scalar fields (3D)
+        if image_data.ndim == 4:  # Vector field case
+            output_shape = (*self.original_shape, image_data.shape[-1])
+        else:  # Scalar field case
+            output_shape = self.original_shape
+
         if background is not None:
             assert (
-                background.shape == self.original_shape and
+                background.shape == output_shape[:3] and  # Only check spatial dims
                 background.affine is not None and
                 np.allclose(background.affine, self.original_affine, rtol=1e-5, atol=1e-8)
             )
             output_data = background.get_fdata().copy()
+            if output_data.ndim == 3 and image_data.ndim == 4:
+                # Expand background to match vector field dims
+                output_data = np.stack([output_data]*image_data.shape[-1], axis=-1)
         else:
-            output_data = np.zeros(self.original_shape, dtype=image_data.dtype)
+            output_data = np.zeros(output_shape, dtype=image_data.dtype)
         
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
-        output_data[x0:x1, y0:y1, z0:z1] = image_data
+        
+        if image_data.ndim == 4:  # Vector field
+            for i in range(image_data.shape[-1]):
+                output_data[x0:x1, y0:y1, z0:z1, i] = image_data[..., i]
+        else:  # Scalar field
+            output_data[x0:x1, y0:y1, z0:z1] = image_data
 
         return Nifti1Image(output_data, self.original_affine)
     

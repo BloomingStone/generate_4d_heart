@@ -237,7 +237,7 @@ class SSM:
         landmark_bounding_box = landmark_surface.bounds
         template_size = np.array([template_bounding_box[2*i+1] - template_bounding_box[2*i] for i in range(3)])
         landmark_size = np.array([landmark_bounding_box[2*i+1] - landmark_bounding_box[2*i] for i in range(3)])
-        zooming_rate = float(np.mean(landmark_size / template_size))
+        zooming_rate = float(np.mean(landmark_size / template_size)) * 1.5
         cavity_labels = self._generate_4d_cavity(landmark_surface, zooming_rate, num_components_used)
         return SSM_Result(label, landmark_surface, cavity_labels)
 
