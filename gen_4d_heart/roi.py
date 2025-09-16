@@ -1,7 +1,10 @@
 from scipy import ndimage
 import numpy as np
+import cupy as cp
+import torch
 from nibabel.nifti1 import Nifti1Image
 from pathlib import Path
+from typing import TypeVar
 
 from . import SSM_SHAPE
 
@@ -130,9 +133,22 @@ class ROI:
         assert affine is not None
         affine = affine.copy()
         T = np.eye(4)
-        T[:3, 3] = - np.array([x0, y0, z0])
-        affine = affine @ np.linalg.inv(T)
+        T[:3, 3] = np.array([x0, y0, z0])
+        affine = affine @ T
         return Nifti1Image(image_data, affine)
+    
+    ImageData = TypeVar("image_data", np.ndarray, torch.Tensor, cp.ndarray)
+    
+    def crop_on_data(self, image: ImageData) -> ImageData:
+        """ 
+        Args:
+            image_np: the 3d image data that needs to be cropped
+        Returns:
+            np.ndarray: the cropped image data
+        """
+        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
+        image_data = image[x0:x1, y0:y1, z0:z1]
+        return image_data
 
     def crop_zoom(self, image: Nifti1Image, is_label: bool) -> Nifti1Image:
         """ 
@@ -151,8 +167,27 @@ class ROI:
         
         assert cropped_image.affine is not None
         new_affine = cropped_image.affine.copy()
-        new_affine[:3, :3] = new_affine[:3, :3] @ np.diag(1/self.zoom_rate)
+        R = np.eye(4)
+        R[:3, :3] = np.diag(1/self.zoom_rate)
+        new_affine = new_affine @ R
         return Nifti1Image(image_data, new_affine)
+    
+    def crop_zoom_on_data(self, image: ImageData, is_label: bool) -> ImageData:
+        """ 
+        Args:
+            image: the 3d image data that needs to be cropped and zoomed
+            is_label: whether the image is a label. For label, the output will be binarized
+        Returns:
+            np.ndarray: the cropped and then zoomed image data
+        """
+        cropped_image = self.crop_on_data(image)
+        image_data = cropped_image.get_fdata()
+        if is_label:
+            image_data = ndimage.zoom(image_data, self.zoom_rate, order=0).astype(np.uint8)
+        else:
+            image_data = ndimage.zoom(image_data, self.zoom_rate, order=3)
+        
+        return image_data
 
     def get_crop_box(self) -> np.ndarray:
         """

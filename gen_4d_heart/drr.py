@@ -9,21 +9,24 @@ import torch
 from diffdrr.drr import DRR
 from matplotlib import pyplot as plt
 from torchio import LabelMap, ScalarImage, Subject
-from diffdrr.visualization import plot_drr
 from diffdrr.data import canonicalize
 import nibabel as nib
-from scipy.ndimage import label, center_of_mass
 import numpy as np
 from monai.networks.blocks.warp import DVF2DDF, Warp
+from monai.transforms import dilate
 import tifffile
+import cv2
+import cupy as cp
+from cupyx.scipy.ndimage import label, center_of_mass, distance_transform_edt
+from torch.utils.dlpack import from_dlpack, to_dlpack
 
-from nibabel.nifti1 import Nifti1Image
-
-from . import NUM_TOTAL_PHASE
+from . import NUM_TOTAL_PHASE, LV_LABEL
 from .roi import ROI
+import numpy as np
+import imageio.v2 as imageio
 
 
-def get_delta_degree_at_frame(frame: int, omega: float | int = 75, fps: int = 60) -> float:
+def get_delta_degree_at_frame(frame: int, omega: float | int = 75, fps: int | float = 60) -> float:
     """
     Args:
         frame (int): the frame number, starting from 0
@@ -35,7 +38,7 @@ def get_delta_degree_at_frame(frame: int, omega: float | int = 75, fps: int = 60
     """
     return frame * omega / fps
 
-def get_delta_phase_at_frame(frame: int, fps: int = 60) -> float:
+def get_delta_phase_at_frame(frame: int, fps: int | float = 60) -> float:
     """
     Args:
         frame (int): the frame number, starting from 0
@@ -111,6 +114,7 @@ def get_drr(
     label: torch.Tensor,
     affine: np.ndarray | None,
     rotations_degree: tuple[float, float, float],
+    mean_hu_at_coronary: float,
     device: torch.device
 ) -> torch.Tensor:
     # Ensure tensors are on CPU for ScalarImage/LabelMap creation
@@ -123,15 +127,14 @@ def get_drr(
         affine=affine,
     )
     
-    lung_alpha = 1.0  # -600 <= Hu < 0
-    heart_alpha = 0.3  # 0 <= Hu < 500
+    lung_alpha = 0.7  # -600 <= Hu < 0
+    heart_alpha = 0.5  # 0 <= Hu < 500
     bone_alpha = 1.5    # HU >= 600
-    coronary_alpha = 10.0
+    coronary_alpha = 13.0
 
     volume_data = volume.data.to(torch.float32)
     air = torch.where(volume_data <= -600)
     lung = torch.where((-600 < volume_data) & (volume_data <= 0))
-    # lung = torch.where((volume_data <= 0))
     heart = torch.where((0 < volume_data) & (volume_data <= 600))
     bone = torch.where(volume_data > 600)
     coronary_segmentation_data = coronary_segmentation.data
@@ -142,7 +145,7 @@ def get_drr(
     density[lung] = volume_data[lung] * lung_alpha
     density[heart] = volume_data[heart] * heart_alpha
     density[bone] = volume_data[bone] * bone_alpha
-    density[coronary] = volume_data[coronary].mean() * coronary_alpha
+    density[coronary] = mean_hu_at_coronary * coronary_alpha
     
     subject = Subject(
         volume = volume,
@@ -168,103 +171,114 @@ def get_drr(
     img = drr(rotations, translations, parameterization="euler_angles", convention="ZXY")
     return img
 
-def separate_coronary(coronary: np.ndarray) -> np.ndarray:
-    """
-    separate coronary to LCA(1) and RCA(2)
-    Args:
-        coronary (LabelMap): coronary segmentation
-    Returns:
-        coronary (LabelMap): LCA and RCA
-    """
-    # Find all connected components
-    labeled_array, num_features = label(coronary)  # type: ignore
+def save_frames(output_tif_path: Path, frames_np: np.ndarray, fps) -> None:
+    output_tif_path.parent.mkdir(parents=True, exist_ok=True)
+    tifffile.imwrite(output_tif_path, frames_np, imagej=True)
+    _, w, h = frames_np.shape
     
-    # If only one component, return original (no separation needed)
-    if num_features <= 1:
-        return coronary
-    
-    # Calculate sizes of each component
-    component_sizes = np.bincount(labeled_array.ravel())[1:]  # Skip background (0)
-    
-    # Find two largest components
-    largest_indices = np.argsort(component_sizes)[-2:][::-1] + 1  # +1 to account for skipped 0
-    
-    region_0 = (labeled_array == largest_indices[0]).astype(np.uint8)
-    region_1 = (labeled_array == largest_indices[1]).astype(np.uint8)
-    
-    center_0 = center_of_mass(region_0)
-    center_1 = center_of_mass(region_1)
-    
-    if center_0[1] > center_1[1]:
-        return region_0 * 1 + region_1 * 2
-    else:
-        return region_1 * 1 + region_0 * 2
+    # Save as mp4
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(str(output_tif_path.with_suffix(".mp4")), fourcc, fps, (w, h), isColor=False)
+    for frame in frames_np:
+        video_writer.write(frame)
+    video_writer.release()
     
 
+@torch.no_grad()
 def generate_rotate_dsa(
     dvf_dir: Path,
     roi_json: Path,
     image_path: Path,
     coronary_path: Path,
+    cavity_path: Path,
     output_dsa_path: Path,
     total_frame: int,
-    alpha_start: float = 0.0,
+    alpha_start: float = 30.0,
     beta_start: float = 0.,
+    fps: float = 60.0,
     # todo add omega, fps
 ):
-    roi = ROI.from_json(roi_json)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    dvf2ddf = DVF2DDF(num_steps=7, mode="bilinear", padding_mode="zeros").to(device)
+    warp_image = Warp(mode="bilinear", padding_mode="zeros").to(device)
+    warp_coronary = Warp(mode="nearest", padding_mode="zeros").to(device)
+    roi = ROI.from_json(roi_json)
+    
+    def load_tensor(_path: Path) -> torch.Tensor:
+        img = roi.crop(nib.loadsave.load(_path))  # type: ignore
+        tensor = torch.from_numpy(img.get_fdata()).to(device).float()
+        return tensor, img.affine
+
+    image, image_affine = load_tensor(image_path)
+    coronary, _ = load_tensor(coronary_path)
+    cavity, _ = load_tensor(cavity_path)
+    mean_Hu_at_coronary = image[coronary==1].mean().item()
+    
+    dilate_coronary = dilate(coronary[None, None], filter_size=9).squeeze()
+    # use dvf at the LV part to enhance the movement of coronary
+    lv_cp = cp.from_dlpack(to_dlpack(cavity==LV_LABEL)).astype(cp.bool_)  # (W,H,D), bool
+    coronary_cp = cp.from_dlpack(to_dlpack(dilate_coronary)).astype(cp.bool_)  # (W,H,D), bool
+    dist, (ix, iy, iz) = distance_transform_edt(~lv_cp, return_distances=True, return_indices=True)  # for now ix.shape = (W,H,D)
+    jx, jy, jz = cp.where(coronary_cp)      # (jx, jy, jz) is the coordinate of coronay, jx.shape = (N,), N is the number of voxel of coronary
+    ix = ix[jx, jy, jz]                     # (ix, iy, iz) is the coordinate of the nearest coordinate of LV for each voxel of coronary, for now ix.shape = (N,)
+    iy = iy[jx, jy, jz]
+    iz = iz[jx, jy, jz]
+    dist = cp.exp2(- dist[jx, jy, jz] / 70)
 
     dvf_list: list[torch.Tensor] = []
-    # zoom_rate = 1 / roi.get_zoom_rate().reshape(1, 3, 1, 1, 1)
+    zoom_rate = (1 / roi.get_zoom_rate()).flatten().tolist()
     for phase in tqdm(range(NUM_TOTAL_PHASE), desc='loading DVFs'):
         dvf_path = dvf_dir / f'phase_{phase:02d}.nii.gz'
         if not dvf_path.exists():
             raise FileNotFoundError(f"DVF file not found: {dvf_path}")
         dvf = nib.loadsave.load(dvf_path)
         dvf_data = dvf.get_fdata()  # type: ignore
-        dvf_tensor = torch.from_numpy(dvf_data)
+        dvf_tensor = torch.from_numpy(dvf_data).to(device).half()
         dvf_tensor = dvf_tensor.squeeze().permute(3, 0, 1, 2)[None] # (1,3,H,W,D)
-        # dvf_tensor = F.interpolate(dvf_tensor, scale_factor=zoom_rate.flatten().tolist(), mode='trilinear', align_corners=False)
-        # dvf_tensor = dvf_tensor * torch.from_numpy(zoom_rate)
+        dvf_tensor = F.interpolate(dvf_tensor, scale_factor=zoom_rate, mode='trilinear', align_corners=False)
+        for i in range(3):
+            dvf_tensor[:, i] = dvf_tensor[:, i] * zoom_rate[i]
+        dvf_cp = cp.from_dlpack(to_dlpack(dvf_tensor))
+        dvf_cp[:, :, jx, jy, jz] = dvf_cp[:, :, ix, iy, iz] * dist + dvf_cp[:, :, jx, jy, jz] * (1 - dist)
+        dvf_tensor = from_dlpack(dvf_cp.toDlpack())
         dvf_list.append(dvf_tensor)
-        
+
+    del cavity, lv_cp, coronary_cp, dvf_cp
+    cp.get_default_memory_pool().free_all_blocks()
+    torch.cuda.empty_cache()
+
     if len(dvf_list) != NUM_TOTAL_PHASE:
         raise ValueError(f"Expected {NUM_TOTAL_PHASE} DVF files, found {len(dvf_list)}")
 
-    image = nib.loadsave.load(image_path)  
-    image = roi.crop_zoom(image, is_label=False)   # type: ignore
-    image_tensor = torch.from_numpy(image.get_fdata()).to(device).float()[None, None]
-    coronary = nib.loadsave.load(coronary_path)
-    coronary = roi.crop_zoom(coronary, is_label=True)  # type: ignore
-    # coronary_data = separate_coronary(coronary.get_fdata())       # TODO 当前分辨率太细小,会断裂
-    coronary_tensor = torch.from_numpy(coronary.get_fdata()).float().to(device)[None, None]
-
-    
-    dvf2ddf = DVF2DDF(num_steps=7, mode="bilinear", padding_mode="zeros").to(device)
-    warp_image = Warp(mode="bilinear", padding_mode="zeros").to(device)
-    warp_coronary = Warp(mode="nearest", padding_mode="zeros").to(device)
-
     drr_projections = []
+    image_slicer_list = []
+    image = image[None, None].half()
+    coronary = coronary[None, None].half()
     for frame in tqdm(range(total_frame), desc='generating DRR projections'):
-        d_alpha = get_delta_degree_at_frame(frame)
-        d_phase = get_delta_phase_at_frame(frame)
-        
-        with torch.no_grad():
-            ddf = dvf2ddf(get_dvf_at_phase(dvf_list, d_phase).to(device)).float()  # Shape (1,3,H,W,D)# (H,W,D,3) -> (3,H,W,D)
-            warped_image = warp_image(image_tensor, ddf)
-            warped_coronary = warp_coronary(coronary_tensor, ddf)
-        
-            # Generate DRR projection
-            drr_res = get_drr(warped_image, warped_coronary, image.affine, (alpha_start + d_alpha, beta_start, 0), device)
-            torch.cuda.empty_cache()
-            drr_projections.append(drr_res.squeeze().cpu().numpy())
+        d_alpha = get_delta_degree_at_frame(frame, fps=fps)
+        d_phase = get_delta_phase_at_frame(frame, fps=fps)
+
+        ddf = dvf2ddf(get_dvf_at_phase(dvf_list, d_phase))  # Shape (1,3,H,W,D)# (H,W,D,3) -> (3,H,W,D)
+        warped_image = warp_image(image, ddf)
+        warped_coronary = warp_coronary(coronary, ddf)
+        image_slicer_list.append(warped_image.squeeze().cpu().numpy()[:, :, warped_image.shape[-1]//2])
     
-    # Ensure output directory exists and save as multi-frame TIFF
-    output_dsa_path.parent.mkdir(parents=True, exist_ok=True)
+        # Generate DRR projection
+        drr_res = get_drr(warped_image, warped_coronary, image_affine, (alpha_start - d_alpha, beta_start, 0), mean_Hu_at_coronary, device)
+        drr_res_np = drr_res.squeeze().detach().cpu().numpy().transpose(1, 0)
+        drr_res_np = np.flip(drr_res_np, axis=0)
+        torch.cuda.empty_cache()
+        drr_projections.append(drr_res_np)
+    
     drr_np = np.stack(drr_projections)
     drr_np = ((drr_np - drr_np.min()) / (drr_np.max() - drr_np.min()))*255
-    tifffile.imwrite(output_dsa_path, 255 - drr_np.astype(np.uint8), imagej=True)
+    drr_np = (255 - drr_np).astype(np.uint8)
+    save_frames(output_dsa_path, drr_np, fps)
+    slicers_np = np.stack(image_slicer_list).astype(np.float32)
+    window_low, window_high = -300, 600
+    slicers_np = np.clip(slicers_np, window_low, window_high)
+    slicers_np = (slicers_np - window_low) / (window_high - window_low) * 255
+    save_frames(output_dsa_path.parent / f'{output_dsa_path.stem}_slicers.tif', slicers_np.astype(np.uint8), fps)
 
 
 if __name__ == '__main__':
@@ -280,10 +294,13 @@ if __name__ == '__main__':
                           help='Path to base CTA image')
         parser.add_argument('--coronary_path', type=Path, required=True,
                           help='Path to coronary segmentation')
+        parser.add_argument('--cavity_path', type=Path, required=True,
+                          help='Path to cavity segmentation')
         parser.add_argument('--output_path', type=Path, required=True,
                           help='Output TIFF file path')
         parser.add_argument('--total_frames', type=int, default=120,
                           help='Total frames to generate (default: 120)')
+        parser.add_argument('--fps', type=float, default=60.0)
         
         args = parser.parse_args()
         
@@ -293,8 +310,10 @@ if __name__ == '__main__':
             roi_json=args.roi_json,
             image_path=args.image_path,
             coronary_path=args.coronary_path,
+            cavity_path=args.cavity_path,
             output_dsa_path=args.output_path,
-            total_frame=args.total_frames
+            total_frame=args.total_frames,
+            fps=args.fps
         )
         print("Done!")
     

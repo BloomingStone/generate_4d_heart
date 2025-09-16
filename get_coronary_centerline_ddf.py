@@ -1,13 +1,13 @@
-from monai.networks.blocks.warp import Warp
+from monai.networks.blocks.warp import Warp, DVF2DDF
 from monai.transforms import AsDiscrete # type: ignore
 import torch
 from torch import nn
 import numpy as np
 from skimage.morphology import skeletonize
 from scipy.ndimage import distance_transform_edt, binary_dilation
+from scipy.ndimage import label, center_of_mass
 
 def get_coronary_centerline_ddf(
-        model: ShapeMorph,      # type: ignore
         dvf: torch.Tensor,
         cropped_image: torch.Tensor,
         cropped_coronary_mask: np.ndarray,
@@ -25,7 +25,7 @@ def get_coronary_centerline_ddf(
         ddf: (C, W, H, D) 最终形变场
     """
     to_binary = AsDiscrete(threshold=0.5)
-    dvf2ddf = model.dvf2ddf
+    dvf2ddf =  DVF2DDF(num_steps=7, mode="bilinear", padding_mode="zeros")
     image_warp = Warp(mode='bilinear', padding_mode='zeros')
     warp_label = Warp(mode='nearest', padding_mode='zeros')
     ddf = dvf2ddf(dvf)

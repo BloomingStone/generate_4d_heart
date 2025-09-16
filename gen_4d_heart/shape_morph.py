@@ -128,7 +128,7 @@ class ShapeMorphPredictor:
         with torch.no_grad():
             dvf: torch.Tensor = self.model(self.source_cavity_tensor, target_cavity_tensor, return_dvf=True)
 
-        dvf = self.flips(dvf)
+        dvf = self.flips(dvf, is_vector_field=True)   # 当对位移场进行翻转时需要注意，可能需要将内部的值一并进行翻转
         dvf_np = dvf.squeeze().detach().cpu().numpy()
         dvf_np = np.transpose(dvf_np, (1, 2, 3, 0))[:, :, :, None, :]  # shape = (W, H, D, 1, 3)
         dvf_nii = Nifti1Image(dvf_np, self.source_cavity_zoomed.affine)

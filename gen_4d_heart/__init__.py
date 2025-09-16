@@ -13,3 +13,6 @@ NUM_TOTAL_CAVITY_LABEL = 5
 
 # The number of total points in SSM
 NUM_TOTAL_POINTS = 500
+
+# The label of LV
+LV_LABEL = 2

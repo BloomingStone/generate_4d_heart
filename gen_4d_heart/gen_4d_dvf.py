@@ -44,17 +44,21 @@ The generated images will be stored as
     parser.add_argument("-o", "--output", help="output directory of generated images")
     parser.add_argument("-d", "--device", help="cuda id to use for ShapeMorph", default=0)
     parser.add_argument("--gen_cavity", help="generate cavity label", action='store_true')
+    parser.add_argument("--gen_gif", help="generate cavity gif", action='store_true')
+    parser.add_argument("--ckpt", help="checkpoint path for ShapeMorph")
 
     args = parser.parse_args()
     input_dir = Path(args.input)
     output_dir = Path(args.output)
     (landmark_dir := output_dir / 'landmark').mkdir(exist_ok=True, parents=True)
-    (cavity_gif_dir := output_dir / 'cavity_gif').mkdir(exist_ok=True, parents=True)
     (roi_info_dir := output_dir / 'roi_info').mkdir(exist_ok=True, parents=True)
     dvf_dir = output_dir / 'dvf'
 
     device = args.device
-    checkpoint = Path(__file__).parent / 'checkpoints' / 'ShapeMorph.pth'
+    if args.ckpt is None:
+        checkpoint = Path(__file__).parent / 'checkpoints' / 'ShapeMorph.pth'
+    else:
+        checkpoint = Path(args.ckpt)
     ssm_dir = Path(__file__).parent / 'ssm'
     ssm = SSM(
         template_surface=ssm_dir / 'ssm_template.vtk',
@@ -69,6 +73,7 @@ The generated images will be stored as
     output_dir.mkdir(exist_ok=True, parents=True)
     for cavity_path in tqdm(list(sorted((input_dir).glob('*.nii.gz'))), desc='Processing images'):
         case_name = cavity_path.stem.split('.')[0]
+        print(case_name)
         cavity = read_nifti(cavity_path)
         roi = ROI.get_from_cavity(cavity=cavity, padding=10)
         with open(roi_info_dir / f'{case_name}.json', 'w') as f:
@@ -77,7 +82,9 @@ The generated images will be stored as
         ssm_res = ssm.apply(cavity_zoomed, device=device)
         ssm_res.landmark_vtk.save(landmark_dir / f'{case_name}.vtk')
         nib.loadsave.save(ssm_res.get_landmark_volume(), landmark_dir / f'{case_name}.nii.gz')
-        ssm_res.save_gif(cavity_gif_dir / f'{case_name}.gif')
+        if args.gen_gif:
+            (cavity_gif_dir := output_dir / 'cavity_gif').mkdir(exist_ok=True, parents=True)
+            ssm_res.save_gif(cavity_gif_dir / f'{case_name}.gif')
         (dvf_case_dir := dvf_dir / case_name).mkdir(exist_ok=True, parents=True)
         cavity_list = []
         predictor.set_shared_inputs(
