@@ -1,0 +1,35 @@
+[workspace]
+authors = ["shi_jie <1592277253@qq.com>"]
+channels = ["conda-forge"]
+name = "Gen4D"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "12.0"
+
+[pypi-options]
+index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+
+
+[tasks]
+
+[dependencies]
+pytorch-gpu = "*"
+tqdm = ">=4.67.1,<5"
+torchio = ">=0.20.22,<0.21"
+nibabel = ">=5.3.2,<6"
+monai = ">=1.5.1,<2"
+tifffile = ">=2025.9.20,<2026"
+cupy = ">=13.6.0,<14"
+einops = ">=0.8.1,<0.9"
+imageio = ">=2.37.0,<3"
+pyvista = ">=0.46.3,<0.47"
+typer = ">=0.19.1,<0.20"
+
+
+[pypi-dependencies]
+torchcpd = { git = "https://github.com/mikami520/CPD-Pytorch.git", rev = "0fd2ec50109582f5992fc9b5eb2ef512d144a481" }
+opencv-python-headless = ">=4.11.0.86, <5"
+diffdrr = ">=0.5.1, <0.6"
+pyacvd = ">=0.3.2, <0.4"
