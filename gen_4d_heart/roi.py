@@ -266,25 +266,22 @@ class ROI:
 
         return Nifti1Image(output_data, self.original_affine)
     
-    def recover_cropped(self, cropped_image: Nifti1Image | np.ndarray, background: Nifti1Image | None = None) -> Nifti1Image:
+    def revocer_cropped_nifti(self, cropped_image: Nifti1Image, background: Nifti1Image | None = None) -> Nifti1Image:
         """
         Recover the cropped image to the original size based on the crop box and zoom rate.
         Args:
-            cropped_image: the cropped image, shape = (W', H', D', ...) # the cropped image may have more dimensions which will be obtained to the output
+            cropped_image: the cropped image
             background: the background image which has the same shape as original image, if not provided, the background will be zeros
         Returns:
-            np.ndarray: the recovered image
+            Nifti1Image: the recovered image
         """
-        if isinstance(cropped_image, Nifti1Image):
-            image_data = cropped_image.get_fdata().copy()
-        else:
-            image_data = cropped_image.copy()
-
-        if len(image_data.shape) > 3 and background is None:
-            output_shape = (*self.original_shape, *cropped_image.shape[3:])
+        assert isinstance(cropped_image, Nifti1Image)
+        image_data = cropped_image.get_fdata().copy()
+        if image_data.ndim > 3:
+            output_shape = (*self.original_shape, *image_data.shape[3:])
         else:
             output_shape = self.original_shape
-
+        
         if background is not None:
             assert (
                 background.shape == self.original_shape and
@@ -297,8 +294,31 @@ class ROI:
         
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
         output_data[x0:x1, y0:y1, z0:z1] = image_data
-
         return Nifti1Image(output_data, self.original_affine)
+    
+    def recover_cropped_tensor(self, cropped_image: torch.Tensor, background: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Recover the cropped image to the original size based on the crop box and zoom rate.
+        Args:
+            cropped_image: the cropped image, shape = (..., W', H', D')
+            background: the background image which has the same shape as original image, if not provided, the background will be zeros
+        Returns:
+            torch.Tensor: the recovered image
+        """
+        if cropped_image.dim() > 3:
+            output_shape = (*cropped_image.shape[:-3], *self.original_shape)
+        else:
+            output_shape = self.original_shape
+            
+        if background is not None:
+            assert background.shape == output_shape
+            output_data = background
+        else:
+            output_data = torch.zeros(output_shape, dtype=cropped_image.dtype)
+        
+        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
+        output_data[..., x0:x1, y0:y1, z0:z1] = cropped_image
+        return output_data
 
     def to_dict(self) -> dict:
         """
