@@ -76,9 +76,9 @@ def get_surface_from_label(
             mask = (label == label_id).astype(np.uint8)
         
         structure = ndimage.generate_binary_structure(3, 3)
+        mask = ndimage.binary_closing(mask, iterations=1, structure=structure)
         mask = ndimage.binary_opening(mask, iterations=1, structure=structure)
         mask = _get_largest_connected_component(mask)
-        mask = ndimage.binary_closing(mask, iterations=1, structure=structure)
 
         surface = pv.wrap(mask).contour([1], method="flying_edges").triangulate().smooth_taubin(n_iter=50).clean()
         cluster = pyacvd.Clustering(surface)
@@ -119,18 +119,17 @@ def deform_surface(
     new_cloud = pv.PolyData()
     new_points_all, _ = torchcpd.RigidRegistration(X=target_surface.points, Y=source_surface.points, device=device).register()
     new_points_all, _ = torchcpd.AffineRegistration(X=target_surface.points, Y=new_points_all.cpu().numpy(), device=device).register()
-    for label in labels:
-        source_points = new_points_all[moving_labels == label]
-        target_points = target_surface.points[fix_labels == label]
-        new_points, _ = torchcpd.AffineRegistration(X=target_points, Y=source_points.cpu().numpy(), device=device).register()
-        new_points, _ = torchcpd.DeformableRegistration(X=target_points, Y=new_points.cpu().numpy(), device=device, kwargs=deform_kwargs).register()
-        cloud = pv.PolyData(new_points.cpu().numpy())
-        cloud.point_data["label"] = np.ones(cloud.n_points).astype(np.uint8) * label
-        new_cloud = new_cloud.merge(cloud)
     
-    res = source_surface.copy()
-    res.points = new_cloud.points
-    return res
+    source_surface.points = new_points_all.cpu().numpy()
+    for label in sorted(labels):
+        source_submesh = source_surface.extract_points(moving_labels == label)
+        target_submesh = target_surface.extract_points(fix_labels == label)
+        new_points, _ = torchcpd.AffineRegistration(X=target_submesh.points, Y=source_submesh.points, device=device).register()
+        new_points, _ = torchcpd.DeformableRegistration(X=target_submesh.points, Y=new_points.cpu().numpy(), device=device, kwargs=deform_kwargs).register()
+        source_submesh.points = new_points.cpu().numpy()
+        new_cloud = new_cloud.merge(source_submesh)
+    
+    return new_cloud
 
 def _extract_faces_by_label(polydata: pv.PolyData, label: int) -> pv.PolyData:
     """
@@ -218,7 +217,7 @@ class SSM:
             self, 
             label: Nifti1Image,
             device: int,
-            num_components_used: int = 2,
+            num_components_used: int = 1
     ) -> 'SSM_Result':
         """
         Apply the SSM to the label to generate 4d cavity label.
@@ -237,7 +236,7 @@ class SSM:
         landmark_bounding_box = landmark_surface.bounds
         template_size = np.array([template_bounding_box[2*i+1] - template_bounding_box[2*i] for i in range(3)])
         landmark_size = np.array([landmark_bounding_box[2*i+1] - landmark_bounding_box[2*i] for i in range(3)])
-        zooming_rate = float(np.mean(landmark_size / template_size)) * 1.5
+        zooming_rate = float(np.mean(landmark_size / template_size))
         cavity_labels = self._generate_4d_cavity(landmark_surface, zooming_rate, num_components_used)
         return SSM_Result(label, landmark_surface, cavity_labels)
 
@@ -297,6 +296,7 @@ class SSM_Result:
     
     def get_motion_volume(self, phase: int) -> Nifti1Image:
         """
+        Get cavity at given phase index
         Args:
             phase: int, the phase to get motion volume, start from 0 and less than NUM_TOTAL_PHASE.
         Returns:

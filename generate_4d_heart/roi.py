@@ -73,37 +73,45 @@ class ROI:
         y0 = int(y_center - size_xy // 2)
         y1 = y0 + size_xy
 
-        cropped_shape_xy = min(mask.shape[0], mask.shape[1], size_xy+padding*2)
+        cropped_shape_xy = min(mask.shape[0]-1, mask.shape[1]-1, size_xy+padding*2)
         real_padding_xy = (cropped_shape_xy - size_xy) // 2
-        cropped_shape_z = min(mask.shape[2], size_z+padding*2)
+        cropped_shape_z = min(mask.shape[2]-1, size_z+padding*2)
         real_padding_z = (cropped_shape_z - size_z) // 2
-        cropped_shape = (cropped_shape_xy, cropped_shape_xy, cropped_shape_z)
         
-        dx1 = mask.shape[0] - x1
+        dx1 = mask.shape[0] - 1 - x1
         if dx1 > x0:
             x0 = max(0, x0 - real_padding_xy)
             x1 = x0 + cropped_shape_xy
         else:
-            x1 = min(mask.shape[0], x1 + real_padding_xy)
+            x1 = min(mask.shape[0]-1, x1 + real_padding_xy)
             x0 = max(0, x1 - cropped_shape_xy)
             
-        dy1 = mask.shape[1] - y1
+        dy1 = mask.shape[1] - 1 - y1
         if dy1 > y0:
             y0 = max(0, y0 - real_padding_xy)
             y1 = y0 + cropped_shape_xy
         else:
-            y1 = min(mask.shape[1], y1 + real_padding_xy)
+            y1 = min(mask.shape[1]-1, y1 + real_padding_xy)
             y0 = max(0, y1 - cropped_shape_xy)
         
-        dz1 = mask.shape[2] - z1
+        dz1 = mask.shape[2] - 1 - z1
         if dz1 > z0:
             z0 = max(0, z0 - real_padding_z)
             z1 = z0 + cropped_shape_z
         else:
-            z1 = min(mask.shape[2], z1 + real_padding_z)
+            z1 = min(mask.shape[2]-1, z1 + real_padding_z)
             z0 = max(0, z1 - cropped_shape_z)
         
-        assert x0 >= 0 and x1 <= mask.shape[0] and y0 >= 0 and y1 <= mask.shape[1] and z0 >= 0 and z1 <= mask.shape[2]
+        x0 = np.clip(x0, 0, mask.shape[0] - 1)
+        x1 = np.clip(x1, 0, mask.shape[0] - 1)
+        y0 = np.clip(y0, 0, mask.shape[1] - 1)
+        y1 = np.clip(y1, 0, mask.shape[1] - 1)
+        z0 = np.clip(z0, 0, mask.shape[2] - 1)
+        z1 = np.clip(z1, 0, mask.shape[2] - 1)
+        
+        cropped_shape = (
+            (x1 - x0), (y1 - y0), (z1 - z0)
+        )
         
         roi = ROI()
         roi.crop_box = np.array([
@@ -195,6 +203,12 @@ class ROI:
             np.ndarray: the crop box, in the format of ((x0, x1), (y0, y1), (z0, z1))
         """
         return np.array(self.crop_box)
+    
+    def get_crop_size(self) -> tuple[int, int, int]:
+        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
+        return (
+            (x1 - x0), (y1 - y0), (z1 - z0)
+        )
     
     def get_zoom_rate(self) -> np.ndarray:
         """

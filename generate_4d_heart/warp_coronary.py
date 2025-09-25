@@ -15,18 +15,14 @@ def separate_coronary(coronary: torch.Tensor) -> torch.Tensor:
         coronary (torch.Tensor): LCA and RCA, marked as 1 and 2
     """
     coronary = cp.from_dlpack(to_dlpack(coronary))
-    # Find all connected components
     labeled_array, num_features = label(coronary)  # type: ignore
     
-    # If only one component, return original (no separation needed)
     if num_features <= 1:
         return coronary
     
-    # Calculate sizes of each component
     component_sizes = cp.bincount(labeled_array.ravel())[1:]  # Skip background (0)
     
-    # Find two largest components
-    largest_indices = cp.argsort(component_sizes)[-2:][::-1] + 1  # +1 to account for skipped 0
+    largest_indices = cp.argsort(component_sizes)[-2:][::-1] + 1
     
     region_0 = (labeled_array == largest_indices[0]).astype(cp.uint8)
     region_1 = (labeled_array == largest_indices[1]).astype(cp.uint8)
@@ -41,6 +37,7 @@ def separate_coronary(coronary: torch.Tensor) -> torch.Tensor:
 
     return from_dlpack(res.toDlpack())
 
+# TODO 改进，将增强叠加到心肌整体而不仅仅是冠脉区域
 def dvf_enhance_coronary_by_LV(
     dvf: torch.Tensor,            # (B=1, 3, W, H, D), float tensor on CUDA
     lv_mask: torch.Tensor,        # (W, H, D), binary mask on CUDA (0/1)
@@ -87,7 +84,7 @@ def dvf_enhance_coronary_by_LV(
 
 
 def test_once():
-    from gen_4d_heart.roi import ROI
+    from generate_4d_heart.roi import ROI
     import nibabel as nib
     from torch.nn import functional as  F
     
