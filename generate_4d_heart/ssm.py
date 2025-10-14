@@ -217,14 +217,16 @@ class SSM:
             self, 
             label: Nifti1Image,
             device: int,
-            num_components_used: int = 1
+            moving_enhance_factor: float,
+            num_components_used: int = 1,
     ) -> 'SSM_Result':
         """
         Apply the SSM to the label to generate 4d cavity label.
         Args:
             label: Nifti1Image, the label to apply SSM
             device: the device to use
-            num_components_used: the number of PCA components used to deform motion
+            num_components_used: the number of PCA components used to deform motion,
+            moving_enhance_factor: the factor to enhance the motion
         Returns:
             SSM_Result: the result of applying SSM
         """
@@ -236,7 +238,7 @@ class SSM:
         landmark_bounding_box = landmark_surface.bounds
         template_size = np.array([template_bounding_box[2*i+1] - template_bounding_box[2*i] for i in range(3)])
         landmark_size = np.array([landmark_bounding_box[2*i+1] - landmark_bounding_box[2*i] for i in range(3)])
-        zooming_rate = float(np.mean(landmark_size / template_size))
+        zooming_rate = float(np.mean(landmark_size / template_size)) * moving_enhance_factor
         cavity_labels = self._generate_4d_cavity(landmark_surface, zooming_rate, num_components_used)
         return SSM_Result(label, landmark_surface, cavity_labels)
 

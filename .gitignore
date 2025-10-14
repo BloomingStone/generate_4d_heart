@@ -144,3 +144,5 @@ cython_debug/
 *.nii.gz# pixi environments
 .pixi/*
 !.pixi/config.toml
+
+/test/test_data/*

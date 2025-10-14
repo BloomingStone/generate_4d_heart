@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["generate_4d_heart*"]
+
+[project]
+name = "generate_4d_heart"
+dynamic = ["version"]
+requires-python = ">=3.12"

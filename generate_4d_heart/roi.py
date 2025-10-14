@@ -326,7 +326,7 @@ class ROI:
             
         if background is not None:
             assert background.shape == output_shape
-            output_data = background
+            output_data = background.clone()
         else:
             output_data = torch.zeros(output_shape, dtype=cropped_image.dtype)
         

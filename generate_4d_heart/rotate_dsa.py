@@ -1,0 +1,105 @@
+from dataclasses import dataclass, asdict, field
+from pathlib import Path
+from typing import Literal
+import json
+
+import torch
+from tqdm import tqdm
+
+from .data_reader import DataReader
+from .contrast_simulator import ContrastSimulator
+from .rotate_drr import RotateDRR
+from .types import Sec
+from .cardiac_phase import CardiacPhase
+from .saver import save_tif, save_mp4
+
+
+@dataclass
+class PhysicalConfig:
+    cardiac_cycle_time: Sec = 1.0   # Cardiac cycle time
+    # can add more config like breath cycle time etc..
+
+
+@dataclass
+class RotateDSA:
+    reader: DataReader
+    constrast_sim: ContrastSimulator
+    drr: RotateDRR
+    physical_config: PhysicalConfig = field(default_factory=PhysicalConfig)
+
+    def run(
+        self, 
+        coronary_type: Literal["LCA", "RCA"] = "LCA",
+        gray_reverse: bool = True
+    ) -> tuple[torch.Tensor, dict]:
+        """
+        Run whole process of rotate DRR
+        Returns:
+            np.ndarray: shape = (t, c, h, w), t = rotate_parameters.total_frame, c = 1
+            dict: geometry information
+        """
+        assert coronary_type in ["LCA", "RCA"]
+        total_frame = self.drr.rotate_cfg.total_frame
+        w, h = self.drr.image_size
+        frames = torch.zeros((total_frame, 1, w, h))
+        for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
+            phase = self._get_phase_at_frame(f)
+            read_res = self.reader.get_data(phase)
+            coronary = read_res.lca_label if coronary_type == "LCA" else read_res.rca_label
+            
+            volume = self.constrast_sim.simulate(
+                ori_volume=read_res.volume,
+                cavity_label=read_res.cavity_label,
+                coronary_label=coronary
+            )
+            drr = self.drr.get_projection_at_frame(
+                frame=f,
+                volume=volume,
+                coronary=coronary,
+                affine=read_res.affine
+            )
+            frames[f] = drr.cpu()
+        
+        frames = ((frames - frames.min()) / (frames.max() - frames.min()))*255
+        frames = frames.to(torch.uint8)
+        if gray_reverse:
+            frames = torch.tensor(255) - frames
+        return frames, self._get_geometry_json()
+    
+    def run_and_save(
+        self, 
+        output_dir: Path,
+        base_name: str = "rotate_dsa",
+        coronary_type: Literal["LCA", "RCA"] = "LCA",
+        gray_reverse: bool = True,
+    ) -> None:
+        frames, json_data = self.run(coronary_type, gray_reverse)
+        save_tif(output_dir / f"{base_name}.tif", frames)
+        save_mp4(output_dir / f"{base_name}.mp4", frames, fps=self.drr.rotate_cfg.fps)
+        with open(output_dir / f"{base_name}.json", "w") as f:
+            json.dump(json_data, f)
+    
+    def _get_phase_at_frame(self, frame: int) -> CardiacPhase:
+        return CardiacPhase.from_time(
+            frame / self.drr.rotate_cfg.fps, 
+            self.physical_config.cardiac_cycle_time
+        )
+    
+    def _get_geometry_json(self) -> dict:
+        assert self.drr.label_center_voxel is not None
+        res = {}
+        res["c_arm_geometry"] = asdict(self.drr.c_arm_cfg)
+        res["rotate_parameters"] = asdict(self.drr.rotate_cfg)
+        res["label_center_voxel"] = self.drr.label_center_voxel
+        res["frames"] = []
+        
+        for f in range(self.drr.rotate_cfg.total_frame):
+            d = {
+                "frame": f,
+                "angle": self.drr.rotate_cfg.get_angle_at_frame(f),
+                "phase": float(self._get_phase_at_frame(f))
+            }
+            
+            res["frames"].append(d)
+        
+        return res

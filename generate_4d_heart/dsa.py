@@ -202,9 +202,8 @@ def generate_rotate_dsa(
     
     
     dvf_list: list[torch.Tensor] = []
-    zoom_rate = (1 / roi.get_zoom_rate()).flatten().tolist()    # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
     for phase in tqdm(range(NUM_TOTAL_PHASE), desc='loading and updating DVFs'):
-        dvf_tensor = read_and_zoom_dvf(dvf_dir / f'phase_{phase:02d}.nii.gz', zoom_rate, device)
+        dvf_tensor = read_and_zoom_dvf(dvf_dir / f'phase_{phase:02d}.nii.gz', roi, device)
         
         # TODO: 这里或许可以放到存储DVF的时候做？（但存储DVF时用的是裁剪并缩放过的，可能有影响）
         # TODO: 拆分成单独类或函数
@@ -254,7 +253,6 @@ def generate_rotate_dsa(
         drr_projections.append(drr_res_np)
     
     drr_np = np.stack(drr_projections)
-    drr_np = ((drr_np - drr_np.min()) / (drr_np.max() - drr_np.min()))*255
     drr_np = (255 - drr_np).astype(np.uint8)
     save_frames(output_dsa_path, drr_np, fps)
     slicers_np = np.stack(image_slicer_list).astype(np.float32)

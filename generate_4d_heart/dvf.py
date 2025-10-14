@@ -24,7 +24,8 @@ def generate_4d_dvf(
     ckpt: Path = Path(__file__).parent / 'checkpoints' / 'ShapeMorph.pth',
     gen_cavity: bool = False,
     gen_gif: bool = False,
-    device: int = 0
+    device: int = 0,
+    moving_enhance_factor: float = 1.5,
 ):
     """Generate dense velocity fields(dvf) that can warp a static heart CTA into 20 phases of a cardiac cycle. 
 The static images should be stored as
@@ -54,6 +55,7 @@ The generated images will be stored as
         gen_cavity (bool, optional): whether to generate 4d cavity. Defaults to False.
         gen_gif (bool, optional): whether to generate gif. Defaults to False.
         device (int, optional): the id of gpu device to use. Defaults to 0.
+        moving_enhance_factor (float, optional): the factor to enhance the moving. Defaults to 1.5.
     """
     (landmark_dir := output_dir / 'landmark').mkdir(exist_ok=True, parents=True)
     (roi_info_dir := output_dir / 'roi_info').mkdir(exist_ok=True, parents=True)
@@ -86,7 +88,7 @@ The generated images will be stored as
         
         # apply ssm no cavity, then save landmark
         try:
-            ssm_res = ssm.apply(cavity_zoomed, device=device)
+            ssm_res = ssm.apply(cavity_zoomed, device=device, moving_enhance_factor=moving_enhance_factor)
         except Exception as e:
             logger.error(f"case {cavity_path} fail to be apply ssm with error: {e}")
             continue
