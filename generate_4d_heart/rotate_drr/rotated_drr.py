@@ -44,6 +44,8 @@ class RotatedParameters:
     beta_start: Degree = 0.0        # Secondary rotation angle
     angular_velocity: DegreePerSec = 75.0 # Angular velocity of alpha
     fps: float = 60.0                 # Frame per second of DSA
+    parameterization="euler_angles"  # representation of rotation
+    convention="ZXY"                  # rotation axis sequence
     
     def get_angle_at_frame(self, frame: int) -> Rot[Degree]:
         d_alpha = frame * self.angular_velocity / self.fps

@@ -131,9 +131,7 @@ class TorchDRR(RotateDRR):
     
     def _get_projection_after_setup(
         self,
-        rotations: torch.Tensor,
-        parameterization: Literal["euler_angles", "quaternions"] = "euler_angles",
-        convention: Literal["ZXY", "XYZ"] = "ZXY"
+        rotations: torch.Tensor
     ):
         assert self.diff_drr is not None, "diff_drr is None, call setup() first"
         N, D = rotations.shape
@@ -142,8 +140,8 @@ class TorchDRR(RotateDRR):
             return self.diff_drr(
                 rotations.to(self.device), 
                 self.translations.to(self.device), 
-                parameterization=parameterization, 
-                convention=convention
+                parameterization=self.rotate_cfg.parameterization, 
+                convention=self.rotate_cfg.convention
             )
         
         translations = self.translations.repeat(N, 1)
@@ -154,8 +152,8 @@ class TorchDRR(RotateDRR):
             drr_img = self.diff_drr(
                 rot.unsqueeze(0).to(self.device), 
                 trans.unsqueeze(0).to(self.device), 
-                parameterization=parameterization, 
-                convention=convention
+                parameterization=self.rotate_cfg.parameterization, 
+                convention=self.rotate_cfg.convention
             )
             res.append(drr_img)
         drr_img = torch.cat(res, dim=0)

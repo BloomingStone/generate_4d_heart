@@ -10,9 +10,9 @@ class ThresholdMultipliContrast(ContrastSimulator):
         heart_threshold: int = 0,
         bone_threshold: int = 600,
         lung_alpha: float = 1,
-        heart_alpha: float = 0.6,
+        heart_alpha: float = 0.3,
         bone_alpha: float = 1.0,
-        coronary_alpha: float = 10.0
+        coronary_alpha: float = 12.0
     ):
         """
         adjust the contrast of coronary and cavity by simple multiplication
@@ -32,6 +32,10 @@ class ThresholdMultipliContrast(ContrastSimulator):
         coronary_label: torch.Tensor,
     ) -> torch.Tensor:
         density = ori_volume.clone()
+        sentinel_mask = (density <= -2000)  # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
+        min_value = density[~sentinel_mask].min()
+        density[sentinel_mask] = min_value
+        
         if density.max() < 2.0:
             density *= 2**16  # recover image uses float to represent 16 bit
             density -= 1024

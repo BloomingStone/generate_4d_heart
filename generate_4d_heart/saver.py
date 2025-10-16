@@ -1,5 +1,6 @@
 from pathlib import Path
 import tifffile
+import imageio.v3 as iio
 
 from einops import rearrange
 import torch
@@ -52,16 +53,11 @@ def save_png(
     cv2.imwrite(str(output_path), image_2d_np)
 
 
-def save_mp4(
+def save_gif(
     output_path: Path,
     frames: torch.Tensor,
     fps: float
 ) -> None:
     frames = frames.squeeze()
-    T, W, H = frames.shape
-    fourcc = cv2.VideoWriter.fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter(str(output_path), fourcc, fps, (H, W), isColor=False)
     frames_np = frames.cpu().numpy()
-    for frame in tqdm(frames_np, desc="Saving mp4"):
-        video_writer.write(frame)
-    video_writer.release()
+    iio.imwrite(output_path, frames_np, extension=".gif", fps=fps)

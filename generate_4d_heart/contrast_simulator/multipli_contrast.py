@@ -8,8 +8,8 @@ from .contrast_simulator import ContrastSimulator
 class MultipliContrast(ContrastSimulator):
     def __init__(
         self, 
-        coronary_factor: float = 5.0,
-        cavity_factor: float = 0.7
+        coronary_factor: float = 12.0,
+        cavity_factor: float = 0.3
     ):
         """
         adjust the contrast of coronary and cavity by simple multiplication
@@ -24,10 +24,11 @@ class MultipliContrast(ContrastSimulator):
         coronary_label: torch.Tensor,
     ) -> torch.Tensor:
         res = ori_volume.clone()
+        sentinel_mask = (res <= -2000)  # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
+        min_value = res[~sentinel_mask].min()
+        res[sentinel_mask] = min_value
         if res.min() < 0:
             res -= res.min()
-            # TODO 这里在处理 ASOCA 图像时会直接 + 3072 导致后续衰减和冠脉增强的幅度都变大了
-            # 虽然效果确实还不错，但需要考虑是否是合理的
 
         heart_label = binary_dilation((coronary_label > 0).cpu().numpy().astype(np.uint8))
         heart_label = torch.from_numpy(heart_label).to(coronary_label.device)

@@ -145,4 +145,5 @@ cython_debug/
 .pixi/*
 !.pixi/config.toml
 
-/test/test_data/*
+test/test_data/*
+test/output/*

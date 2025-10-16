@@ -6,7 +6,7 @@ import torch
 
 from generate_4d_heart.data_reader import VolumesReader, DataReader, VolumeDVFReader
 from generate_4d_heart.cardiac_phase import CardiacPhase
-from generate_4d_heart.saver import save_mp4
+from generate_4d_heart.saver import save_gif
 
 def _read_and_save(reader: DataReader, output_dir: Path):
     # delete result in output_dir first
@@ -47,9 +47,9 @@ def _read_and_save(reader: DataReader, output_dir: Path):
     frames_h = uniform(frames_h)
     frames_d = uniform(frames_d)
     
-    save_mp4(output_dir / "frames_w.mp4", frames_w, fps)
-    save_mp4(output_dir / "frames_h.mp4", frames_h, fps)
-    save_mp4(output_dir / "frames_d.mp4", frames_d, fps)
+    save_gif(output_dir / "frames_w.gif", frames_w, fps)
+    save_gif(output_dir / "frames_h.gif", frames_h, fps)
+    save_gif(output_dir / "frames_d.gif", frames_d, fps)
 
 
 def test_volumes_reader():

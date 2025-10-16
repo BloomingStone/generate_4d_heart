@@ -11,7 +11,7 @@ from .contrast_simulator import ContrastSimulator
 from .rotate_drr import RotateDRR
 from .types import Sec
 from .cardiac_phase import CardiacPhase
-from .saver import save_tif, save_mp4
+from .saver import save_tif, save_gif
 
 
 @dataclass
@@ -72,12 +72,14 @@ class RotateDSA:
         base_name: str = "rotate_dsa",
         coronary_type: Literal["LCA", "RCA"] = "LCA",
         gray_reverse: bool = True,
-    ) -> None:
+    ) -> tuple[torch.Tensor, dict]:
         frames, json_data = self.run(coronary_type, gray_reverse)
-        save_tif(output_dir / f"{base_name}.tif", frames)
-        save_mp4(output_dir / f"{base_name}.mp4", frames, fps=self.drr.rotate_cfg.fps)
+        frames_new = frames.transpose(-1, -2).flip(-2)
+        save_tif(output_dir / f"{base_name}.tif", frames_new)
+        save_gif(output_dir / f"{base_name}.gif", frames_new, fps=self.drr.rotate_cfg.fps)
         with open(output_dir / f"{base_name}.json", "w") as f:
             json.dump(json_data, f)
+        return frames, json_data
     
     def _get_phase_at_frame(self, frame: int) -> CardiacPhase:
         return CardiacPhase.from_time(
