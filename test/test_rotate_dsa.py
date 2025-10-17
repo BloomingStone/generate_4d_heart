@@ -46,3 +46,6 @@ def test_rotate_dsa_mock_large():
 
 def test_rotate_dsa_mock_save(tmp_path):
     _rotate_dsa_mock((512, 512, 512), 3, tmp_path)
+
+if __name__ == "__main__":
+    test_rotate_dsa_mock_small()

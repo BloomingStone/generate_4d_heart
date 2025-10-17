@@ -72,11 +72,13 @@ def test_rotate_dsa_integration(
     
     # 验证每帧都有角度和相位信息
     for frame_info in geometry_json["frames"]:
-        assert "angle" in frame_info
-        assert "phase" in frame_info
         assert "frame" in frame_info
+        assert "phase" in frame_info
+        assert "angle" in frame_info
         assert isinstance(frame_info["angle"], tuple) and len(frame_info["angle"]) == 3
         assert isinstance(frame_info["phase"], (int, float))
+        assert isinstance(frame_info["R"], list) and len(frame_info["R"]) == 3 and len(frame_info["R"][0]) == 3
+        assert isinstance(frame_info["T"], list) and len(frame_info["T"]) == 3
     
     # 验证输出文件
     assert (output_dir / "test_rotate_dsa.tif").exists()

@@ -64,7 +64,7 @@ class RotateDSA:
         frames = frames.to(torch.uint8)
         if gray_reverse:
             frames = torch.tensor(255) - frames
-        return frames, self._get_geometry_json()
+        return frames, self.get_geometry_json()
     
     def run_and_save(
         self, 
@@ -87,7 +87,7 @@ class RotateDSA:
             self.physical_config.cardiac_cycle_time
         )
     
-    def _get_geometry_json(self) -> dict:
+    def get_geometry_json(self) -> dict:
         assert self.drr.label_center_voxel is not None
         res = {}
         res["c_arm_geometry"] = asdict(self.drr.c_arm_cfg)
@@ -96,10 +96,13 @@ class RotateDSA:
         res["frames"] = []
         
         for f in range(self.drr.rotate_cfg.total_frame):
+            R, T = self.drr.get_R_T_at_frame(f)
             d = {
                 "frame": f,
-                "angle": self.drr.rotate_cfg.get_angle_at_frame(f),
-                "phase": float(self._get_phase_at_frame(f))
+                "phase": float(self._get_phase_at_frame(f)),
+                "angle": self.drr.rotate_cfg.get_rotation_angle_at_frame(f),
+                "R": R.tolist(),
+                "T": T.tolist()
             }
             
             res["frames"].append(d)

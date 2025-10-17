@@ -39,22 +39,33 @@ class CArmGeometry:
 
 @dataclass
 class RotatedParameters:
-    total_frame: int = 120
-    alpha_start: Degree = 30.0      # Primary rotation angle
-    beta_start: Degree = 0.0        # Secondary rotation angle
-    angular_velocity: DegreePerSec = 75.0 # Angular velocity of alpha
-    fps: float = 60.0                 # Frame per second of DSA
-    parameterization="euler_angles"  # representation of rotation
-    convention="ZXY"                  # rotation axis sequence
+    """
+    Parameters for rotated DRR.
     
-    def get_angle_at_frame(self, frame: int) -> Rot[Degree]:
+    By default, the coordianate system is RAS, which means X axis is to the right of patient, Y axis is to the anterior of patient, and Z axis is to the superior of patient.
+    
+    The rotation type is "euler_angles" and the order is ZXY, alpha is primary rotation angle, beta is secondary rotation angle, so the rotation first rotate around Z axis(SI axis) by alpha, then around X axis (RL axis) by beta, and finally around Y axis(AP axis).
+    
+    For now, only alpha will change, with alpha_f = alpha_start - d_alpha, d_alpha = frame * angular_velocity / fps
+    """
+    total_frame: int = 120
+    alpha_start: Degree = 30.0              # Primary rotation angle
+    beta_start: Degree = 0.0                # Secondary rotation angle
+    angular_velocity: DegreePerSec = 75.0   # Angular velocity of alpha
+    fps: float = 60.0                       # Frame per second of DSA
+    coordinate_system: str = "RAS"          # X is R, Y is A, Z is S
+    parameterization: str = "euler_angles"  # representation of rotation
+    convention: str = "ZXY"                 # rotation axis sequence
+    
+    def get_rotation_angle_at_frame(self, frame: int) -> Rot[Degree]:
         d_alpha = frame * self.angular_velocity / self.fps
         new_alpha = self.alpha_start - d_alpha
         return (new_alpha, self.beta_start, 0.0)
     
-    def get_angle_at_frame_radian(self, frame: int) -> Rot[Radian]:
-        a, b, c = self.get_angle_at_frame(frame)
+    def get_rotaiton_radian_at_frame(self, frame: int) -> Rot[Radian]:
+        a, b, c = self.get_rotation_angle_at_frame(frame)
         return (radians(a), radians(b), radians(c))
+
 
 
 class RotateDRR(Protocol):
@@ -78,7 +89,23 @@ class RotateDRR(Protocol):
             torch.Tensor: shape = (c, h, w), c = 1, h = c_arm_geometry.height, w = c_arm_geometry.width
         """
         ...
-        
+    
+    def get_R_T_at_frame(
+        self,
+        frame: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Get Rotation(R) and Translation(T) of source (or camera). It may be variant for different drr projectioners.
+        R and T can be used as calculate world to camera matrix.
+
+        Args:
+            frame (int): frame_index
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: Rotation(R, shape=(3, 3)) and Translation(T, shape=(3,))
+        """
+        ...
+    
     @property
     def image_size(self) -> tuple[Pixel, Pixel]:
         return (self.c_arm_cfg.height, self.c_arm_cfg.width)

@@ -6,6 +6,7 @@ from scipy.ndimage import center_of_mass
 import torch
 from torchio import LabelMap, ScalarImage, Subject
 from diffdrr.drr import DRR
+from diffdrr.pose import convert, RigidTransform
 
 from .rotated_drr import RotateDRR, CArmGeometry, RotatedParameters
 from ..types import Degree
@@ -95,6 +96,7 @@ class TorchDRR(RotateDRR):
             int( image_center[2] )                          # up and down, set as the center of image
         )
 
+
     def _setup(
         self,
         volume: torch.Tensor,
@@ -129,6 +131,7 @@ class TorchDRR(RotateDRR):
             patch_size=self.patch_size,
         ).to(self.device)
     
+    
     def _get_projection_after_setup(
         self,
         rotations: torch.Tensor
@@ -143,6 +146,7 @@ class TorchDRR(RotateDRR):
                 parameterization=self.rotate_cfg.parameterization, 
                 convention=self.rotate_cfg.convention
             )
+        
         
         translations = self.translations.repeat(N, 1)
         # TODO auto calculate the max batch size at limits of CUDA memory.
@@ -159,6 +163,7 @@ class TorchDRR(RotateDRR):
         drr_img = torch.cat(res, dim=0)
         return drr_img
     
+    
     def get_projection_at_frame(
         self, 
         frame: int,
@@ -171,11 +176,27 @@ class TorchDRR(RotateDRR):
         
         self._setup(volume, coronary, affine)
         
-        rotation = self.rotate_cfg.get_angle_at_frame_radian(frame)
+        rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)
         rotations = torch.tensor([rotation], device=self.device)
         
         return self._get_projection_after_setup(rotations)
     
+    def get_R_T_at_frame(self, frame: int) -> tuple[torch.Tensor, torch.Tensor]:
+        rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)
+        rotations = torch.tensor([rotation], device=self.device)
+        rot = convert(
+            rotations.cpu(), 
+            self.translations.cpu(), 
+            parameterization=self.rotate_cfg.parameterization, 
+            convention=self.rotate_cfg.convention
+        )
+        reorient = RigidTransform(self.reorient)
+        pose = reorient.compose(rot)
+        
+        R = pose.rotation
+        T = pose.translation
+        
+        return (R, T)
     
     def get_projections_at_degrees(
         self, 
