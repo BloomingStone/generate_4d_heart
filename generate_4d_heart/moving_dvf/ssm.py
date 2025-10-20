@@ -8,8 +8,8 @@ import torchcpd
 from nibabel.nifti1 import Nifti1Image
 import nibabel as nib
 
-from . import SSM_DIRECTION, NUM_TOTAL_CAVITY_LABEL, NUM_TOTAL_PHASE, NUM_TOTAL_POINTS
-from .utils import get_maybe_flip_transform
+from .. import SSM_DIRECTION, NUM_TOTAL_CAVITY_LABEL, NUM_TOTAL_PHASE, NUM_TOTAL_POINTS
+from .utils import MaybeFlipTransform
 
 def _get_largest_connected_component(data: np.ndarray) -> np.ndarray:
     """
@@ -59,7 +59,7 @@ def get_surface_from_label(
         pv.PolyData: the cloud
         np.ndarray: the affine matrix of the nii file
     """
-    label = get_maybe_flip_transform(affine)(label)
+    label = MaybeFlipTransform(affine)(label, is_vector_field=False)
     
     label_ids = sorted(np.unique(label).astype(np.int8))[1:]
     surface_all = pv.PolyData()
@@ -294,7 +294,7 @@ class SSM_Result:
         self.landmark_vtk = landmark_vtk
         self.cavity_surfaces = cavity_surfaces
         assert self.original_label.affine is not None
-        self.flips = get_maybe_flip_transform(self.original_label.affine)
+        self.flips = MaybeFlipTransform(self.original_label.affine)
     
     def get_motion_volume(self, phase: int) -> Nifti1Image:
         """

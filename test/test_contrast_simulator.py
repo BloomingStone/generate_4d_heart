@@ -5,10 +5,10 @@ import shutil
 import pytest
 import torch
 
-from generate_4d_heart.contrast_simulator import MultipliContrast, ThresholdMultipliContrast, ContrastSimulator
-from generate_4d_heart.data_reader import DataReader
-from generate_4d_heart.cardiac_phase import CardiacPhase
-from generate_4d_heart.rotate_drr import TorchDRR, RotatedParameters
+from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast, ContrastSimulator
+from generate_4d_heart.rotate_dsa.data_reader import DataReader
+from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
+from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.saver import save_png
 
 from utils import get_volumes_reader, get_volume_dvf_reader, output_root_dir

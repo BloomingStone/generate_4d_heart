@@ -5,10 +5,10 @@ import logging
 import nibabel as nib
 from tqdm import tqdm
 
-from .roi import ROI
+from ..roi import ROI
 from .ssm import SSM
 from .shape_morph import ShapeMorphPredictor
-from . import NUM_TOTAL_PHASE
+from .. import NUM_TOTAL_PHASE
 
 logger = logging.getLogger(__name__)
 

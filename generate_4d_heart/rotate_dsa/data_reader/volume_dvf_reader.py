@@ -5,9 +5,9 @@ import torch
 from monai.networks.blocks.warp import DVF2DDF, Warp
 from tqdm import tqdm
 
-from .. import NUM_TOTAL_PHASE
+from ... import NUM_TOTAL_PHASE
 from ..movement_enhancer import MovementEnhancer, IdentityMovementEnhancer
-from ..roi import ROI
+from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
     DataReader, DataReaderResult, separate_coronary, 

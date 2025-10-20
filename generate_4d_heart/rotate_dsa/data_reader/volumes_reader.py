@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 
 from .data_reader import DataReader, DataReaderResult, separate_coronary, load_nifti
-from .. import NUM_TOTAL_PHASE, NUM_TOTAL_CAVITY_LABEL
+from ... import NUM_TOTAL_PHASE, NUM_TOTAL_CAVITY_LABEL
 from ..cardiac_phase import CardiacPhase
 
 

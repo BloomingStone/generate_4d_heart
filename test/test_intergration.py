@@ -6,9 +6,9 @@ import pytest
 import torch
 
 from generate_4d_heart.rotate_dsa import RotateDSA
-from generate_4d_heart.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
-from generate_4d_heart.data_reader import VolumesReader, VolumeDVFReader
-from generate_4d_heart.rotate_drr import TorchDRR, RotatedParameters
+from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
+from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader
+from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 
 from utils import get_volumes_reader, get_volume_dvf_reader, output_root_dir
 

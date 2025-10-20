@@ -9,8 +9,8 @@ import numpy as np
 from nibabel.nifti1 import Nifti1Image
 
 
-from . import NUM_TOTAL_CAVITY_LABEL
-from .utils import get_maybe_flip_transform
+from .. import NUM_TOTAL_CAVITY_LABEL
+from .utils import MaybeFlipTransform
 
 class ShapeMorph(nn.Module):
     def __init__(
@@ -89,7 +89,7 @@ class ShapeMorphPredictor:
         self.source_cavity_zoomed = source_cavity_zoomed
 
         assert source_cavity_zoomed.affine is not None
-        self.flips = get_maybe_flip_transform(source_cavity_zoomed.affine)
+        self.flips = MaybeFlipTransform(source_cavity_zoomed.affine)
         self.transform_cavity = Compose([
             ToTensor(),
             self.flips,

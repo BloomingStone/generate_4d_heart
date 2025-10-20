@@ -11,7 +11,7 @@ from torch.utils.dlpack import from_dlpack, to_dlpack
 from nibabel.loadsave import load as nib_load
 from nibabel.nifti1 import Nifti1Image
 
-from ..roi import ROI
+from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 
 
@@ -167,7 +167,7 @@ class DataReaderResult:
     
     def save(self, output_dir: Path):
         """Save all tensors to the specified directory"""
-        from ..saver import save_nii
+        from ...saver import save_nii
         output_dir.mkdir(exist_ok=True, parents=True)
         
         save_nii(output_dir / f"{self.phase}" / "volume.nii.gz", self.volume, self.affine)

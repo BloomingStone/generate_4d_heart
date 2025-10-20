@@ -4,8 +4,8 @@ from random import random
 from tqdm import tqdm
 import torch
 
-from generate_4d_heart.data_reader import VolumesReader, DataReader, VolumeDVFReader
-from generate_4d_heart.cardiac_phase import CardiacPhase
+from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, DataReader, VolumeDVFReader
+from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_gif
 
 def _read_and_save(reader: DataReader, output_dir: Path):

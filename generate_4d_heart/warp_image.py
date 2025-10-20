@@ -10,8 +10,8 @@ import numpy as np
 
 from . import NUM_TOTAL_PHASE, LV_LABEL
 from .roi import ROI
-from .dsa import save_nifti, read_and_zoom_dvf
-
+from .saver import save_nii
+from .rotate_dsa.data_reader.data_reader import load_and_zoom_dvf
 
 @torch.no_grad()
 def generate_4d_cta(
@@ -41,16 +41,18 @@ def generate_4d_cta(
     coronary = coronary[None, None].half()
     
     for phase in tqdm(range(NUM_TOTAL_PHASE), desc=f'generating 4d cta for {image_path.name}...'):
-        dvf_tensor = read_and_zoom_dvf(dvf_dir / f'phase_{phase:02d}.nii.gz', roi, device)
+        dvf_tensor = load_and_zoom_dvf(dvf_dir / f'phase_{phase:02d}.nii.gz', roi, device)
         ddf = dvf2ddf(dvf_tensor)
-        save_nifti(
+        save_nii(
+            output_cta_path / "warped_image" / f"{phase:02d}.nii.gz",
             warp_image(image, ddf),
             image_affine,
-            output_cta_path / "warped_image" / f"{phase:02d}.nii.gz"
+            is_label=False
         )
         
-        save_nifti(
+        save_nii(
+            output_cta_path / "warped_coronary" / f"{phase:02d}.nii.gz",
             warp_image(image, ddf),
             image_affine,
-            output_cta_path / "warped_coronary" / f"{phase:02d}.nii.gz"
+            is_label=True
         )

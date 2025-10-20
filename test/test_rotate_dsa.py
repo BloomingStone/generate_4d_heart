@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 
 from generate_4d_heart.rotate_dsa import RotateDSA
-from generate_4d_heart.rotate_drr import TorchDRR, RotatedParameters
+from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart import NUM_TOTAL_CAVITY_LABEL
 
 def _rotate_dsa_mock(
