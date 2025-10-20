@@ -13,6 +13,7 @@ index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 
 
 [tasks]
+pytest = "pytest"
 
 [dependencies]
 pytorch-gpu = "*"
@@ -25,6 +26,9 @@ cupy = ">=13.6.0,<14"
 einops = ">=0.8.1,<0.9"
 imageio = ">=2.37.0,<3"
 jsonargparse = ">=4.40.2,<5"
+pip = "*"
+notebook = "*"
+pytest = "*"
 
 
 [pypi-dependencies]
@@ -35,13 +39,3 @@ diffdrr = ">=0.5.1, <0.6"
 pyacvd = ">=0.3.2, <0.4"
 pyvista = { version = ">=0.46.3, <0.47", extras = ["all"] }
 
-[feature.dev.dependencies]
-pip = "*"
-notebook = "*"
-pytest = "*"
-
-[feature.dev.tasks]
-pytest = "pytest"
-
-[environments]
-dev = ["dev"]

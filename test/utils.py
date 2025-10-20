@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from generate_4d_heart.data_reader import VolumesReader, VolumeDVFReader
+from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader
 
 test_root_dir = Path(__file__).parent
 test_data_root_dir = test_root_dir / "test_data"
