@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 import json
@@ -11,7 +11,7 @@ from .contrast_simulator import ContrastSimulator
 from .rotate_drr import RotateDRR
 from .types import Sec
 from .cardiac_phase import CardiacPhase
-from .saver import save_tif, save_gif
+from .saver import save_tif, save_gif, save_pngs
 
 
 @dataclass
@@ -77,6 +77,7 @@ class RotateDSA:
         frames_new = frames.transpose(-1, -2).flip(-2)
         save_tif(output_dir / f"{base_name}.tif", frames_new)
         save_gif(output_dir / f"{base_name}.gif", frames_new, fps=self.drr.rotate_cfg.fps)
+        save_pngs(output_dir / f"{base_name}", frames_new)
         with open(output_dir / f"{base_name}.json", "w") as f:
             json.dump(json_data, f)
         return frames, json_data
@@ -90,19 +91,22 @@ class RotateDSA:
     def get_geometry_json(self) -> dict:
         assert self.drr.label_center_voxel is not None
         res = {}
-        res["c_arm_geometry"] = asdict(self.drr.c_arm_cfg)
-        res["rotate_parameters"] = asdict(self.drr.rotate_cfg)
+        res["origin_image_size"] = self.reader.origin_image_size
+        res["origin_image_affine"] = self.reader.origin_image_affine.tolist()
+        res["c_arm_geometry"] = self.drr.c_arm_cfg.to_dict()
+        res["rotate_parameters"] = self.drr.rotate_cfg.to_dict()
         res["label_center_voxel"] = self.drr.label_center_voxel
         res["frames"] = []
         
         for f in range(self.drr.rotate_cfg.total_frame):
             R, T = self.drr.get_R_T_at_frame(f)
             d = {
+                "time_s": f / self.drr.rotate_cfg.fps,
                 "frame": f,
                 "phase": float(self._get_phase_at_frame(f)),
                 "angle": self.drr.rotate_cfg.get_rotation_angle_at_frame(f),
-                "R": R.tolist(),
-                "T": T.tolist()
+                "R": R.squeeze().tolist(),
+                "T": T.squeeze().tolist()
             }
             
             res["frames"].append(d)

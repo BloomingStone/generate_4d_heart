@@ -41,6 +41,11 @@ class VolumesReader(DataReader):
         
         assert self.n_phases == NUM_TOTAL_PHASE, f"For now, we only support {NUM_TOTAL_PHASE} phases. But the data has {self.n_phases} phases."
         
+        volume_0, affine_0 = load_nifti(image_file_list[0])
+        self.origin_image_size = volume_0.shape[2:]   #type: ignore
+        self.origin_image_affine = affine_0
+        assert len(self.origin_image_size) == 3, f"Image size must be 3D, but got {self.origin_image_size}"
+        
         self.data: list[DataReaderResult] = []
         for index, (img_file, cav_file, cor_file) in enumerate(zip(image_file_list, cavity_file_list, coronary_file_list)):
             phase = CardiacPhase.from_index(index, self.n_phases)
@@ -60,8 +65,7 @@ class VolumesReader(DataReader):
                 affine=affine
             ))
         
-        self.origin_image_size = self.data[0].volume.shape[2:]   #type: ignore
-        assert len(self.origin_image_size) == 3, f"Image size must be 3D, but got {self.origin_image_size}"
+        
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         """

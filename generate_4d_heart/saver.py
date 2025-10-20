@@ -52,6 +52,16 @@ def save_png(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), image_2d_np)
 
+def save_pngs(
+    output_dir: Path,
+    frames: torch.Tensor
+):
+    frames = frames.squeeze()
+    frames_np = frames.cpu().numpy()
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    for t, image in tqdm(enumerate(frames_np), desc="Saving PNGs..."):
+        cv2.imwrite(str(output_dir / f"{t:03d}.png"), image)
+    
 
 def save_gif(
     output_path: Path,

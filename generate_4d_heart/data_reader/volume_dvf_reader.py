@@ -128,7 +128,7 @@ class VolumeDVFReader(DataReader):
         self.device = device
         self.roi = ROI.from_json(roi_json)
         
-        image, self.affine = load_nifti_with_roi_crop(image_nii, self.roi, is_label=False)
+        image, self.origin_image_affine = load_nifti_with_roi_crop(image_nii, self.roi, is_label=False)
         cavity_label, _ = load_nifti_with_roi_crop(cavity_nii, self.roi, is_label=True)
         coronary_label, _ = load_nifti_with_roi_crop(coronary_nii, self.roi, is_label=True)
 
@@ -166,7 +166,7 @@ class VolumeDVFReader(DataReader):
             cavity_label=cavity.cpu(),
             lca_label=lca.cpu(),
             rca_label=rca.cpu(),
-            affine=self.affine
+            affine=self.origin_image_affine
         )
     
     def save_roi(self, output_dir: Path):

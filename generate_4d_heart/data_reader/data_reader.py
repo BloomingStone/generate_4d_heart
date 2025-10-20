@@ -179,6 +179,7 @@ class DataReaderResult:
 class DataReader(Protocol):
     n_phases: int
     origin_image_size: tuple[int, int, int]
+    origin_image_affine: np.ndarray
 
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         ...

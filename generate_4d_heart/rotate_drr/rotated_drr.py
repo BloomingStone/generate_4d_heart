@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from math import radians
 from typing import Protocol, TypeVar
 
@@ -36,6 +36,11 @@ class CArmGeometry:
         assert self._dely is not None
         return self._dely
 
+    def to_dict(self) -> dict:
+        res = asdict(self)
+        res["width"] = res.pop("_width")
+        res["dely"] = res.pop("_dely")
+        return res
 
 @dataclass
 class RotatedParameters:
@@ -66,6 +71,8 @@ class RotatedParameters:
         a, b, c = self.get_rotation_angle_at_frame(frame)
         return (radians(a), radians(b), radians(c))
 
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 class RotateDRR(Protocol):

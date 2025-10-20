@@ -22,6 +22,8 @@ def _rotate_dsa_mock(
         rca_label=torch.randint(0, 2, shape),
         affine=torch.eye(4)
     )
+    reader.origin_image_affine = torch.eye(4)
+    reader.origin_image_size = volume_shape
 
     constrast_sim = MagicMock()
     constrast_sim.simulate.return_value = torch.rand(shape)
