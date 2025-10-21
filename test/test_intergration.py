@@ -74,10 +74,13 @@ def test_rotate_dsa_integration(
         assert "frame" in frame_info
         assert "phase" in frame_info
         assert "angle" in frame_info
-        assert isinstance(frame_info["angle"], tuple) and len(frame_info["angle"]) == 3
+        angle = frame_info["angle"]
+        assert isinstance(angle, tuple) and len(angle) == 3
         assert isinstance(frame_info["phase"], (int, float))
-        assert isinstance(frame_info["R"], list) and len(frame_info["R"]) == 3 and len(frame_info["R"][0]) == 3
-        assert isinstance(frame_info["T"], list) and len(frame_info["T"]) == 3
+        R_w2c = frame_info["R_w2c"]
+        T_w2c = frame_info["T_w2c"]
+        assert isinstance(R_w2c, list) and len(R_w2c) == 3 and len(R_w2c[0]) == 3
+        assert isinstance(T_w2c, list) and len(T_w2c) == 3
     
     # 验证输出文件
     assert (output_dir / "rotate_dsa.tif").exists()

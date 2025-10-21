@@ -100,13 +100,15 @@ class RotateDSA:
         
         for f in range(self.drr.rotate_cfg.total_frame):
             R, T = self.drr.get_R_T_at_frame(f)
+            R_w2c = R.squeeze().T
+            T_w2c = - R_w2c @ T.squeeze()
             d = {
                 "time_s": f / self.drr.rotate_cfg.fps,
                 "frame": f,
                 "phase": float(self._get_phase_at_frame(f)),
                 "angle": self.drr.rotate_cfg.get_rotation_angle_at_frame(f),
-                "R": R.squeeze().tolist(),
-                "T": T.squeeze().tolist()
+                "R_w2c": R_w2c.squeeze().tolist(),
+                "T_w2c": T_w2c.squeeze().tolist()
             }
             
             res["frames"].append(d)
