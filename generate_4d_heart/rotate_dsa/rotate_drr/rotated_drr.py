@@ -60,11 +60,11 @@ class RotatedParameters:
     fps: float = 60.0                       # Frame per second of DSA
     coordinate_system: str = "RAS"          # X is R, Y is A, Z is S
     parameterization: str = "euler_angles"  # representation of rotation
-    convention: str = "ZXY"                 # rotation axis sequence
+    convention: str = "ZXY"                 # rotation axis sequence, internal rotation
     
     def get_rotation_angle_at_frame(self, frame: int) -> Rot[Degree]:
         d_alpha = frame * self.angular_velocity / self.fps
-        new_alpha = self.alpha_start - d_alpha
+        new_alpha = self.alpha_start + d_alpha
         return (new_alpha, self.beta_start, 0.0)
     
     def get_rotaiton_radian_at_frame(self, frame: int) -> Rot[Radian]:

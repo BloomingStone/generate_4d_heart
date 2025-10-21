@@ -8,7 +8,7 @@ from .contrast_simulator import ContrastSimulator
 class MultipliContrast(ContrastSimulator):
     def __init__(
         self, 
-        coronary_factor: float = 12.0,
+        coronary_factor: float = 15.0,
         cavity_factor: float = 0.3
     ):
         """

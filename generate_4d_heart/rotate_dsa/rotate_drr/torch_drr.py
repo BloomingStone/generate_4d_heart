@@ -19,6 +19,8 @@ def get_reorientation(
     if orientation_type == "AP":
         # Rotates the C-arm about the x-axis by 90 degrees
         # Rotates the C-arm about the z-axis by -90 degrees
+        # internal roation (xyz) can be translated to external rotation
+        # with oppisite order (ZYX) in world axis
         reorient = torch.tensor(
             [
                 [0.0, 1.0, 0.0, 0.0],
@@ -140,8 +142,11 @@ class TorchDRR(RotateDRR):
         N, D = rotations.shape
         assert D == 3
         if N == 1:
+            # in DiffDrr, X Y Z coreesponding to R A S, the rotate angle is oppsite to standard C-Arm 
+            # X-ray, where X Y Z cooresponding to I L A
+            # the convert of R, T, angles and camera to world matrix can be found at test/test_R_T.py
             return self.diff_drr(
-                rotations.to(self.device), 
+                - rotations.to(self.device),     # here has negtived
                 self.translations.to(self.device), 
                 parameterization=self.rotate_cfg.parameterization, 
                 convention=self.rotate_cfg.convention
@@ -182,16 +187,19 @@ class TorchDRR(RotateDRR):
         return self._get_projection_after_setup(rotations)
     
     def get_R_T_at_frame(self, frame: int) -> tuple[torch.Tensor, torch.Tensor]:
+        # in DiffDrr, X Y Z coreesponding to R A S, the rotate angle is oppsite to standard C-Arm 
+        # X-ray, where X Y Z cooresponding to I L A
+        # the convert of R, T, angles and camera to world matrix can be found at test/test_R_T.py
         rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)
         rotations = torch.tensor([rotation], device=self.device)
         rot = convert(
-            rotations.cpu(), 
+            - rotations.cpu(), # here has negtived
             self.translations.cpu(), 
             parameterization=self.rotate_cfg.parameterization, 
             convention=self.rotate_cfg.convention
         )
         reorient = RigidTransform(self.reorient)
-        pose = reorient.compose(rot)
+        pose = reorient.compose(rot)    # Rot @ reorient
         
         R = pose.rotation
         T = pose.translation

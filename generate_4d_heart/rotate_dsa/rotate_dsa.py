@@ -41,7 +41,7 @@ class RotateDSA:
         assert coronary_type in ["LCA", "RCA"]
         total_frame = self.drr.rotate_cfg.total_frame
         w, h = self.drr.image_size
-        frames = torch.zeros((total_frame, 1, w, h))
+        frames = torch.zeros(total_frame, 1, w, h)
         for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
             phase = self._get_phase_at_frame(f)
             read_res = self.reader.get_data(phase)
@@ -69,8 +69,8 @@ class RotateDSA:
     def run_and_save(
         self, 
         output_dir: Path,
+        coronary_type: Literal["LCA", "RCA"],
         base_name: str = "rotate_dsa",
-        coronary_type: Literal["LCA", "RCA"] = "LCA",
         gray_reverse: bool = True,
     ) -> tuple[torch.Tensor, dict]:
         frames, json_data = self.run(coronary_type, gray_reverse)

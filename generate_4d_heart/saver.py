@@ -58,9 +58,15 @@ def save_pngs(
 ):
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy()
-    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     for t, image in tqdm(enumerate(frames_np), desc="Saving PNGs..."):
-        cv2.imwrite(str(output_dir / f"{t:03d}.png"), image)
+        iio.imwrite(
+            uri=output_dir / f"{t:03d}.png",
+            image=image,
+            plugin="pillow",
+            extension=".png"
+        )
     
 
 def save_gif(

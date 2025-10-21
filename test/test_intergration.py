@@ -55,7 +55,6 @@ def test_rotate_dsa_integration(
         shutil.rmtree(output_dir)
     frames, geometry_json = dsa.run_and_save(
         output_dir=output_dir,
-        base_name="test_rotate_dsa",
         coronary_type=coronary_type
     )
     
@@ -81,6 +80,6 @@ def test_rotate_dsa_integration(
         assert isinstance(frame_info["T"], list) and len(frame_info["T"]) == 3
     
     # 验证输出文件
-    assert (output_dir / "test_rotate_dsa.tif").exists()
-    assert (output_dir / "test_rotate_dsa.gif").exists()
-    assert (output_dir / "test_rotate_dsa.json").exists()
+    assert (output_dir / "rotate_dsa.tif").exists()
+    assert (output_dir / "rotate_dsa.gif").exists()
+    assert (output_dir / "rotate_dsa.json").exists()
