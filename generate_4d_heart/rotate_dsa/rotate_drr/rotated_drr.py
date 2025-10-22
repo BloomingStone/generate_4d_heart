@@ -53,11 +53,11 @@ class RotatedParameters:
     
     For now, only alpha will change, with alpha_f = alpha_start - d_alpha, d_alpha = frame * angular_velocity / fps
     """
-    total_frame: int = 120
+    total_frame: int = 90                   # Total frame of DSA; 180 for real sence, 90 for simulation, totally 3 seconds
     alpha_start: Degree = 30.0              # Primary rotation angle
     beta_start: Degree = 0.0                # Secondary rotation angle
     angular_velocity: DegreePerSec = 75.0   # Angular velocity of alpha
-    fps: float = 60.0                       # Frame per second of DSA
+    fps: float = 30.0                       # Frame per second of DSA; 60 fps for real sence, 30 fps for simulation
     coordinate_system: str = "RAS"          # X is R, Y is A, Z is S
     parameterization: str = "euler_angles"  # representation of rotation
     convention: str = "ZXY"                 # rotation axis sequence, internal rotation
@@ -112,6 +112,12 @@ class RotateDRR(Protocol):
             tuple[torch.Tensor, torch.Tensor]: Rotation(R, shape=(3, 3)) and Translation(T, shape=(3,))
         """
         ...
+    
+    def get_additional_config(self) -> dict:
+        """
+        Get additional config for drr besides `c_arm_geometry`, `rotate_parameters` and `label_center_voxel` for output in json file.
+        """
+        return {}
     
     @property
     def image_size(self) -> tuple[Pixel, Pixel]:

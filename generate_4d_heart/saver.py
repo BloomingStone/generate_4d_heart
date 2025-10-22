@@ -61,6 +61,8 @@ def save_pngs(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     for t, image in tqdm(enumerate(frames_np), desc="Saving PNGs..."):
+        if image.ndim == 2:
+            image = image[..., None].repeat(3, axis=-1)     # convert to RGB format
         iio.imwrite(
             uri=output_dir / f"{t:03d}.png",
             image=image,
@@ -72,8 +74,8 @@ def save_pngs(
 def save_gif(
     output_path: Path,
     frames: torch.Tensor,
-    fps: float
+    fps_gif: float = 30
 ) -> None:
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy()
-    iio.imwrite(output_path, frames_np, extension=".gif", fps=fps)
+    iio.imwrite(output_path, frames_np, extension=".gif", duration=1000/fps_gif)

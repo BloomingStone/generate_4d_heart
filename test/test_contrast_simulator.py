@@ -11,19 +11,9 @@ from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.saver import save_png
 
-from utils import get_volumes_reader, get_volume_dvf_reader, output_root_dir
+from utils import output_root_dir, readers, simulators
 
-test_angles = list(range(0, 180, 30))
-
-readers = {
-    "volumes_reader": get_volumes_reader(),
-    "volume_dvf_reader": get_volume_dvf_reader()
-}
-
-simulators = {
-    "multipli_contrast": MultipliContrast(),
-    "threshold_multipli_contrast": ThresholdMultipliContrast()
-}
+test_angles = list(range(0, 180, 30))   # list of primary angles
 
 @pytest.mark.parametrize("reader_name, reader", readers.items())
 @pytest.mark.parametrize("sim_name, simulator", simulators.items())

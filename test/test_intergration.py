@@ -10,18 +10,7 @@ from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, Th
 from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 
-from utils import get_volumes_reader, get_volume_dvf_reader, output_root_dir
-
-
-readers = {
-    "volumes_reader": get_volumes_reader(),
-    "volume_dvf_reader": get_volume_dvf_reader()
-}
-
-simulators = {
-    "multipli_contrast": MultipliContrast(),
-    "threshold_multipli_contrast": ThresholdMultipliContrast()
-}
+from utils import output_root_dir, readers, simulators
 
 @pytest.mark.parametrize("reader_name, reader", readers.items())
 @pytest.mark.parametrize("sim_name, simulator", simulators.items())
@@ -86,3 +75,36 @@ def test_rotate_dsa_integration(
     assert (output_dir / "rotate_dsa.tif").exists()
     assert (output_dir / "rotate_dsa.gif").exists()
     assert (output_dir / "rotate_dsa.json").exists()
+
+
+@pytest.mark.parametrize(
+    "reader_name, reader, sim_name, simulator, coronary_type",
+    (
+        ("volumes_reader", readers["volumes_reader"], "multipli_contrast", MultipliContrast(), "LCA"),
+        ("volume_dvf_reader", readers["volume_dvf_reader"], "multipli_contrast", MultipliContrast(), "LCA"),
+        ("static_volume_reader", readers["static_volume_reader"], "multipli_contrast", MultipliContrast(), "LCA")
+    )
+)
+def test_rotate_dsa_integration_full(
+    reader_name: str,
+    reader: VolumesReader | VolumeDVFReader,
+    sim_name: str,
+    simulator: MultipliContrast | ThresholdMultipliContrast,
+    coronary_type: Literal["LCA", "RCA"],
+):
+    """测试完整的 RotateDSA 集成流程 并生成完整数据"""
+    drr = TorchDRR()
+    
+    dsa = RotateDSA(
+        reader=reader,
+        constrast_sim=simulator,
+        drr=drr
+    )
+    
+    output_dir = output_root_dir / "intergration_full" / f"{reader_name}_{sim_name}_{coronary_type}"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    dsa.run_and_save(
+        output_dir=output_dir,
+        coronary_type=coronary_type
+    )

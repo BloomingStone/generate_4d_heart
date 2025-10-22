@@ -47,9 +47,9 @@ def _read_and_save(reader: DataReader, output_dir: Path):
     frames_h = uniform(frames_h)
     frames_d = uniform(frames_d)
     
-    save_gif(output_dir / "frames_w.gif", frames_w, fps)
-    save_gif(output_dir / "frames_h.gif", frames_h, fps)
-    save_gif(output_dir / "frames_d.gif", frames_d, fps)
+    save_gif(output_dir / "frames_w.gif", frames_w)
+    save_gif(output_dir / "frames_h.gif", frames_h)
+    save_gif(output_dir / "frames_d.gif", frames_d)
 
 
 def test_volumes_reader():

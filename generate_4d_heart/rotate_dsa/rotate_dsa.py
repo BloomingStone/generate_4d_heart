@@ -76,7 +76,7 @@ class RotateDSA:
         frames, json_data = self.run(coronary_type, gray_reverse)
         frames_new = frames.transpose(-1, -2).flip(-2)
         save_tif(output_dir / f"{base_name}.tif", frames_new)
-        save_gif(output_dir / f"{base_name}.gif", frames_new, fps=self.drr.rotate_cfg.fps)
+        save_gif(output_dir / f"{base_name}.gif", frames_new)
         save_pngs(output_dir / f"{base_name}", frames_new)
         with open(output_dir / f"{base_name}.json", "w") as f:
             json.dump(json_data, f)
@@ -96,6 +96,8 @@ class RotateDSA:
         res["c_arm_geometry"] = self.drr.c_arm_cfg.to_dict()
         res["rotate_parameters"] = self.drr.rotate_cfg.to_dict()
         res["label_center_voxel"] = self.drr.label_center_voxel
+        if (additional_config := self.drr.get_additional_config()):
+            res["additional_config"] = additional_config
         res["frames"] = []
         
         for f in range(self.drr.rotate_cfg.total_frame):

@@ -32,7 +32,7 @@ def _rotate_dsa_mock(
     
     if output_dir is not None:
         output_dir.mkdir(exist_ok=True)
-        dsa.run_and_save(output_dir)
+        dsa.run_and_save(output_dir, coronary_type='LCA')
     else:
         frames, geo_json = dsa.run("LCA")
         assert isinstance(frames, torch.Tensor)
