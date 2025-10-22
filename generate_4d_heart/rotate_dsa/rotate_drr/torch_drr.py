@@ -18,37 +18,37 @@ def get_reorientation(
     # Frame-of-reference change
     if orientation_type == "AP":
         # Rotates the C-arm about the x-axis by 90 degrees
-        # Rotates the C-arm about the z-axis by -90 degrees
-        # internal roation (xyz) can be translated to external rotation
-        # with oppisite order (ZYX) in world axis
         reorient = torch.tensor(
             [
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, -1.0, 0.0],
-                [-1.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
+                [1, 0, 0, 0],
+                [0, 0, -1, 0],
+                [0, 1, 0, 0],
+                [0, 0, 0, 1],
+            ],
+            dtype=torch.float32,
         )
     elif orientation_type == "PA":
         # Rotates the C-arm about the x-axis by 90 degrees
-        # Rotates the C-arm about the z-axis by 90 degrees
+        # Reverses the direction of the y-axis
         reorient = torch.tensor(
             [
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [-1.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
+                [1, 0, 0, 0],
+                [0, 0, 1, 0],
+                [0, 1, 0, 0],
+                [0, 0, 0, 1],
+            ],
+            dtype=torch.float32,
         )
     elif orientation_type is None:
         # Identity transform
         reorient = torch.tensor(
             [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+            ],
+            dtype=torch.float32,
         )
     else:
         raise ValueError(f"Unrecognized orientation {orientation_type}")
@@ -239,3 +239,10 @@ class TorchDRR(RotateDRR):
     ) -> torch.Tensor:
         ...
         raise NotImplementedError() # TODO
+    
+    def get_additional_config(self) -> dict:
+        return {
+            "patch_size": self.patch_size,
+            "orientation_type": self.orientation_type,
+            "reorient": self.reorient.tolist()
+        }

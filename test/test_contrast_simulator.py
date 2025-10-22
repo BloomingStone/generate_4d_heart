@@ -50,9 +50,6 @@ def test_contrast_simulators(
     res = res.to(torch.uint8)
     res = torch.tensor(255) - res
     
-    res = res.transpose(2, 3) # H, W -> W, H
-    res = res.flip(-2)
-    
     N, _, H, W = res.shape
     assert N == len(test_angles)
     

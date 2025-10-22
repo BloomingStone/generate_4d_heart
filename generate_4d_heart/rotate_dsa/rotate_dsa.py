@@ -74,10 +74,9 @@ class RotateDSA:
         gray_reverse: bool = True,
     ) -> tuple[torch.Tensor, dict]:
         frames, json_data = self.run(coronary_type, gray_reverse)
-        frames_new = frames.transpose(-1, -2).flip(-2)
-        save_tif(output_dir / f"{base_name}.tif", frames_new)
-        save_gif(output_dir / f"{base_name}.gif", frames_new)
-        save_pngs(output_dir / f"{base_name}", frames_new)
+        save_tif(output_dir / f"{base_name}.tif", frames)
+        save_gif(output_dir / f"{base_name}.gif", frames)
+        save_pngs(output_dir / f"{base_name}", frames)
         with open(output_dir / f"{base_name}.json", "w") as f:
             json.dump(json_data, f)
         return frames, json_data
