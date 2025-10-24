@@ -59,7 +59,7 @@ def test_contrast_simulators(
             image_2d=img
         )
         
-    data.save(output_dir)
+    # data.save(output_dir)
 
 # TODO need to be test
 # air = torch.where(volume <= -800)

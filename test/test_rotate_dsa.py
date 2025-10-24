@@ -38,7 +38,8 @@ def _rotate_dsa_mock(
         assert isinstance(frames, torch.Tensor)
         assert frames.shape == (drr.rotate_cfg.total_frame, 1, *drr.image_size)
         assert "frames" in geo_json
-        assert all("angle" in f for f in geo_json["frames"])
+        assert all("alpha_degree" in f for f in geo_json["frames"])
+        assert all("beta_degree" in f for f in geo_json["frames"])
 
 def test_rotate_dsa_mock_small():
     _rotate_dsa_mock((10, 10, 10), 120)

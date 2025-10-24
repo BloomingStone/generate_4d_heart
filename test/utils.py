@@ -37,8 +37,7 @@ def get_static_volume_reader():
 
 readers = {
     "volumes_reader": get_volumes_reader(),
-    "volume_dvf_reader": get_volume_dvf_reader(),
-    "static_volume_reader": get_static_volume_reader()
+    "volume_dvf_reader": get_volume_dvf_reader()
 }
 
 simulators = {

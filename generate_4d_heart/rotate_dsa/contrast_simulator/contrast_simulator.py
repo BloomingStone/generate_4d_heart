@@ -13,3 +13,13 @@ class ContrastSimulator(Protocol):
         coronary_label: torch.Tensor,
     ) -> torch.Tensor:
         ...
+
+class IdentityContrast(ContrastSimulator):
+    def simulate(
+        self, 
+        ori_volume: torch.Tensor, 
+        cavity_label: torch.Tensor, 
+        coronary_label: torch.Tensor
+    ) -> torch.Tensor:
+        return ori_volume
+        

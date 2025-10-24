@@ -10,7 +10,7 @@ from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, Th
 from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 
-from utils import output_root_dir, readers, simulators
+from utils import output_root_dir, readers, simulators, get_static_volume_reader
 
 @pytest.mark.parametrize("reader_name, reader", readers.items())
 @pytest.mark.parametrize("sim_name, simulator", simulators.items())
@@ -44,7 +44,8 @@ def test_rotate_dsa_integration(
         shutil.rmtree(output_dir)
     frames, geometry_json = dsa.run_and_save(
         output_dir=output_dir,
-        coronary_type=coronary_type
+        coronary_type=coronary_type,
+        gif_fps=10
     )
     
     # 验证输出格式
@@ -62,14 +63,13 @@ def test_rotate_dsa_integration(
     for frame_info in geometry_json["frames"]:
         assert "frame" in frame_info
         assert "phase" in frame_info
-        assert "angle" in frame_info
-        angle = frame_info["angle"]
-        assert isinstance(angle, tuple) and len(angle) == 3
+        assert "alpha_degree" in frame_info
+        assert "beta_degree" in frame_info
+        alpha_degree = frame_info["alpha_degree"]
+        assert isinstance(alpha_degree, float)
+        beta_degree = frame_info["beta_degree"]
+        assert isinstance(beta_degree, float)
         assert isinstance(frame_info["phase"], (int, float))
-        R_w2c = frame_info["R_w2c"]
-        T_w2c = frame_info["T_w2c"]
-        assert isinstance(R_w2c, list) and len(R_w2c) == 3 and len(R_w2c[0]) == 3
-        assert isinstance(T_w2c, list) and len(T_w2c) == 3
     
     # 验证输出文件
     assert (output_dir / "rotate_dsa.tif").exists()
@@ -82,7 +82,7 @@ def test_rotate_dsa_integration(
     (
         ("volumes_reader", readers["volumes_reader"], "multipli_contrast", MultipliContrast(), "LCA"),
         ("volume_dvf_reader", readers["volume_dvf_reader"], "multipli_contrast", MultipliContrast(), "LCA"),
-        ("static_volume_reader", readers["static_volume_reader"], "multipli_contrast", MultipliContrast(), "LCA")
+        ("static_volume_reader", get_static_volume_reader(), "multipli_contrast", MultipliContrast(), "LCA")
     )
 )
 def test_rotate_dsa_integration_full(

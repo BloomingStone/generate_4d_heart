@@ -104,6 +104,7 @@ class RotateDRR(Protocol):
         """
         Get Rotation(R) and Translation(T) of source (or camera). It may be variant for different drr projectioners.
         R and T can be used as calculate world to camera matrix.
+        usually z is the direction of X-rays are emitted
 
         Args:
             frame (int): frame_index

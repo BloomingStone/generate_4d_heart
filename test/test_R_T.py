@@ -1,4 +1,4 @@
-from generate_4d_heart.rotate_dsa.rotate_drr.torch_drr import TorchDRR
+from generate_4d_heart.rotate_dsa.rotate_drr.torch_drr import TorchDRR, RotatedParameters
 import torch
 
 def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
@@ -34,9 +34,12 @@ def _axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
 
 
 def test_R_T():
-    drr = TorchDRR()
-    drr.rotate_cfg.alpha_start = 60 #degree
-    drr.rotate_cfg.beta_start = 30
+    drr = TorchDRR(
+        rotate_cfg=RotatedParameters(
+            alpha_start=60,
+            beta_start=30
+        )
+    )
     
     alpha, beta, _ = drr.rotate_cfg.get_rotaiton_radian_at_frame(0)
     sod = drr.c_arm_cfg.sod

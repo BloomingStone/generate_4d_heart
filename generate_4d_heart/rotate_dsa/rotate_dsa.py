@@ -72,10 +72,11 @@ class RotateDSA:
         coronary_type: Literal["LCA", "RCA"],
         base_name: str = "rotate_dsa",
         gray_reverse: bool = True,
+        gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
     ) -> tuple[torch.Tensor, dict]:
         frames, json_data = self.run(coronary_type, gray_reverse)
         save_tif(output_dir / f"{base_name}.tif", frames)
-        save_gif(output_dir / f"{base_name}.gif", frames)
+        save_gif(output_dir / f"{base_name}.gif", frames, gif_fps)
         save_pngs(output_dir / f"{base_name}", frames)
         with open(output_dir / f"{base_name}.json", "w") as f:
             json.dump(json_data, f)
@@ -100,16 +101,13 @@ class RotateDSA:
         res["frames"] = []
         
         for f in range(self.drr.rotate_cfg.total_frame):
-            R, T = self.drr.get_R_T_at_frame(f)
-            R_w2c = R.squeeze().T
-            T_w2c = - R_w2c @ T.squeeze()
+            alpha, beta, _ = self.drr.rotate_cfg.get_rotation_angle_at_frame(f)
             d = {
                 "time_s": f / self.drr.rotate_cfg.fps,
                 "frame": f,
                 "phase": float(self._get_phase_at_frame(f)),
-                "angle": self.drr.rotate_cfg.get_rotation_angle_at_frame(f),
-                "R_w2c": R_w2c.squeeze().tolist(),
-                "T_w2c": T_w2c.squeeze().tolist()
+                "alpha_degree": alpha,
+                "beta_degree": beta,
             }
             
             res["frames"].append(d)
