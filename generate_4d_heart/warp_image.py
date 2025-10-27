@@ -24,6 +24,7 @@ def generate_4d_cta(
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     dvf2ddf = DVF2DDF(num_steps=7, mode="bilinear", padding_mode="zeros").to(device)
     warp_image = Warp(mode="bilinear", padding_mode="zeros").to(device)
+    warp_label = Warp(mode="nearest", padding_mode="zeros").to(device)
     
     roi = ROI.from_json(roi_json)
     
@@ -41,8 +42,8 @@ def generate_4d_cta(
     coronary = coronary[None, None].half()
     
     for phase in tqdm(range(NUM_TOTAL_PHASE), desc=f'generating 4d cta for {image_path.name}...'):
-        dvf_tensor = load_and_zoom_dvf(dvf_dir / f'phase_{phase:02d}.nii.gz', roi, device)
-        ddf = dvf2ddf(dvf_tensor)
+        dvf_tensor = load_and_zoom_dvf(dvf_dir / f'phase_{phase:02d}.nii.gz', roi, device).to(device)
+        ddf = dvf2ddf(dvf_tensor).half()
         save_nii(
             output_cta_path / "warped_image" / f"{phase:02d}.nii.gz",
             warp_image(image, ddf),
@@ -52,7 +53,7 @@ def generate_4d_cta(
         
         save_nii(
             output_cta_path / "warped_coronary" / f"{phase:02d}.nii.gz",
-            warp_image(image, ddf),
+            warp_label(coronary, ddf),
             image_affine,
             is_label=True
         )
