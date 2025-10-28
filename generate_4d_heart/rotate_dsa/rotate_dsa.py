@@ -45,7 +45,13 @@ class RotateDSA:
         for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
             phase = self._get_phase_at_frame(f)
             read_res = self.reader.get_data(phase).to_device(self.drr.device)
-            coronary = read_res.lca_label if coronary_type == "LCA" else read_res.rca_label
+            
+            if coronary_type == "LCA":
+                coronary = read_res.lca_label
+                affine = read_res.lca_centering_affine
+            else:
+                coronary = read_res.rca_label
+                affine = read_res.rca_centering_affine
             
             volume = self.constrast_sim.simulate(
                 ori_volume=read_res.volume,
@@ -56,7 +62,7 @@ class RotateDSA:
                 frame=f,
                 volume=volume,
                 coronary=coronary,
-                affine=read_res.affine
+                affine=affine
             )
             frames[f] = drr.cpu()
         
@@ -89,13 +95,13 @@ class RotateDSA:
         )
     
     def get_geometry_json(self) -> dict:
-        assert self.drr.label_center_voxel is not None
         res = {}
         res["origin_image_size"] = self.reader.origin_image_size
         res["origin_image_affine"] = self.reader.origin_image_affine.tolist()
+        res["lca_centering_affine"] = self.reader.lca_centering_affine.tolist()
+        res["rca_centering_affine"] = self.reader.rca_centering_affine.tolist()
         res["c_arm_geometry"] = self.drr.c_arm_cfg.to_dict()
         res["rotate_parameters"] = self.drr.rotate_cfg.to_dict()
-        res["label_center_voxel"] = self.drr.label_center_voxel
         if (additional_config := self.drr.get_additional_config()):
             res["additional_config"] = additional_config
         res["frames"] = []

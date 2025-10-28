@@ -36,7 +36,12 @@ def test_contrast_simulators(
     output_dir.mkdir(exist_ok=True, parents=True)
     
     data = reader.get_data(CardiacPhase(0.))
-    coronary = data.lca_label if coronary_type == "LCA" else data.rca_label
+    if coronary_type == "LCA":
+        coronary = data.lca_label
+        affine = data.lca_centering_affine
+    else:
+        coronary = data.rca_label
+        affine = data.rca_centering_affine
     
     drr = TorchDRR(rotate_cfg=RotatedParameters(total_frame=1))
     volume = simulator.simulate(
@@ -48,7 +53,7 @@ def test_contrast_simulators(
         angles=test_angles,
         volume=volume,
         coronary=coronary,
-        affine=data.affine
+        affine=affine
     )
     
     res = ((res - res.min()) / (res.max() - res.min())) * 255

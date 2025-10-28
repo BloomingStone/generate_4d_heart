@@ -3,7 +3,7 @@ from typing import Literal
 
 import torch
 
-from .data_reader import DataReader, DataReaderResult, separate_coronary, load_nifti
+from .data_reader import DataReader, DataReaderResult, separate_coronary, load_nifti, get_coronary_centering_affine
 from ... import NUM_TOTAL_PHASE, NUM_TOTAL_CAVITY_LABEL
 from ..cardiac_phase import CardiacPhase
 
@@ -20,6 +20,8 @@ class StaticVolumeReader(DataReader):
         coronary, _ = load_nifti(coronary_path, is_label=True)
         self.lca_label, self.rca_label = separate_coronary(coronary)
         self.origin_image_size = self.volume.shape[-3:]   #type: ignore
+        self.lca_centering_affine = get_coronary_centering_affine(self.lca_label, self.origin_image_affine)
+        self.rca_centering_affine = get_coronary_centering_affine(self.rca_label, self.origin_image_affine)
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         return DataReaderResult(
@@ -28,7 +30,9 @@ class StaticVolumeReader(DataReader):
             cavity_label=self.cavity.cpu().to(torch.uint8),
             lca_label=self.lca_label.cpu().to(torch.bool),
             rca_label=self.rca_label.cpu().to(torch.bool),
-            affine=self.origin_image_affine
+            affine=self.origin_image_affine,
+            lca_centering_affine=self.lca_centering_affine,
+            rca_centering_affine=self.rca_centering_affine
         )
 
 class StaticLabelReader(DataReader):
@@ -44,6 +48,8 @@ class StaticLabelReader(DataReader):
         self.lca_label, self.rca_label = separate_coronary(coronary)
         self.origin_image_size = self.cavity.shape[-3:]   #type: ignore
         self.volume = self.lca_label if coronary_type == "LCA" else self.rca_label
+        self.lca_centering_affine = get_coronary_centering_affine(self.lca_label, self.origin_image_affine)
+        self.rca_centering_affine = get_coronary_centering_affine(self.rca_label, self.origin_image_affine)
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         return DataReaderResult(
@@ -52,5 +58,7 @@ class StaticLabelReader(DataReader):
             cavity_label=self.cavity.cpu().to(torch.uint8),
             lca_label=self.lca_label.cpu().to(torch.bool),
             rca_label=self.rca_label.cpu().to(torch.bool),
-            affine=self.origin_image_affine
+            affine=self.origin_image_affine,
+            lca_centering_affine=self.lca_centering_affine,
+            rca_centering_affine=self.rca_centering_affine
         )

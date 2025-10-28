@@ -13,8 +13,8 @@ from ..movement_enhancer import MovementEnhancer
 from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
-    DataReader, DataReaderResult, separate_coronary, 
-    load_nifti, load_nifti_with_roi_crop, load_and_zoom_dvf, pre_load
+    DataReader, DataReaderResult, separate_coronary, get_coronary_centering_affine,
+    load_nifti_with_roi_crop, load_and_zoom_dvf, pre_load
 )
 
 
@@ -159,6 +159,10 @@ class VolumeDVFReader(DataReader):
         self.warpper = LazyCardiacDVFWarpModule(
             dvf_list, image, cavity_label, coronary_label, device
         ).to(device)
+        
+        lca, rca = separate_coronary(coronary_label)
+        self.lca_centering_affine = get_coronary_centering_affine(lca, self.origin_image_affine)
+        self.rca_centering_affine = get_coronary_centering_affine(rca, self.origin_image_affine)
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         image, cavity, coronary, _ = self.warpper(phase)
@@ -173,7 +177,9 @@ class VolumeDVFReader(DataReader):
             cavity_label=cavity.cpu(),
             lca_label=lca.cpu(),
             rca_label=rca.cpu(),
-            affine=self.origin_image_affine
+            affine=self.origin_image_affine,
+            lca_centering_affine=self.lca_centering_affine,
+            rca_centering_affine=self.rca_centering_affine
         )
     
     def save_roi(self, output_dir: Path):

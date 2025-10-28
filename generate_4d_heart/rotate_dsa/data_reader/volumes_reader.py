@@ -2,7 +2,7 @@ from pathlib import Path
 
 import torch
 
-from .data_reader import DataReader, DataReaderResult, separate_coronary, load_nifti
+from .data_reader import DataReader, DataReaderResult, separate_coronary, load_nifti, get_coronary_centering_affine
 from ... import NUM_TOTAL_PHASE, NUM_TOTAL_CAVITY_LABEL
 from ..cardiac_phase import CardiacPhase
 
@@ -65,6 +65,10 @@ class VolumesReader(DataReader):
             coronary_label, _ = load_nifti(cor_file, is_label=True)
 
             lca_label, rca_label = separate_coronary(coronary_label)
+            
+            if index == 0:
+                self.lca_centering_affine = get_coronary_centering_affine(lca_label, self.origin_image_affine)
+                self.rca_centering_affine = get_coronary_centering_affine(rca_label, self.origin_image_affine)
 
             self.data.append(DataReaderResult(
                 phase=phase,
@@ -72,7 +76,9 @@ class VolumesReader(DataReader):
                 cavity_label=cavity_label.cpu(),
                 lca_label=lca_label.cpu(),
                 rca_label=rca_label.cpu(),
-                affine=affine
+                affine=affine,
+                lca_centering_affine=self.lca_centering_affine,
+                rca_centering_affine=self.rca_centering_affine
             ))
         
         
@@ -115,6 +121,8 @@ class VolumesReader(DataReader):
             cavity_label=cav_interp,
             lca_label=lca_interp,
             rca_label=rca_interp,
-            affine=d0.affine  # assume same affine
+            affine=d0.affine,
+            lca_centering_affine=self.lca_centering_affine,
+            rca_centering_affine=self.rca_centering_affine
         )
 

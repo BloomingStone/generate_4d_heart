@@ -24,7 +24,9 @@ def _rotate_dsa_mock(
         cavity_label=torch.randint(0, NUM_TOTAL_CAVITY_LABEL+1, shape).to(torch.uint8),
         lca_label=torch.randint(0, 2, shape).to(torch.bool),
         rca_label=torch.randint(0, 2, shape).to(torch.bool),
-        affine=np.eye(4)
+        affine=np.eye(4),
+        lca_centering_affine=np.eye(4),
+        rca_centering_affine=np.eye(4)
     )
     reader.origin_image_affine = torch.eye(4)
     reader.origin_image_size = volume_shape

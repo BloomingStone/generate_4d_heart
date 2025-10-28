@@ -54,19 +54,6 @@ def get_reorientation(
         raise ValueError(f"Unrecognized orientation {orientation_type}")
     return reorient
 
-def recenter(
-    original_affine: np.ndarray,
-    center_voxel: tuple[int, int, int]
-) -> np.ndarray:
-    """set the center of the image to the given center_voxel
-    """
-    B = original_affine[:3, :3]
-    new_t = -(B @ np.array(center_voxel))
-    T = np.eye(4)
-    T[:3, :3] = B
-    T[:3, 3] = new_t
-    return T
-
 
 class TorchDRR(RotateDRR):
     def __init__(
@@ -81,22 +68,11 @@ class TorchDRR(RotateDRR):
         self.patch_size = patch_size
         self.orientation_type = orientation_type
         self.diff_drr: DRR | None = None
-        self.label_center_voxel: tuple[int, int, int] | None = None
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.reorient = get_reorientation(self.orientation_type)
         sod = self.c_arm_cfg.sod
         self.translations = torch.tensor([[0.0, sod, 0.0]], device=self.device)
         
-        
-    def _setup_label_center_voxel(self, coronary: torch.Tensor):
-        label_center: tuple[int, int, int] = center_of_mass(coronary.squeeze().cpu().numpy()) # type: ignore
-        W, H, D = coronary.shape[-3:]
-        image_center = (W/2, H/2, D/2)
-        self.label_center_voxel = (
-            int( (image_center[0] + label_center[0]) / 2 ), # left and right, set as the mean of image_center and label_center
-            int( (image_center[1] + label_center[1]) / 2 ), # antero-posterior, same as above
-            int( image_center[2] )                          # up and down, set as the center of image
-        )
 
 
     def _setup(
@@ -108,9 +84,6 @@ class TorchDRR(RotateDRR):
         assert volume.dim() >= 3
         w, h, d = volume.shape[-3:]
         shape = (1, w, h, d)
-        
-        assert self.label_center_voxel is not None
-        affine = recenter(affine, self.label_center_voxel)
         
         subject = Subject(
             volume=ScalarImage(tensor=volume.reshape(*shape).to(self.device), affine=affine),
@@ -176,9 +149,6 @@ class TorchDRR(RotateDRR):
         coronary: torch.Tensor,
         affine: np.ndarray,
     ) -> torch.Tensor:
-        if frame == 0:
-            self._setup_label_center_voxel(coronary)
-        
         self._setup(volume, coronary, affine)
         
         rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)
@@ -211,15 +181,11 @@ class TorchDRR(RotateDRR):
         angles: Degree | Sequence[Degree],
         volume: torch.Tensor,
         coronary: torch.Tensor,
-        affine: np.ndarray,
-        make_center_at_coronary: bool = True
+        affine: np.ndarray
     ) -> torch.Tensor:
         if isinstance(angles, float | int):
             angles = [angles]
         rotations = torch.tensor([[radians(a), 0.0, 0.0] for a in angles], device=self.device)
-        
-        if make_center_at_coronary:
-            self._setup_label_center_voxel(coronary)
         self._setup(volume, coronary, affine)
         
         assert rotations.dim() == 2 and rotations.shape[1] == 3

@@ -79,8 +79,6 @@ class RotateDRR(Protocol):
     c_arm_cfg: CArmGeometry
     rotate_cfg: RotatedParameters
     
-    label_center_voxel: tuple[int, int, int] | None
-    
     def get_projection_at_frame(
         self, 
         frame: int,
@@ -116,7 +114,7 @@ class RotateDRR(Protocol):
     
     def get_additional_config(self) -> dict:
         """
-        Get additional config for drr besides `c_arm_geometry`, `rotate_parameters` and `label_center_voxel` for output in json file.
+        Get additional config for drr besides `c_arm_geometry`, `rotate_parameters` for output in json file.
         """
         return {}
     

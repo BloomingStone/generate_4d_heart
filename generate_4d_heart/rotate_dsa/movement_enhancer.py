@@ -3,8 +3,8 @@ from typing import Protocol
 import cupy as cp
 from cupyx.scipy.ndimage import distance_transform_edt, binary_dilation, gaussian_filter
 import torch
-from torch.utils.dlpack import to_dlpack as tensor_to_dlpack
-from torch.utils.dlpack import from_dlpack as tensor_from_dlpack
+from torch.utils.dlpack import to_dlpack as tensor2dlpack
+from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
 from .. import LV_LABEL, LV_MYO_LABEL
 
@@ -26,10 +26,10 @@ class CoronaryBoundLV(MovementEnhancer):
         lv = (cavity_label.to(torch.uint8) == LV_LABEL).squeeze()
         myo = (cavity_label.to(torch.uint8) == LV_MYO_LABEL).squeeze()
         
-        lv_cp = cp.from_dlpack(tensor_to_dlpack(lv.cuda())).astype(cp.bool_)
-        myo_cp = cp.from_dlpack(tensor_to_dlpack(myo.cuda())).astype(cp.bool_)
+        lv_cp = cp.from_dlpack(tensor2dlpack(lv.cuda())).astype(cp.bool_)
+        myo_cp = cp.from_dlpack(tensor2dlpack(myo.cuda())).astype(cp.bool_)
         
-        coronary_cp = cp.from_dlpack(tensor_to_dlpack(coronary_label.squeeze().cuda())).astype(cp.uint8)
+        coronary_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().cuda())).astype(cp.uint8)
         self.dilate_coronary_mask = binary_dilation(coronary_cp, structure=cp.ones((9,9,9))).astype(cp.bool_)
         self.smooth_mask = binary_dilation(self.dilate_coronary_mask).astype(cp.bool_)
         
@@ -45,7 +45,7 @@ class CoronaryBoundLV(MovementEnhancer):
 
     
     def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
-        dvf_cp = cp.from_dlpack(tensor_to_dlpack(dvf.cuda()))
+        dvf_cp = cp.from_dlpack(tensor2dlpack(dvf.cuda()))
         dvf_cp[:,:, self.dilate_coronary_mask] = (
             dvf_cp[:, :, *self.indices] * self.alpha
             + dvf_cp[:, :, self.dilate_coronary_mask] * (1 - self.alpha)
@@ -55,5 +55,5 @@ class CoronaryBoundLV(MovementEnhancer):
             smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
         dvf_cp[:, :, self.smooth_mask] = smoothed[:, :, self.smooth_mask]
         
-        dvf = tensor_from_dlpack(dvf_cp.toDlpack()).cpu()
+        dvf = dlpack2tensor(dvf_cp.toDlpack()).cpu()
         return dvf

@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import cupy as cp
 from cupyx.scipy.ndimage import binary_dilation
-from torch.utils.dlpack import to_dlpack as tensor_to_dlpack
-from torch.utils.dlpack import from_dlpack as tensor_from_dlpack
+from torch.utils.dlpack import to_dlpack as tensor2dlpack
+from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
 from .contrast_simulator import ContrastSimulator
 
