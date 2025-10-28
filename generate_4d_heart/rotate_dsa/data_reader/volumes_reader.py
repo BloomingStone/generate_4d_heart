@@ -79,7 +79,7 @@ class VolumesReader(DataReader):
                 affine=affine,
                 lca_centering_affine=self.lca_centering_affine,
                 rca_centering_affine=self.rca_centering_affine
-            ))
+            ).to_device(torch.device("cpu")))
         
         
     
@@ -97,7 +97,8 @@ class VolumesReader(DataReader):
         if w < 1e-6:  # exactly at frame idx0
             return self.data[idx0]
 
-        d0, d1 = self.data[idx0], self.data[idx1]
+        d0 = self.data[idx0].to_device(torch.device("cpu"))
+        d1 = self.data[idx1].to_device(torch.device("cpu"))
 
         # === intensity volume interpolation ===
         vol_interp = (1 - w) * d0.volume + w * d1.volume

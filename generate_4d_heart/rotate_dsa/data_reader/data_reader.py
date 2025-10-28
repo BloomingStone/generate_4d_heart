@@ -164,11 +164,16 @@ class DataReaderResult:
     
     def to_device(self, device: torch.device) -> "DataReaderResult":
         """Move all tensors to the specified device"""
-        self.volume = self.volume.to(device)
-        self.cavity_label = self.cavity_label.to(device)
-        self.lca_label = self.lca_label.to(device)
-        self.rca_label = self.rca_label.to(device)
-        return self
+        return DataReaderResult(
+            self.phase,
+            self.volume.to(device),
+            self.cavity_label.to(device),
+            self.lca_label.to(device),
+            self.rca_label.to(device),
+            self.affine,
+            self.lca_centering_affine,
+            self.rca_centering_affine
+        )
     
     def get_coronary_central_line(
         self, 
