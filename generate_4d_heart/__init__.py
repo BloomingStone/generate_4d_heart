@@ -14,7 +14,11 @@ NUM_TOTAL_CAVITY_LABEL = 5
 # The number of total points in SSM
 NUM_TOTAL_POINTS = 500
 
-# The label of LV
+# The labels
+LV_MYO_LABEL = 1
 LV_LABEL = 2
+RV_LABEL = 3
+LA_LABEL = 4
+RA_LABEL = 5
 
 from .moving_dvf.dvf import generate_4d_dvf
