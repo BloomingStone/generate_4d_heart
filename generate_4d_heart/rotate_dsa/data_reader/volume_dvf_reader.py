@@ -14,7 +14,7 @@ from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
     DataReader, DataReaderResult, separate_coronary, get_coronary_centering_affine,
-    load_nifti_with_roi_crop, load_and_zoom_dvf, pre_load
+    load_nifti_with_roi_crop, load_and_zoom_dvf, pre_load, load_nifti
 )
 
 
@@ -137,6 +137,7 @@ class VolumeDVFReader(DataReader):
         self.origin_image_affine = affine if affine is not None else np.eye(4)
         cavity_label, _ = load_nifti_with_roi_crop(cavity_nii, self.roi, is_label=True)
         coronary_label, _ = load_nifti_with_roi_crop(coronary_nii, self.roi, is_label=True)
+        coronary_label_nocrop, coronary_affine = load_nifti(coronary_nii, is_label=True)
 
         self.origin_image_size = self.image_before_cropped.shape[2:]   #type: ignore
         
@@ -160,9 +161,9 @@ class VolumeDVFReader(DataReader):
             dvf_list, image, cavity_label, coronary_label, device
         ).to(device)
         
-        lca, rca = separate_coronary(coronary_label)
-        self.lca_centering_affine = get_coronary_centering_affine(lca, self.origin_image_affine)
-        self.rca_centering_affine = get_coronary_centering_affine(rca, self.origin_image_affine)
+        lca, rca = separate_coronary(coronary_label_nocrop)
+        self.lca_centering_affine = get_coronary_centering_affine(lca, coronary_affine)
+        self.rca_centering_affine = get_coronary_centering_affine(rca, coronary_affine)
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         image, cavity, coronary, _ = self.warpper(phase)

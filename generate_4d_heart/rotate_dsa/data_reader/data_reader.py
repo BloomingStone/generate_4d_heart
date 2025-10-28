@@ -130,7 +130,7 @@ def get_coronary_centering_affine(coronary_label: torch.Tensor, volume_affine: n
         volume_affine (np.ndarray): affine matrix of the volume, shape: (4, 4)
     """
     
-    label_center: tuple[int, int, int] = center_of_mass(cp.from_dlpack(tensor2dlpack(coronary_label.cuda()))) # type: ignore
+    label_center: tuple[int, int, int] = center_of_mass(cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().cuda()))) # type: ignore
     W, H, D = coronary_label.shape[-3:]
     image_center = (W/2, H/2, D/2)
     label_center_voxel = (
