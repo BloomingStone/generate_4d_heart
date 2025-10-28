@@ -1,15 +1,17 @@
 import torch
 import numpy as np
-from scipy.ndimage import binary_dilation
+import cupy as cp
+from cupyx.scipy.ndimage import binary_dilation
+from torch.utils.dlpack import to_dlpack as tensor_to_dlpack
+from torch.utils.dlpack import from_dlpack as tensor_from_dlpack
 
 from .contrast_simulator import ContrastSimulator
-
 
 class MultipliContrast(ContrastSimulator):
     def __init__(
         self, 
-        coronary_factor: float = 15.0,
-        cavity_factor: float = 0.3
+        coronary_factor: float = 5.0,
+        cavity_factor: float = 0.7,
     ):
         """
         adjust the contrast of coronary and cavity by simple multiplication
@@ -23,17 +25,21 @@ class MultipliContrast(ContrastSimulator):
         cavity_label: torch.Tensor,
         coronary_label: torch.Tensor,
     ) -> torch.Tensor:
-        res = ori_volume.clone()
-        sentinel_mask = (res <= -2000)  # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
-        min_value = res[~sentinel_mask].min()
-        res[sentinel_mask] = min_value
-        if res.min() < 0:
-            res -= res.min()
-
-        heart_label = binary_dilation((coronary_label > 0).cpu().numpy().astype(np.uint8))
-        heart_label = torch.from_numpy(heart_label).to(coronary_label.device)
+        res = ori_volume
         assert cavity_label.dtype == torch.uint8
         assert coronary_label.dtype == torch.bool
-        res[heart_label>0 & (~coronary_label)] *= self.cavity_factor
-        res[coronary_label] *= self.coronary_factor
+        coronary_mean = res[coronary_label].mean()
+        
+        bone_HU_min = 500 + 1024
+        
+        if ori_volume.max() > bone_HU_min:
+            bone_area = ori_volume > bone_HU_min
+            bone_max = res[bone_area].max()
+            bone_factor = coronary_mean / bone_max * self.coronary_factor * 0.5
+            res[bone_area] *= bone_factor
+        
+        res[cavity_label>0 & (~coronary_label)] *= self.cavity_factor
+        res[coronary_label] = coronary_mean * self.coronary_factor
+        
+        
         return res

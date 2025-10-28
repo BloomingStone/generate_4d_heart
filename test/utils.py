@@ -1,4 +1,5 @@
 from pathlib import Path
+from functools import lru_cache
 
 from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader, StaticVolumeReader
 from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
@@ -35,12 +36,27 @@ def get_static_volume_reader():
         coronary_path=data_dir / "coronary.nii.gz",
     )
 
-readers = {
-    "volumes_reader": get_volumes_reader(),
-    "volume_dvf_reader": get_volume_dvf_reader()
-}
+@lru_cache(maxsize=None)
+def get_reader(reader_name: str):
+    print("Creating readers...")  # 可用于验证只执行一次
+    match reader_name:
+        case "volumes_reader":
+            return get_volumes_reader()
+        case "volume_dvf_reader":
+            return get_volume_dvf_reader()
+        case "static_volume_reader":
+            return get_static_volume_reader()
+        case _:
+            raise ValueError(f"Unknown reader name: {reader_name}")
 
-simulators = {
-    "multipli_contrast": MultipliContrast(),
-    "threshold_multipli_contrast": ThresholdMultipliContrast()
-}
+@lru_cache(maxsize=None)
+def get_simulator(simulator_name: str):
+    print("Creating simulators...")  # 可用于验证只执行一次
+    
+    match simulator_name:
+        case "multipli_contrast":
+            return MultipliContrast()
+        case "threshold_multipli_contrast":
+            return ThresholdMultipliContrast()
+        case _:
+            raise ValueError(f"Unknown simulator name: {simulator_name}")

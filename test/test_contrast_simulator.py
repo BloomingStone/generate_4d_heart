@@ -1,22 +1,27 @@
 from typing import Literal
-from pathlib import Path
 import shutil
 
 import pytest
 import torch
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast, ContrastSimulator
+from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from generate_4d_heart.rotate_dsa.data_reader import DataReader
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.saver import save_png
 
-from utils import output_root_dir, readers, simulators
+from utils import output_root_dir, get_reader, get_simulator
 
 test_angles = list(range(0, 180, 30))   # list of primary angles
 
-@pytest.mark.parametrize("reader_name, reader", readers.items())
-@pytest.mark.parametrize("sim_name, simulator", simulators.items())
+@pytest.mark.parametrize("reader_name, reader", (
+    ("volumes_reader", get_reader("volumes_reader")),
+    ("volume_dvf_reader", get_reader("volume_dvf_reader"))
+))
+@pytest.mark.parametrize("sim_name, simulator", (
+    ("multipli_contrast", get_simulator("multipli_contrast")),
+    ("threshold_multipli_contrast", get_simulator("threshold_multipli_contrast"))
+))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_contrast_simulators(
     reader_name: str,

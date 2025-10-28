@@ -44,7 +44,7 @@ class RotateDSA:
         frames = torch.zeros(total_frame, 1, w, h)
         for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
             phase = self._get_phase_at_frame(f)
-            read_res = self.reader.get_data(phase)
+            read_res = self.reader.get_data(phase).to_device(self.drr.device)
             coronary = read_res.lca_label if coronary_type == "LCA" else read_res.rca_label
             
             volume = self.constrast_sim.simulate(

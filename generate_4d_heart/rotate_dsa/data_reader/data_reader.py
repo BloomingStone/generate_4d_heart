@@ -1,4 +1,4 @@
-from typing import Protocol, TypeVar
+from typing import Protocol, Literal
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,6 +7,7 @@ import numpy as np
 from torch.nn import functional as F
 import cupy as cp
 from cupyx.scipy.ndimage import label, center_of_mass
+from skimage.morphology import skeletonize
 from torch.utils.dlpack import from_dlpack, to_dlpack
 from nibabel.loadsave import load as nib_load
 from nibabel.nifti1 import Nifti1Image
@@ -15,7 +16,7 @@ from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 
 
-def _pre_load(file: Path) -> tuple[Nifti1Image, np.ndarray]:
+def pre_load(file: Path) -> tuple[Nifti1Image, np.ndarray]:
     if not file.exists():
         raise FileNotFoundError(f"nii file not found: {file}")
     image_nii = nib_load(file)
@@ -25,7 +26,7 @@ def _pre_load(file: Path) -> tuple[Nifti1Image, np.ndarray]:
 
 def load_nifti(file: Path, is_label: bool = False) -> tuple[torch.Tensor, np.ndarray]:
     """load nifti file as torch tensor (shape: 1, 1, D, H, W) and return its affine matrix"""
-    img, affine = _pre_load(file)
+    img, affine = pre_load(file)
     tensor = torch.from_numpy(img.get_fdata())
     if is_label:
         tensor = tensor.round().to(torch.uint8)
@@ -35,11 +36,11 @@ def load_nifti(file: Path, is_label: bool = False) -> tuple[torch.Tensor, np.nda
     return tensor, affine
 
 def load_nifti_with_roi_crop(file: Path, roi: ROI, is_label: bool = False) -> tuple[torch.Tensor, np.ndarray]:
-    img, affine = _pre_load(file)
+    img, affine = pre_load(file)
     img = roi.crop(img)
     tensor = torch.from_numpy(img.get_fdata())
     if is_label:
-        tensor = tensor.round().to(torch.int8)
+        tensor = tensor.round().to(torch.uint8)
     else:
         tensor = tensor.to(torch.float32)
     tensor = tensor[None][None]  # add batch and channel dim
@@ -55,7 +56,7 @@ def load_and_zoom_dvf(
     """
     read dvf from nifti file and zoom it to the roi size
     """
-    dvf_nii, _ = _pre_load(dvf_path)
+    dvf_nii, _ = pre_load(dvf_path)
     dvf_tensor = torch.from_numpy(dvf_nii.get_fdata())
     dvf_tensor = dvf_tensor.to(operating_device).to(torch.float)  # (H,W,D,3)
     dvf_tensor = dvf_tensor.squeeze().permute(3, 0, 1, 2)[None] # (1,3,H,W,D)
@@ -165,15 +166,45 @@ class DataReaderResult:
             affine=self.affine
         )
     
-    def save(self, output_dir: Path):
+    def get_coronary_central_line(self, coronary_type: Literal["LCA", "RCA"]) -> np.ndarray:
+        """Get the central line of the coronary in world coordinate"""
+        if coronary_type == "LCA":
+            label = self.lca_label
+        elif coronary_type == "RCA":
+            label = self.rca_label
+        else:
+            raise ValueError(f"Invalid coronary type: {coronary_type}")
+        
+        skel = skeletonize(label.squeeze().cpu().numpy())
+        skel_xyz = np.nonzero(skel)
+        skel_xyz = np.stack(skel_xyz, axis=1)
+        skel_xyz1 = np.ones((skel_xyz.shape[0], 4))
+        skel_xyz1[:, :3] = skel_xyz
+        skel_xyz1 = (self.affine @ skel_xyz1.T).T
+        skel_xyz1 = skel_xyz1[:, :3]
+        return skel_xyz
+    
+    def save(
+        self, 
+        output_dir: Path,
+        output_nii: bool = True,
+        output_central_line: bool = False,
+    ):
         """Save all tensors to the specified directory"""
         from ...saver import save_nii
         output_dir.mkdir(exist_ok=True, parents=True)
         
-        save_nii(output_dir / f"{self.phase}" / "volume.nii.gz", self.volume, self.affine)
-        save_nii(output_dir / f"{self.phase}" / "cavity_label.nii.gz", self.cavity_label, self.affine, is_label=True)
-        save_nii(output_dir / f"{self.phase}" / "lca_label.nii.gz", self.lca_label, self.affine, is_label=True)
-        save_nii(output_dir / f"{self.phase}" / "rca_label.nii.gz", self.rca_label, self.affine, is_label=True)
+        if output_nii:
+            save_nii(output_dir / f"{self.phase}" / "volume.nii.gz", self.volume, self.affine)
+            save_nii(output_dir / f"{self.phase}" / "cavity_label.nii.gz", self.cavity_label, self.affine, is_label=True)
+            save_nii(output_dir / f"{self.phase}" / "lca_label.nii.gz", self.lca_label, self.affine, is_label=True)
+            save_nii(output_dir / f"{self.phase}" / "rca_label.nii.gz", self.rca_label, self.affine, is_label=True)
+        
+        if output_central_line:
+            lca_central_line = self.get_coronary_central_line("LCA")
+            rca_central_line = self.get_coronary_central_line("RCA")
+            np.save(output_dir / f"{self.phase}" / "lca_central_line.npy", lca_central_line)
+            np.save(output_dir / f"{self.phase}" / "rca_central_line.npy", rca_central_line)
 
 # TODO 用 Dataset/Dataloader 的形式实现 reader
 class DataReader(Protocol):

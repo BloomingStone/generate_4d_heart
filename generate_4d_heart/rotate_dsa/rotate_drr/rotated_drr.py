@@ -123,3 +123,7 @@ class RotateDRR(Protocol):
     @property
     def image_size(self) -> tuple[Pixel, Pixel]:
         return (self.c_arm_cfg.height, self.c_arm_cfg.width)
+    
+    @property
+    def device(self) -> torch.device:
+        ...

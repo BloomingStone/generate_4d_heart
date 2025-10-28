@@ -145,7 +145,7 @@ class ROI:
         affine = affine @ T
         return Nifti1Image(image_data, affine)
     
-    ImageData = TypeVar("image_data", np.ndarray, torch.Tensor, cp.ndarray)
+    ImageData = TypeVar("ImageData", np.ndarray, torch.Tensor, cp.ndarray)
     
     def crop_on_data(self, image: ImageData) -> ImageData:
         """ 
@@ -155,8 +155,7 @@ class ROI:
             np.ndarray: the cropped image data
         """
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
-        image_data = image[x0:x1, y0:y1, z0:z1]
-        return image_data
+        return image[..., x0:x1, y0:y1, z0:z1]
 
     def crop_zoom(self, image: Nifti1Image, is_label: bool) -> Nifti1Image:
         """ 

@@ -82,7 +82,7 @@ class TorchDRR(RotateDRR):
         self.orientation_type = orientation_type
         self.diff_drr: DRR | None = None
         self.label_center_voxel: tuple[int, int, int] | None = None
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.reorient = get_reorientation(self.orientation_type)
         sod = self.c_arm_cfg.sod
         self.translations = torch.tensor([[0.0, sod, 0.0]], device=self.device)
@@ -246,3 +246,7 @@ class TorchDRR(RotateDRR):
             "orientation_type": self.orientation_type,
             "reorient": self.reorient.tolist()
         }
+    
+    @property
+    def device(self) -> torch.device:
+        return self._device

@@ -51,6 +51,16 @@ class VolumesReader(DataReader):
             phase = CardiacPhase.from_index(index, self.n_phases)
 
             volume, affine = load_nifti(img_file)
+            if volume.max() < 2.0:
+                volume *= 2**16  # recover image uses float to represent 16 bit
+            
+            sentinel_mask = (volume <= -2000)  # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
+            min_value = volume[~sentinel_mask].min()
+            volume[sentinel_mask] = min_value
+            
+            if volume.min() < -1000:
+                volume += 1024   # add the offset of 1024
+
             cavity_label, _ = load_nifti(cav_file, is_label=True)
             coronary_label, _ = load_nifti(cor_file, is_label=True)
 

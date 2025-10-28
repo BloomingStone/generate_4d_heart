@@ -1,26 +1,21 @@
 from pathlib import Path
-from typing import Type
+from typing import Type, Callable
 
+import numpy as np
 import torch
+import torch.nn as nn
+from monai.networks.blocks.warp import DVF2DDF, Warp
 from monai.networks.blocks.warp import DVF2DDF, Warp
 from tqdm import tqdm
 
 from ... import NUM_TOTAL_PHASE
-from ..movement_enhancer import MovementEnhancer, IdentityMovementEnhancer
+from ..movement_enhancer import MovementEnhancer
 from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
     DataReader, DataReaderResult, separate_coronary, 
-    load_nifti, load_nifti_with_roi_crop, load_and_zoom_dvf
+    load_nifti, load_nifti_with_roi_crop, load_and_zoom_dvf, pre_load
 )
-
-import torch
-import torch.nn as nn
-from monai.networks.blocks.warp import DVF2DDF, Warp
-
-import torch
-import torch.nn as nn
-from monai.networks.blocks.warp import DVF2DDF, Warp
 
 
 class LazyCardiacDVFWarpModule(nn.Module):
@@ -110,7 +105,7 @@ class VolumeDVFReader(DataReader):
         coronary_nii: Path,
         roi_json: Path,
         dvf_dir: Path,
-        movement_enhancer: Type[MovementEnhancer] = IdentityMovementEnhancer
+        movement_enhancer: None | Type[MovementEnhancer] = None
     ):
         """Reads volume data and corresponding DVFs for 4D cardiac MRI, which usually generated from ..dvf module.
         
@@ -128,22 +123,34 @@ class VolumeDVFReader(DataReader):
         self.device = device
         self.roi = ROI.from_json(roi_json)
         
-        image, self.origin_image_affine = load_nifti_with_roi_crop(image_nii, self.roi, is_label=False)
+        image, affine = pre_load(image_nii)
+        image = torch.from_numpy(image.get_fdata())[None, None].to(torch.float32)
+        sentinel_mask = (image <= -2000)  # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
+        min_value = image[~sentinel_mask].min()
+        image[sentinel_mask] = min_value
+        if image.min() < -1000:
+            image +=1024     # add the offset of 1024
+        
+        self.image_before_cropped = image.clone()
+        image = self.roi.crop_on_data(image)
+
+        self.origin_image_affine = affine if affine is not None else np.eye(4)
         cavity_label, _ = load_nifti_with_roi_crop(cavity_nii, self.roi, is_label=True)
         coronary_label, _ = load_nifti_with_roi_crop(coronary_nii, self.roi, is_label=True)
 
-        self.image_before_cropped, _ = load_nifti(image_nii, is_label=False) # (1,1,D,H,W)
         self.origin_image_size = self.image_before_cropped.shape[2:]   #type: ignore
         
-        self.movement_enhancer = movement_enhancer
-        self.enhancer = self.movement_enhancer(cavity_label, coronary_label)
+        if movement_enhancer is None:
+            self.enhancer: Callable[[torch.Tensor], torch.Tensor] = lambda x: x
+        else:
+            self.enhancer = movement_enhancer(cavity_label, coronary_label)
 
         # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
         dvf_list: list[torch.Tensor] = []
         # TODO: for now only support fixed NUM_TOTAL_PHASE
         for dvf_file in tqdm(sorted(dvf_dir.glob("*.nii.gz")), desc="loading and updating DVFs"):
             dvf_tensor = load_and_zoom_dvf(dvf_file, self.roi, device).half()
-            dvf_tensor = self.enhancer.enhance(dvf_tensor)
+            dvf_tensor = self.enhancer(dvf_tensor)
             dvf_list.append(dvf_tensor)
         
         self.n_phases = len(dvf_list)

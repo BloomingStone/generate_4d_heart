@@ -6,9 +6,9 @@ from .contrast_simulator import ContrastSimulator
 class ThresholdMultipliContrast(ContrastSimulator):
     def __init__(
         self, 
-        lung_threshold: int = -600,
-        heart_threshold: int = 0,
-        bone_threshold: int = 600,
+        lung_threshold: int = -600 + 1024,
+        heart_threshold: int = 0 + 1024,
+        bone_threshold: int = 600 + 1024,
         lung_alpha: float = 1,
         heart_alpha: float = 0.3,
         bone_alpha: float = 1.0,
@@ -32,13 +32,6 @@ class ThresholdMultipliContrast(ContrastSimulator):
         coronary_label: torch.Tensor,
     ) -> torch.Tensor:
         density = ori_volume.clone()
-        sentinel_mask = (density <= -2000)  # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
-        min_value = density[~sentinel_mask].min()
-        density[sentinel_mask] = min_value
-        
-        if density.max() < 2.0:
-            density *= 2**16  # recover image uses float to represent 16 bit
-            density -= 1024
         
         assert density.dtype == torch.float32
         assert coronary_label.dtype == torch.bool
@@ -54,8 +47,5 @@ class ThresholdMultipliContrast(ContrastSimulator):
         density[heart] *= self.heart_alpha
         density[bone] *= self.bone_alpha
         density[coronary] = coronary_value * self.coronary_alpha
-        
-        if density.min() < 0:
-            density -= density.min() # make sure the image is positive for diff_drr
         
         return density

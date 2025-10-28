@@ -147,3 +147,6 @@ cython_debug/
 
 test/test_data/*
 test/output/*
+
+*.prof
+*.lprof
