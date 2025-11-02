@@ -42,9 +42,9 @@ class VolumesReader(DataReader):
         assert self.n_phases == NUM_TOTAL_PHASE, f"For now, we only support {NUM_TOTAL_PHASE} phases. But the data has {self.n_phases} phases."
         
         volume_0, affine_0 = load_nifti(image_file_list[0])
-        self.origin_image_size = volume_0.shape[2:]   #type: ignore
-        self.origin_image_affine = affine_0
-        assert len(self.origin_image_size) == 3, f"Image size must be 3D, but got {self.origin_image_size}"
+        self._origin_volume_size = volume_0.shape[2:]   #type: ignore
+        self._origin_volume_affine = affine_0
+        assert len(self._origin_volume_size) == 3, f"Image size must be 3D, but got {self._origin_volume_size}"
         
         self.data: list[DataReaderResult] = []
         for index, (img_file, cav_file, cor_file) in enumerate(zip(image_file_list, cavity_file_list, coronary_file_list)):
@@ -67,8 +67,8 @@ class VolumesReader(DataReader):
             lca_label, rca_label = separate_coronary(coronary_label)
             
             if index == 0:
-                self.lca_centering_affine = get_coronary_centering_affine(lca_label, self.origin_image_affine)
-                self.rca_centering_affine = get_coronary_centering_affine(rca_label, self.origin_image_affine)
+                self.lca_centering_affine = get_coronary_centering_affine(lca_label, self._origin_volume_affine)
+                self.rca_centering_affine = get_coronary_centering_affine(rca_label, self._origin_volume_affine)
 
             self.data.append(DataReaderResult(
                 phase=phase,
@@ -80,8 +80,11 @@ class VolumesReader(DataReader):
                 lca_centering_affine=self.lca_centering_affine,
                 rca_centering_affine=self.rca_centering_affine
             ).to_device(torch.device("cpu")))
-        
-        
+    
+    
+    def get_phase_0_data(self) -> DataReaderResult:
+        return self.data[0]
+    
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         """

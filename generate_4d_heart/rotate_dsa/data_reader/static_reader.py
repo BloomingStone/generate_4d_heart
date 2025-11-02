@@ -15,13 +15,13 @@ class StaticVolumeReader(DataReader):
         coronary_path: Path
     ):
         self.n_phases: int = NUM_TOTAL_PHASE
-        self.volume, self.origin_image_affine = load_nifti(image_path)
+        self.volume, self._origin_volume_affine = load_nifti(image_path)
         self.cavity, _ = load_nifti(cavity_path, is_label=True)
         coronary, _ = load_nifti(coronary_path, is_label=True)
         self.lca_label, self.rca_label = separate_coronary(coronary)
-        self.origin_image_size = self.volume.shape[-3:]   #type: ignore
-        self.lca_centering_affine = get_coronary_centering_affine(self.lca_label, self.origin_image_affine)
-        self.rca_centering_affine = get_coronary_centering_affine(self.rca_label, self.origin_image_affine)
+        self._origin_volume_size = self.volume.shape[-3:]   #type: ignore
+        self.lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine)
+        self.rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine)
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         return DataReaderResult(
@@ -30,10 +30,13 @@ class StaticVolumeReader(DataReader):
             cavity_label=self.cavity.cpu().to(torch.uint8),
             lca_label=self.lca_label.cpu().to(torch.bool),
             rca_label=self.rca_label.cpu().to(torch.bool),
-            affine=self.origin_image_affine,
+            affine=self._origin_volume_affine,
             lca_centering_affine=self.lca_centering_affine,
             rca_centering_affine=self.rca_centering_affine
         )
+    
+    def get_phase_0_data(self) -> DataReaderResult:
+        return self.get_data(CardiacPhase(0))
 
 class StaticLabelReader(DataReader):
     def __init__(
@@ -43,13 +46,13 @@ class StaticLabelReader(DataReader):
         coronary_type: Literal["LCA", "RCA"],
     ):
         self.n_phases: int = NUM_TOTAL_PHASE
-        self.cavity, self.origin_image_affine = load_nifti(cavity_path, is_label=True)
+        self.cavity, self._origin_volume_affine = load_nifti(cavity_path, is_label=True)
         coronary, _ = load_nifti(coronary_path, is_label=True)
         self.lca_label, self.rca_label = separate_coronary(coronary)
-        self.origin_image_size = self.cavity.shape[-3:]   #type: ignore
+        self._origin_volume_size = self.cavity.shape[-3:]   #type: ignore
         self.volume = self.lca_label if coronary_type == "LCA" else self.rca_label
-        self.lca_centering_affine = get_coronary_centering_affine(self.lca_label, self.origin_image_affine)
-        self.rca_centering_affine = get_coronary_centering_affine(self.rca_label, self.origin_image_affine)
+        self.lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine)
+        self.rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine)
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         return DataReaderResult(
@@ -58,7 +61,10 @@ class StaticLabelReader(DataReader):
             cavity_label=self.cavity.cpu().to(torch.uint8),
             lca_label=self.lca_label.cpu().to(torch.bool),
             rca_label=self.rca_label.cpu().to(torch.bool),
-            affine=self.origin_image_affine,
+            affine=self._origin_volume_affine,
             lca_centering_affine=self.lca_centering_affine,
             rca_centering_affine=self.rca_centering_affine
         )
+    
+    def get_phase_0_data(self) -> DataReaderResult:
+        return self.get_data(CardiacPhase(0))

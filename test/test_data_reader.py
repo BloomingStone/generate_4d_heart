@@ -7,6 +7,7 @@ import torch
 from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, DataReader, VolumeDVFReader
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_gif
+from utils import output_root_dir, test_data_root_dir
 
 def _read_and_save(reader: DataReader, output_dir: Path):
     # delete result in output_dir first
@@ -24,7 +25,7 @@ def _read_and_save(reader: DataReader, output_dir: Path):
     
     F = 60
     fps = 30
-    W, H, D = reader.origin_image_size
+    W, H, D = reader.volume_size
     frames_w = torch.rand(F, H, D)
     frames_h = torch.rand(F, W, D)
     frames_d = torch.rand(F, W, H)
@@ -53,11 +54,10 @@ def _read_and_save(reader: DataReader, output_dir: Path):
 
 
 def test_volumes_reader():
-    test_dir = Path(__file__).parent / "test_data"
-    volumes_dir = test_dir / "volumes"
-    assert test_dir.exists()
-    output_dir = volumes_dir / "output"
-    output_dir.mkdir(exist_ok=True)
+    volumes_dir = test_data_root_dir / "volumes"
+    assert volumes_dir.exists()
+    output_dir = output_root_dir / "readers_output" / "volumes"
+    output_dir.mkdir(exist_ok=True, parents=True)
     
     reader = VolumesReader(
         image_dir=volumes_dir / "image",
@@ -68,11 +68,10 @@ def test_volumes_reader():
     _read_and_save(reader, output_dir)
 
 def test_volume_dvf_reader():
-    test_dir = Path(__file__).parent / "test_data"
-    data_dir = test_dir / "volume_with_dvf"
-    assert test_dir.exists()
-    output_dir = data_dir / "output"
-    output_dir.mkdir(exist_ok=True)
+    data_dir = test_data_root_dir / "volume_with_dvf"
+    assert data_dir.exists()
+    output_dir = output_root_dir / "readers_output" / "dvf"
+    output_dir.mkdir(exist_ok=True, parents=True)
     
     reader = VolumeDVFReader(
         image_nii=data_dir / "image.nii.gz",

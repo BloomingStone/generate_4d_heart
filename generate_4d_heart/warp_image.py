@@ -35,7 +35,7 @@ def generate_4d_cta(
         return tensor, img.affine
 
     # TODO 可能需要加载原有影像并将裁剪后图像叠加显示
-    image, image_affine = load_tensor(image_path)
+    image, volume_affine = load_tensor(image_path)
     coronary, _ = load_tensor(coronary_path)
     
     image = image[None, None].half()
@@ -47,13 +47,13 @@ def generate_4d_cta(
         save_nii(
             output_cta_path / "warped_image" / f"{phase:02d}.nii.gz",
             warp_image(image, ddf),
-            image_affine,
+            volume_affine,
             is_label=False
         )
         
         save_nii(
             output_cta_path / "warped_coronary" / f"{phase:02d}.nii.gz",
             warp_label(coronary, ddf),
-            image_affine,
+            volume_affine,
             is_label=True
         )

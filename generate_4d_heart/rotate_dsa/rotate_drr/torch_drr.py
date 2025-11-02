@@ -86,10 +86,10 @@ class TorchDRR(RotateDRR):
         shape = (1, w, h, d)
         
         subject = Subject(
-            volume=ScalarImage(tensor=volume.reshape(*shape).to(self.device), affine=affine),
+            volume=ScalarImage(tensor=volume.float().reshape(*shape).to(self.device), affine=affine),
             mask=LabelMap(tensor=coronary.reshape(*shape).to(self.device),affine=affine),
             reorient = self.reorient,    # type: ignore
-            density = ScalarImage(tensor=volume.reshape(*shape).to(self.device),affine=affine),
+            density = ScalarImage(tensor=volume.float().reshape(*shape).to(self.device),affine=affine),
             fiducials = None,   #type: ignore
         )
         
@@ -104,7 +104,11 @@ class TorchDRR(RotateDRR):
             x0=geo.x0,
             y0=geo.y0,
             patch_size=self.patch_size,
+            compile_renderer=True,
+            checkpoint_gradients=True
         ).to(self.device)
+        
+        pass
     
     
     def _get_projection_after_setup(
@@ -112,31 +116,31 @@ class TorchDRR(RotateDRR):
         rotations: torch.Tensor
     ):
         assert self.diff_drr is not None, "diff_drr is None, call setup() first"
+        drr = self.diff_drr
         N, D = rotations.shape
         assert D == 3
+        
+        def do_drr(rots: torch.Tensor, trans: torch.Tensor) -> torch.Tensor:
+            return drr(
+                - rots.to(self.device),     # here has negtived
+                trans.to(self.device), 
+                parameterization=self.rotate_cfg.parameterization, 
+                convention=self.rotate_cfg.convention,
+                mask_to_channels=True,
+            )
+        
         if N == 1:
             # in DiffDrr, X Y Z coreesponding to R A S, the rotate angle is oppsite to standard C-Arm 
             # X-ray, where X Y Z cooresponding to I L A
             # the convert of R, T, angles and camera to world matrix can be found at test/test_R_T.py
-            return self.diff_drr(
-                - rotations.to(self.device),     # here has negtived
-                self.translations.to(self.device), 
-                parameterization=self.rotate_cfg.parameterization, 
-                convention=self.rotate_cfg.convention
-            )
-        
+            return do_drr(rotations, self.translations)
         
         translations = self.translations.repeat(N, 1)
         # TODO auto calculate the max batch size at limits of CUDA memory.
         # For now, use 1 batch
         res = []
         for rot, trans in zip(rotations, translations):
-            drr_img = self.diff_drr(
-                rot.unsqueeze(0).to(self.device), 
-                trans.unsqueeze(0).to(self.device), 
-                parameterization=self.rotate_cfg.parameterization, 
-                convention=self.rotate_cfg.convention
-            )
+            drr_img = do_drr(rot.unsqueeze(0), trans.unsqueeze(0))
             res.append(drr_img)
         drr_img = torch.cat(res, dim=0)
         return drr_img
@@ -149,6 +153,7 @@ class TorchDRR(RotateDRR):
         coronary: torch.Tensor,
         affine: np.ndarray,
     ) -> torch.Tensor:
+        """return shape=(T, C, W, H), C=0: image, C=1: coronary_mask"""
         self._setup(volume, coronary, affine)
         
         rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)

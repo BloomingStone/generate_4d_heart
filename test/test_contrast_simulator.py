@@ -55,6 +55,7 @@ def test_contrast_simulators(
         coronary=coronary,
         affine=affine
     )
+    res = res[:, 0:1]
     
     res = ((res - res.min()) / (res.max() - res.min())) * 255
     res = res.to(torch.uint8)

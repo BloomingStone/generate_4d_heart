@@ -178,7 +178,7 @@ class DataReaderResult:
     def get_coronary_central_line(
         self, 
         coronary_type: Literal["LCA", "RCA"],
-        coordinate_system: Literal["world", "voxel", "coroanry_centering"] = "voxel"
+        coordinate_system: Literal["world", "voxel", "coroanry_centering"] = "coroanry_centering"
     ) -> np.ndarray:
         """
         Get the central line of the coronary in world coordinate
@@ -186,7 +186,7 @@ class DataReaderResult:
         Args:
             coronary_type (Literal["LCA", "RCA"]): coronary type
             coordinate_system (Literal["world", "voxel", "coroanry_centering"]): coordinate system: 
-                "world": world coordinate, xyz = nii_image_affine @ voxel_coordinate
+                "world": world coordinate, xyz = nii_volume_affine @ voxel_coordinate
                 "voxel": voxel coordinate
                 "coroanry_centering": coroanry centering coordinate that put the coroanry at the ordinate of the world coordinate
         
@@ -226,7 +226,7 @@ class DataReaderResult:
         output_dir: Path,
         output_nii: bool = True,
         output_central_line: bool = True,
-        central_line_coordinate_type: Literal["world", "voxel", "coroanry_centering"] = "voxel"
+        central_line_coordinate_type: Literal["world", "voxel", "coroanry_centering"] = "coroanry_centering"
     ):
         """Save all tensors to the specified directory"""
         from ...saver import save_nii
@@ -249,10 +249,21 @@ class DataReaderResult:
 # TODO 用 Dataset/Dataloader 的形式实现 reader
 class DataReader(Protocol):
     n_phases: int
-    origin_image_size: tuple[int, int, int]
-    origin_image_affine: np.ndarray
+    _origin_volume_size: tuple[int, int, int]
+    _origin_volume_affine: np.ndarray
     lca_centering_affine: np.ndarray
     rca_centering_affine: np.ndarray
 
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         ...
+    
+    def get_phase_0_data(self) -> DataReaderResult:
+        ...
+    
+    @property
+    def volume_size(self) -> tuple[int, int, int]:
+        return self._origin_volume_size
+    
+    @property
+    def volume_affine(self) -> np.ndarray:
+        return self._origin_volume_affine

@@ -145,8 +145,18 @@ class ROI:
         affine = affine @ T
         return Nifti1Image(image_data, affine)
     
-    ImageData = TypeVar("ImageData", np.ndarray, torch.Tensor, cp.ndarray)
+    def get_affine_after_crop(self, affine: np.ndarray) -> np.ndarray:
+        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
+        res = affine.copy()
+        T = np.eye(4)
+        T[:3, 3] = np.array([x0, y0, z0])
+        res = res @ T
+        return res
     
+    def get_affine_after_crop_and_zoom(self, affine: np.ndarray) -> np.ndarray:
+        raise NotImplementedError() # need to clearify the order of R and T
+    
+    ImageData = TypeVar("ImageData", np.ndarray, torch.Tensor, cp.ndarray)
     def crop_on_data(self, image: ImageData) -> ImageData:
         """ 
         Args:

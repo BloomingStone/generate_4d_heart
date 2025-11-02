@@ -28,8 +28,8 @@ def _rotate_dsa_mock(
         lca_centering_affine=np.eye(4),
         rca_centering_affine=np.eye(4)
     )
-    reader.origin_image_affine = torch.eye(4)
-    reader.origin_image_size = volume_shape
+    reader.volume_affine = torch.eye(4)
+    reader.volume_size = volume_shape
 
     constrast_sim = MagicMock()
     constrast_sim.simulate.return_value = torch.rand(shape)
@@ -40,7 +40,7 @@ def _rotate_dsa_mock(
         output_dir.mkdir(exist_ok=True)
         dsa.run_and_save(output_dir, coronary_type='LCA')
     else:
-        frames, geo_json = dsa.run("LCA")
+        frames, labels, geo_json = dsa.run("LCA")
         assert isinstance(frames, torch.Tensor)
         assert frames.shape == (drr.rotate_cfg.total_frame, 1, *drr.image_size)
         assert "frames" in geo_json

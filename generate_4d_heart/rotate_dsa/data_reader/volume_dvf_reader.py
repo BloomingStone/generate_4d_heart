@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Type, Callable
+from typing import Type, Callable, override
 
 import numpy as np
 import torch
@@ -14,7 +14,7 @@ from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
     DataReader, DataReaderResult, separate_coronary, get_coronary_centering_affine,
-    load_nifti_with_roi_crop, load_and_zoom_dvf, pre_load, load_nifti
+    load_and_zoom_dvf, pre_load, load_nifti
 )
 
 
@@ -105,7 +105,8 @@ class VolumeDVFReader(DataReader):
         coronary_nii: Path,
         roi_json: Path,
         dvf_dir: Path,
-        movement_enhancer: None | Type[MovementEnhancer] = None
+        movement_enhancer: None | Type[MovementEnhancer] = None,
+        recover_cropped_data: bool = True
     ):
         """Reads volume data and corresponding DVFs for 4D cardiac MRI, which usually generated from ..dvf module.
         
@@ -122,54 +123,90 @@ class VolumeDVFReader(DataReader):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device = device
         self.roi = ROI.from_json(roi_json)
+        self.recover_cropped_data = recover_cropped_data
         
-        image, affine = pre_load(image_nii)
-        image = torch.from_numpy(image.get_fdata())[None, None].to(torch.float32)
-        sentinel_mask = (image <= -2000)  # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
+        self._load_origin_3d_data(image_nii, cavity_nii, coronary_nii)
+        self._load_dvf_and_init_warpper(dvf_dir, movement_enhancer)
+        self._centering_coronary_affine()
+
+    
+    def _load_origin_3d_data(self, image_nii: Path, cavity_nii: Path, coronary_nii: Path):
+        image, affine = load_nifti(image_nii)
+        self.origin_cavity, cavity_affine = load_nifti(cavity_nii, is_label=True)
+        self.origin_coronary, coronary_affine = load_nifti(coronary_nii, is_label=True)
+        
+        assert np.allclose(affine, cavity_affine)
+        assert np.allclose(affine, coronary_affine)
+        
+        ## -- Preprocess Image Value --
+        # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
+        # Set all invalid voxels to the minimum value, usually is air
+        sentinel_mask = (image <= -2000)  
         min_value = image[~sentinel_mask].min()
-        image[sentinel_mask] = min_value
+        image[sentinel_mask] = min_value    
+        
+        # Add the offset of 1024 that is commonly used in CT
         if image.min() < -1000:
-            image +=1024     # add the offset of 1024
+            image +=1024
+        # These two values should be described in DICOM head
+        # However, nifti does not have this field, we can only guess it from the value range
         
-        self.image_before_cropped = image.clone()
-        image = self.roi.crop_on_data(image)
+        self.origin_image = image
+        self._origin_volume_size = self.origin_image.shape[2:]   #type: ignore
+        self._origin_volume_affine = affine if affine is not None else np.eye(4)
 
-        self.origin_image_affine = affine if affine is not None else np.eye(4)
-        cavity_label, _ = load_nifti_with_roi_crop(cavity_nii, self.roi, is_label=True)
-        coronary_label, _ = load_nifti_with_roi_crop(coronary_nii, self.roi, is_label=True)
-        coronary_label_nocrop, coronary_affine = load_nifti(coronary_nii, is_label=True)
-
-        self.origin_image_size = self.image_before_cropped.shape[2:]   #type: ignore
+    
+    def _load_dvf_and_init_warpper(self, dvf_dir: Path, movement_enhancer: None | Type[MovementEnhancer] = None):
+        # --- Crop Data to Match DVF ---
+        image = self.roi.crop_on_data(self.origin_image.clone())
+        cavity_label = self.roi.crop_on_data(self.origin_cavity.clone())
+        coronary_label = self.roi.crop_on_data(self.origin_coronary.clone())
+        self.cropped_affine = self.roi.get_affine_after_crop(self._origin_volume_affine)
         
+        # --- Load and Enhance DVFs ---
         if movement_enhancer is None:
             self.enhancer: Callable[[torch.Tensor], torch.Tensor] = lambda x: x
         else:
             self.enhancer = movement_enhancer(cavity_label, coronary_label)
 
-        # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
         dvf_list: list[torch.Tensor] = []
-        # TODO: for now only support fixed NUM_TOTAL_PHASE
         for dvf_file in tqdm(sorted(dvf_dir.glob("*.nii.gz")), desc="loading and updating DVFs"):
-            dvf_tensor = load_and_zoom_dvf(dvf_file, self.roi, device).half()
+            # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
+            # save as half-precision to save memory
+            dvf_tensor = load_and_zoom_dvf(dvf_file, self.roi, self.device).half()
             dvf_tensor = self.enhancer(dvf_tensor)
             dvf_list.append(dvf_tensor)
-        
+            
+        # TODO: for now only support fixed NUM_TOTAL_PHASE
         self.n_phases = len(dvf_list)
         assert self.n_phases == NUM_TOTAL_PHASE, f"For now, we only support {NUM_TOTAL_PHASE} phases. But the data has {self.n_phases} phases."
         
+        # --- Initialize Warp Module ---
         self.warpper = LazyCardiacDVFWarpModule(
-            dvf_list, image, cavity_label, coronary_label, device
-        ).to(device)
-        
-        lca, rca = separate_coronary(coronary_label_nocrop)
-        self.lca_centering_affine = get_coronary_centering_affine(lca, coronary_affine)
-        self.rca_centering_affine = get_coronary_centering_affine(rca, coronary_affine)
+            dvf_list, image, cavity_label, coronary_label, self.device
+        ).to(self.device)
+    
+    
+    def _centering_coronary_affine(self):
+        if self.recover_cropped_data:
+            lca, rca = separate_coronary(self.origin_coronary)
+            affine = self._origin_volume_affine
+        else:
+            lca, rca = separate_coronary(self.warpper.coronary)
+            affine = self.cropped_affine
+        self.lca_centering_affine = get_coronary_centering_affine(lca, affine)
+        self.rca_centering_affine = get_coronary_centering_affine(rca, affine)
+    
     
     def get_data(self, phase: CardiacPhase) -> DataReaderResult:
         image, cavity, coronary, _ = self.warpper(phase)
-        image = self.roi.recover_cropped_tensor(image, self.image_before_cropped)
-        cavity = self.roi.recover_cropped_tensor(cavity)
-        coronary = self.roi.recover_cropped_tensor(coronary)
+        if self.recover_cropped_data:
+            image = self.roi.recover_cropped_tensor(image, self.origin_image)
+            cavity = self.roi.recover_cropped_tensor(cavity)
+            coronary = self.roi.recover_cropped_tensor(coronary)
+            affine = self._origin_volume_affine
+        else:
+            affine = self.cropped_affine
         lca, rca = separate_coronary(coronary)
 
         return DataReaderResult(
@@ -178,7 +215,31 @@ class VolumeDVFReader(DataReader):
             cavity_label=cavity.cpu(),
             lca_label=lca.cpu(),
             rca_label=rca.cpu(),
-            affine=self.origin_image_affine,
+            affine=affine,
+            lca_centering_affine=self.lca_centering_affine,
+            rca_centering_affine=self.rca_centering_affine
+        )
+    
+    def get_phase_0_data(self) -> DataReaderResult:
+        if self.recover_cropped_data:
+            image = self.origin_image.cpu().float()
+            cavity = self.origin_cavity.cpu().to(torch.uint8)
+            coronary = self.origin_coronary.cpu().to(torch.uint8)
+            affine = self._origin_volume_affine
+        else:
+            image = self.warpper.image.cpu().float()
+            cavity = self.warpper.cavity.cpu().to(torch.uint8)
+            coronary = self.warpper.coronary.cpu().to(torch.uint8)
+            affine = self.cropped_affine
+        
+        lca, rca = separate_coronary(coronary)
+        return DataReaderResult(
+            phase=CardiacPhase(0),
+            volume=image,
+            cavity_label=cavity,
+            lca_label=lca,
+            rca_label=rca,
+            affine=affine,
             lca_centering_affine=self.lca_centering_affine,
             rca_centering_affine=self.rca_centering_affine
         )
@@ -192,3 +253,19 @@ class VolumeDVFReader(DataReader):
     def save_all_warped_images(self, output_dir: Path):
         # TODO
         raise NotImplementedError()
+    
+    @property
+    @override
+    def volume_size(self) -> tuple[int, int, int]:
+        if self.recover_cropped_data:
+            return self._origin_volume_size
+        else:
+            return self.warpper.image.shape[-3:]    # type: ignore
+    
+    @property
+    @override
+    def volume_affine(self) -> np.ndarray:
+        if self.recover_cropped_data:
+            return self._origin_volume_affine
+        else:
+            return self.cropped_affine

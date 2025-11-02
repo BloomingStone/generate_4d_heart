@@ -31,17 +31,19 @@ class RotateDSA:
         self, 
         coronary_type: Literal["LCA", "RCA"] = "LCA",
         gray_reverse: bool = True
-    ) -> tuple[torch.Tensor, dict]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """
         Run whole process of rotate DRR
         Returns:
-            np.ndarray: shape = (t, c, h, w), t = rotate_parameters.total_frame, c = 1
+            torch.Tensor: DRR images shape = (t, c, h, w), t = rotate_parameters.total_frame, c
+            torch.Tensor: coroanry labels, shape is the same as DRR images
             dict: geometry information
         """
         assert coronary_type in ["LCA", "RCA"]
         total_frame = self.drr.rotate_cfg.total_frame
         w, h = self.drr.image_size
         frames = torch.zeros(total_frame, 1, w, h)
+        labels = torch.zeros(total_frame, 1, w, h)
         for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
             phase = self._get_phase_at_frame(f)
             read_res = self.reader.get_data(phase).to_device(self.drr.device)
@@ -64,13 +66,17 @@ class RotateDSA:
                 coronary=coronary,
                 affine=affine
             )
-            frames[f] = drr.cpu()
+            drr = drr.cpu()
+            frames[f] = drr.sum(dim=1, keepdim=True)
+            labels[f] = drr[:, 1:2]
+            
         
         frames = ((frames - frames.min()) / (frames.max() - frames.min()))*255
         frames = frames.to(torch.uint8)
         if gray_reverse:
             frames = torch.tensor(255) - frames
-        return frames, self.get_geometry_json()
+        labels = (labels > 0.5).to(torch.uint8)*255
+        return frames, labels, self.get_geometry_json(coronary_type)
     
     def run_and_save(
         self, 
@@ -79,14 +85,17 @@ class RotateDSA:
         base_name: str = "rotate_dsa",
         gray_reverse: bool = True,
         gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
-    ) -> tuple[torch.Tensor, dict]:
-        frames, json_data = self.run(coronary_type, gray_reverse)
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
+        frames, labels, json_data = self.run(coronary_type, gray_reverse)
         save_tif(output_dir / f"{base_name}.tif", frames)
+        save_tif(output_dir / "label.tif", labels)
         save_gif(output_dir / f"{base_name}.gif", frames, gif_fps)
+        save_gif(output_dir / "label.gif", labels, gif_fps)
         save_pngs(output_dir / f"{base_name}", frames)
+        save_pngs(output_dir / "labels", labels)
         with open(output_dir / f"{base_name}.json", "w") as f:
             json.dump(json_data, f)
-        return frames, json_data
+        return frames, labels, json_data
     
     def _get_phase_at_frame(self, frame: int) -> CardiacPhase:
         return CardiacPhase.from_time(
@@ -94,10 +103,11 @@ class RotateDSA:
             self.physical_config.cardiac_cycle_time
         )
     
-    def get_geometry_json(self) -> dict:
+    def get_geometry_json(self, coronary_type: Literal["LCA", "RCA"]) -> dict:
         res = {}
-        res["origin_image_size"] = self.reader.origin_image_size
-        res["origin_image_affine"] = self.reader.origin_image_affine.tolist()
+        res["coronary_type"] = coronary_type
+        res["volume_size"] = self.reader.volume_size
+        res["volume_affine"] = self.reader.volume_affine.tolist()
         res["lca_centering_affine"] = self.reader.lca_centering_affine.tolist()
         res["rca_centering_affine"] = self.reader.rca_centering_affine.tolist()
         res["c_arm_geometry"] = self.drr.c_arm_cfg.to_dict()
