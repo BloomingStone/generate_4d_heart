@@ -11,6 +11,8 @@ cuda = "12.0"
 [pypi-options]
 index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 
+[activation.env]
+BUILD_MONAI = "1"
 
 [tasks]
 pytest = "pytest"

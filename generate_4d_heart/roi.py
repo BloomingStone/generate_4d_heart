@@ -156,7 +156,7 @@ class ROI:
     def get_affine_after_crop_and_zoom(self, affine: np.ndarray) -> np.ndarray:
         raise NotImplementedError() # need to clearify the order of R and T
     
-    ImageData = TypeVar("ImageData", np.ndarray, torch.Tensor, cp.ndarray)
+    ImageData = TypeVar("ImageData", np.ndarray, torch.Tensor)
     def crop_on_data(self, image: ImageData) -> ImageData:
         """ 
         Args:

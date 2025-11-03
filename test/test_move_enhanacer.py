@@ -21,7 +21,6 @@ def test_coronary_bound_lv():
         movement_enhancer=CoronaryBoundLV
     )
     
-    
     drr = TorchDRR(rotate_cfg=rotate_cfg)
     
     dsa = RotateDSA(
@@ -42,7 +41,7 @@ def test_coronary_bound_lv():
     cta_output = output_dir / "cta"
     test_total_phases = 2
     for phase in range(test_total_phases):
-        data = reader.get_data(CardiacPhase.from_index(phase, test_total_phases))
+        data = reader.get_data(CardiacPhase.from_index(phase, test_total_phases), "LCA")
         data.save(cta_output)
 
 if __name__ == "__main__":

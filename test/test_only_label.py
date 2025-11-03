@@ -15,8 +15,7 @@ def test_only_static_label():
     data_dir = test_data_root_dir / "volume_with_dvf"
     reader = StaticLabelReader(
         cavity_path=data_dir / "cavity.nii.gz",
-        coronary_path=data_dir / "coronary.nii.gz",
-        coronary_type="LCA"
+        coronary_path=data_dir / "coronary.nii.gz"
     )
     
     dsa = RotateDSA(

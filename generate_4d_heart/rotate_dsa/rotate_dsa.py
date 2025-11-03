@@ -46,24 +46,19 @@ class RotateDSA:
         labels = torch.zeros(total_frame, 1, w, h)
         for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
             phase = self._get_phase_at_frame(f)
-            read_res = self.reader.get_data(phase).to_device(self.drr.device)
-            
-            if coronary_type == "LCA":
-                coronary = read_res.lca_label
-                affine = read_res.lca_centering_affine
-            else:
-                coronary = read_res.rca_label
-                affine = read_res.rca_centering_affine
+            read_res = self.reader.get_data(phase, coronary_type).to_device(self.drr.device)
+            coronary_label = read_res.coronary.label
+            affine = read_res.coronary.centering_affine
             
             volume = self.constrast_sim.simulate(
                 ori_volume=read_res.volume,
                 cavity_label=read_res.cavity_label,
-                coronary_label=coronary
+                coronary_label=coronary_label
             )
             drr = self.drr.get_projection_at_frame(
                 frame=f,
                 volume=volume,
-                coronary=coronary,
+                coronary=coronary_label,
                 affine=affine
             )
             drr = drr.cpu()

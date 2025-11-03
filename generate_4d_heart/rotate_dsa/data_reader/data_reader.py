@@ -1,23 +1,28 @@
 from typing import Protocol, Literal
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-import torch
 import numpy as np
-from torch.nn import functional as F
-import cupy as cp
-from cupyx.scipy.ndimage import label, center_of_mass
+from numpy import ndarray
 from skimage.morphology import skeletonize
+import cupy as cp
+from cupyx.scipy.ndimage import label, center_of_mass, zoom
+import torch
+from torch import Tensor
+from torch.nn import functional as F
 from torch.utils.dlpack import from_dlpack as dlpack2tensor
 from torch.utils.dlpack import to_dlpack as tensor2dlpack
 from nibabel.loadsave import load as nib_load
 from nibabel.nifti1 import Nifti1Image
+import pyvista as pv
+import pyacvd
 
 from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
+from ..types import CoronaryType
 
 
-def pre_load(file: Path) -> tuple[Nifti1Image, np.ndarray]:
+def pre_load(file: Path) -> tuple[Nifti1Image, ndarray]:
     if not file.exists():
         raise FileNotFoundError(f"nii file not found: {file}")
     image_nii = nib_load(file)
@@ -25,7 +30,7 @@ def pre_load(file: Path) -> tuple[Nifti1Image, np.ndarray]:
     affine = image_nii.affine if image_nii.affine is not None else np.eye(4)
     return image_nii, affine
 
-def load_nifti(file: Path, is_label: bool = False) -> tuple[torch.Tensor, np.ndarray]:
+def load_nifti(file: Path, is_label: bool = False) -> tuple[Tensor, ndarray]:
     """load nifti file as torch tensor (shape: 1, 1, D, H, W) and return its affine matrix"""
     img, affine = pre_load(file)
     tensor = torch.from_numpy(img.get_fdata())
@@ -36,7 +41,7 @@ def load_nifti(file: Path, is_label: bool = False) -> tuple[torch.Tensor, np.nda
     tensor = tensor[None][None]  # add batch and channel dim
     return tensor, affine
 
-def load_nifti_with_roi_crop(file: Path, roi: ROI, is_label: bool = False) -> tuple[torch.Tensor, np.ndarray]:
+def load_nifti_with_roi_crop(file: Path, roi: ROI, is_label: bool = False) -> tuple[Tensor, ndarray]:
     img, affine = pre_load(file)
     img = roi.crop(img)
     tensor = torch.from_numpy(img.get_fdata())
@@ -53,7 +58,7 @@ def load_and_zoom_dvf(
     roi: ROI, 
     operating_device: torch.device,
     final_device: torch.device = torch.device('cpu')
-) -> torch.Tensor:
+) -> Tensor:
     """
     read dvf from nifti file and zoom it to the roi size
     """
@@ -70,14 +75,14 @@ def load_and_zoom_dvf(
     return dvf_tensor.to(final_device)
 
 
-def separate_coronary(coronary: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def separate_coronary(coronary: Tensor) -> tuple[Tensor, Tensor]:
     """
     separate coronary to LCA(1) and RCA(2)
     Args:
-        coronary (torch.Tensor): coronary segmentation
+        coronary (Tensor): coronary segmentation
     Returns:
-        lca (torch.Tensor): LCA segmentation, dtype: torch.bool
-        rca (torch.Tensor): RCA segmentation, dtype: torch.bool
+        lca (Tensor): LCA segmentation, dtype: torch.bool
+        rca (Tensor): RCA segmentation, dtype: torch.bool
     """
     shape = coronary.shape
     coronary = coronary.squeeze()
@@ -109,9 +114,9 @@ def separate_coronary(coronary: torch.Tensor) -> tuple[torch.Tensor, torch.Tenso
         return region_1, region_0
 
 def recenter(
-    original_affine: np.ndarray,
+    original_affine: ndarray,
     center_voxel: tuple[int, int, int]
-) -> np.ndarray:
+) -> ndarray:
     """get the affine that set the center of the image to the given center_voxel
     """
     B = original_affine[:3, :3]
@@ -121,15 +126,26 @@ def recenter(
     T[:3, 3] = new_t
     return T
 
-def get_coronary_centering_affine(coronary_label: torch.Tensor, volume_affine: np.ndarray) -> np.ndarray:
+def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray) -> ndarray:
     """
-    Get the affine matrix of that may coroanry at ordinate of the world coordinate
-    
+    Compute an affine transform that recenters the heart coronary region in world coordinates for CTA
+
+    The centroid of the coronary label (LCA or RCA) is computed in voxel space.
+    We then build a new target center by combining the label centroid with the 
+    geometric center of the image:
+        - X (left–right) and Y (anterior–posterior) use the mean of image center and label centroid
+        - Z (superior–inferior) uses the middle of the image (image center on Z axis)
+
+    This heuristic shifts the heart region toward the center of the field of view 
+    while preserving vertical alignment.
+
     Args:
-        coronary_label (torch.Tensor): coronary label (LCA or RCA) , shape: (1, 1, D, H, W)
-        volume_affine (np.ndarray): affine matrix of the volume, shape: (4, 4)
+        coronary_label (Tensor): Binary coronary artery mask of shape (1, 1, D, H, W).
+        volume_affine (ndarray): Original volume affine matrix of shape (4, 4).
+
+    Returns:
+        ndarray: New affine matrix that centers the coronary structure in world space.
     """
-    
     label_center: tuple[int, int, int] = center_of_mass(cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().cuda()))) # type: ignore
     W, H, D = coronary_label.shape[-3:]
     image_center = (W/2, H/2, D/2)
@@ -141,26 +157,63 @@ def get_coronary_centering_affine(coronary_label: torch.Tensor, volume_affine: n
     
     return recenter(volume_affine, label_center_voxel)
 
+def get_mesh_in_voxel(label: Tensor) -> pv.PolyData:
+    label_np = label.squeeze().cpu().numpy().astype(np.uint8)
+    label_big = zoom(cp.asarray(label_np), zoom=2).astype(cp.uint8).get()  # type: ignore
+    mesh = pv.wrap(label_big)\
+        .contour([1], method='flying_edges')\
+        .smooth_taubin(
+            n_iter=40, pass_band=0.001, normalize_coordinates=True)\
+        .triangulate().clean()
+    cluster = pyacvd.Clustering(mesh)
+    cluster.cluster(10000)
+    
+    mesh: pv.PolyData = cluster.create_mesh().triangulate().clean()  # type: ignore
+    mesh.points /= 2.0  # 因为上采样了2倍，所以点坐标要除以2
+    return mesh
+
+def get_mesh_in_world(label: Tensor, affine: ndarray) -> pv.PolyData:
+    mesh = get_mesh_in_voxel(label)
+    mesh.points = apply_affine(mesh.points, affine)
+    return mesh
+
+def apply_affine(points: Tensor | ndarray, affine: ndarray) -> ndarray:
+    assert len(points.shape) == 2 and points.shape[-1] == 3
+    if isinstance(points, ndarray):
+        points = torch.from_numpy(points)
+    _affine = torch.from_numpy(affine).to(device=points.device, dtype=points.dtype)
+    new_points = F.pad(points, (0, 1), "constant", 1)   # shape=(N, 4), [x, y, z, 1]
+    new_points = new_points @ _affine.T
+    new_points = new_points[:, :3]
+    return new_points.cpu().numpy()
+
+    
+@dataclass
+class Coronary:
+    type: CoronaryType
+    label: Tensor
+    centering_affine: ndarray
+    
+    mesh_in_world: pv.PolyData
+    
+
 @dataclass
 class DataReaderResult:
     """ Holds the result of reading data for a specific phase. Labels are int8 tensors. tensors are in shape (B=1, C=1, D, H, W)."""
     phase: CardiacPhase
-    volume: torch.Tensor
-    cavity_label: torch.Tensor
-    lca_label: torch.Tensor
-    rca_label: torch.Tensor
-    affine: np.ndarray
-    lca_centering_affine: np.ndarray
-    rca_centering_affine: np.ndarray
+    
+    volume: Tensor
+    cavity_label: Tensor
+    affine: ndarray
+    
+    coronary: Coronary
     
     def __post_init__(self):
         assert self.volume.ndim == 5 and self.volume.shape[0] == 1 and self.volume.shape[1] == 1, "Volume tensor must be in shape (1, 1, D, H, W)"
         assert self.cavity_label.shape == self.volume.shape, "Cavity label shape must match volume shape"
-        assert self.lca_label.shape == self.volume.shape, "LCA label shape must match volume shape"
-        assert self.rca_label.shape == self.volume.shape, "RCA label shape must match volume shape"
+        assert self.coronary.label.shape == self.volume.shape, "Coronary label shape must match volume shape"
         assert self.cavity_label.dtype == torch.uint8, "Cavity label must be of type int8"
-        assert self.lca_label.dtype == torch.bool, "LCA label must be of type bool"
-        assert self.rca_label.dtype == torch.bool, "RCA label must be of type bool"
+        assert self.coronary.label.dtype == torch.bool, "LCA label must be of type bool"
     
     def to_device(self, device: torch.device) -> "DataReaderResult":
         """Move all tensors to the specified device"""
@@ -168,51 +221,42 @@ class DataReaderResult:
             self.phase,
             self.volume.to(device),
             self.cavity_label.to(device),
-            self.lca_label.to(device),
-            self.rca_label.to(device),
-            self.affine,
-            self.lca_centering_affine,
-            self.rca_centering_affine
+            self.affine, 
+            Coronary(
+                type=self.coronary.type,
+                label=self.coronary.label.to(device),
+                centering_affine=self.coronary.centering_affine,
+                mesh_in_world=self.coronary.mesh_in_world,
+            )
         )
     
     def get_coronary_central_line(
         self, 
-        coronary_type: Literal["LCA", "RCA"],
         coordinate_system: Literal["world", "voxel", "coroanry_centering"] = "coroanry_centering"
-    ) -> np.ndarray:
+    ) -> ndarray:
         """
         Get the central line of the coronary in world coordinate
         
         Args:
-            coronary_type (Literal["LCA", "RCA"]): coronary type
             coordinate_system (Literal["world", "voxel", "coroanry_centering"]): coordinate system: 
                 "world": world coordinate, xyz = nii_volume_affine @ voxel_coordinate
                 "voxel": voxel coordinate
                 "coroanry_centering": coroanry centering coordinate that put the coroanry at the ordinate of the world coordinate
         
         Returns:
-            central_line (np.ndarray): central line in world coordinate, shape: (N, 3)
+            central_line (ndarray): central line in world coordinate, shape: (N, 3)
         """
-        if coronary_type == "LCA":
-            label = self.lca_label
-        elif coronary_type == "RCA":
-            label = self.rca_label
-        else:
-            raise ValueError(f"Invalid coronary type: {coronary_type}")
-        
-        match coronary_type, coordinate_system:
-            case _, "world":
+        match coordinate_system:
+            case "world":
                 affine = self.affine
-            case _, "voxel":
+            case "voxel":
                 affine = np.eye(4)
-            case "LCA", "coroanry_centering":
-                affine = self.lca_centering_affine
-            case "RCA", "coroanry_centering":
-                affine = self.rca_centering_affine
+            case "coroanry_centering":
+                affine = self.coronary.centering_affine
             case _:
                 raise ValueError(f"Invalid coordinate system: {coordinate_system}")
         
-        skel = skeletonize(label.squeeze().cpu().numpy())
+        skel = skeletonize(self.coronary.label.squeeze().cpu().numpy())
         skel_xyz = np.nonzero(skel)
         skel_xyz = np.stack(skel_xyz, axis=1)
         skel_xyz1 = np.ones((skel_xyz.shape[0], 4))
@@ -225,6 +269,7 @@ class DataReaderResult:
         self, 
         output_dir: Path,
         output_nii: bool = True,
+        output_mesh: bool = True,
         output_central_line: bool = True,
         central_line_coordinate_type: Literal["world", "voxel", "coroanry_centering"] = "coroanry_centering"
     ):
@@ -236,28 +281,34 @@ class DataReaderResult:
         if output_nii:
             save_nii(output_case_dir / "volume.nii.gz", self.volume, self.affine)
             save_nii(output_case_dir / "cavity_label.nii.gz", self.cavity_label, self.affine, is_label=True)
-            save_nii(output_case_dir / "lca_label.nii.gz", self.lca_label, self.affine, is_label=True)
-            save_nii(output_case_dir / "rca_label.nii.gz", self.rca_label, self.affine, is_label=True)
+            save_nii(output_case_dir / f"{self.coronary.type}_label.nii.gz", self.coronary.label, self.affine, is_label=True)
+        
+        if output_mesh:
+            self.coronary.mesh_in_world.save(output_case_dir / f"{self.coronary.type}_mesh.vtk")
         
         if output_central_line:
-            lca_central_line = self.get_coronary_central_line("LCA", central_line_coordinate_type)
-            rca_central_line = self.get_coronary_central_line("RCA", central_line_coordinate_type)
-            np.save(output_case_dir / f"lca_central_line_{central_line_coordinate_type}.npy", lca_central_line)
-            np.save(output_case_dir / f"rca_central_line_{central_line_coordinate_type}.npy", rca_central_line)
+            lca_central_line = self.get_coronary_central_line(central_line_coordinate_type)
+            np.save(output_case_dir / f"{self.coronary.type}_central_line_{central_line_coordinate_type}.npy", lca_central_line)
 
 
 # TODO 用 Dataset/Dataloader 的形式实现 reader
 class DataReader(Protocol):
     n_phases: int
     _origin_volume_size: tuple[int, int, int]
-    _origin_volume_affine: np.ndarray
-    lca_centering_affine: np.ndarray
-    rca_centering_affine: np.ndarray
+    _origin_volume_affine: ndarray
 
-    def get_data(self, phase: CardiacPhase) -> DataReaderResult:
+    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+        ...
+
+    def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         ...
     
-    def get_phase_0_data(self) -> DataReaderResult:
+    @property
+    def lca_centering_affine(self) -> ndarray:
+        ...
+    
+    @property
+    def rca_centering_affine(self) -> ndarray:
         ...
     
     @property
@@ -265,5 +316,5 @@ class DataReader(Protocol):
         return self._origin_volume_size
     
     @property
-    def volume_affine(self) -> np.ndarray:
+    def volume_affine(self) -> ndarray:
         return self._origin_volume_affine

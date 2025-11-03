@@ -1,11 +1,24 @@
 from pathlib import Path
+from typing import Literal
+from dataclasses import dataclass
 
 import torch
+from torch import Tensor
+import numpy as np
 
-from .data_reader import DataReader, DataReaderResult, separate_coronary, load_nifti, get_coronary_centering_affine
+from .data_reader import DataReader, DataReaderResult, Coronary, separate_coronary, load_nifti, get_coronary_centering_affine, get_mesh_in_world
 from ... import NUM_TOTAL_PHASE, NUM_TOTAL_CAVITY_LABEL
 from ..cardiac_phase import CardiacPhase
+from ..types import CoronaryType
 
+@dataclass
+class _Data:
+    phase: CardiacPhase
+    volume: Tensor
+    cavity_label: Tensor
+    affine: np.ndarray
+    lca_label: Tensor
+    rca_label: Tensor
 
 class VolumesReader(DataReader):
     def __init__(
@@ -46,7 +59,7 @@ class VolumesReader(DataReader):
         self._origin_volume_affine = affine_0
         assert len(self._origin_volume_size) == 3, f"Image size must be 3D, but got {self._origin_volume_size}"
         
-        self.data: list[DataReaderResult] = []
+        self.data: list[_Data] = []
         for index, (img_file, cav_file, cor_file) in enumerate(zip(image_file_list, cavity_file_list, coronary_file_list)):
             phase = CardiacPhase.from_index(index, self.n_phases)
 
@@ -67,41 +80,67 @@ class VolumesReader(DataReader):
             lca_label, rca_label = separate_coronary(coronary_label)
             
             if index == 0:
-                self.lca_centering_affine = get_coronary_centering_affine(lca_label, self._origin_volume_affine)
-                self.rca_centering_affine = get_coronary_centering_affine(rca_label, self._origin_volume_affine)
+                self._lca_centering_affine = get_coronary_centering_affine(lca_label, self._origin_volume_affine)
+                self._rca_centering_affine = get_coronary_centering_affine(rca_label, self._origin_volume_affine)
 
-            self.data.append(DataReaderResult(
+            self.data.append(_Data(
                 phase=phase,
                 volume=volume.cpu(),
                 cavity_label=cavity_label.cpu(),
                 lca_label=lca_label.cpu(),
                 rca_label=rca_label.cpu(),
                 affine=affine,
-                lca_centering_affine=self.lca_centering_affine,
-                rca_centering_affine=self.rca_centering_affine
-            ).to_device(torch.device("cpu")))
+            ))
     
-    
-    def get_phase_0_data(self) -> DataReaderResult:
-        return self.data[0]
-    
-    
-    def get_data(self, phase: CardiacPhase) -> DataReaderResult:
+
+    def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+        if isinstance(coronary_type, str):
+            coronary_type = CoronaryType(coronary_type)
+        return self._get_data_at_index(0, coronary_type)
+
+    def _get_data_at_index(self, index: int, coronary_type: CoronaryType) -> DataReaderResult:
+        data = self.data[index]
+        if coronary_type == CoronaryType.LCA:
+            coronary_label = data.lca_label
+            coronary_centering_affine = self._lca_centering_affine
+        else:
+            coronary_label = data.rca_label
+            coronary_centering_affine = self._rca_centering_affine
+        
+        return DataReaderResult(
+            phase=data.phase,
+            volume=coronary_label.cpu(),
+            cavity_label=data.cavity_label.cpu().to(torch.uint8),
+            affine=self._origin_volume_affine,
+            coronary=Coronary(
+                type=coronary_type,
+                label=coronary_label.cpu().to(torch.bool),
+                centering_affine=coronary_centering_affine,
+                mesh_in_world=get_mesh_in_world(
+                    coronary_label, 
+                    self._origin_volume_affine)
+            )
+        )
+
+    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         """
         Returns interpolated data for the given phase in [0,1).
         If phase matches an existing frame index exactly, returns cached result.
         Otherwise performs fast linear interpolation between the two nearest frames.
         """
+        if isinstance(coronary_type, str):
+            coronary_type = CoronaryType(coronary_type)
+        
         idx0 = phase.closest_index_floor(self.n_phases)
         idx1 = phase.closest_index_ceil(self.n_phases)
         
         w = float(phase)*self.n_phases - idx0  # interpolation weight [0,1)
 
         if w < 1e-6:  # exactly at frame idx0
-            return self.data[idx0]
+            return self._get_data_at_index(idx0, coronary_type)
 
-        d0 = self.data[idx0].to_device(torch.device("cpu"))
-        d1 = self.data[idx1].to_device(torch.device("cpu"))
+        d0 = self.data[idx0]
+        d1 = self.data[idx1]
 
         # === intensity volume interpolation ===
         vol_interp = (1 - w) * d0.volume + w * d1.volume
@@ -119,14 +158,33 @@ class VolumesReader(DataReader):
         lca_interp = ((1 - w) * d0.lca_label.float() + w * d1.lca_label.float()) > 0.5
         rca_interp = ((1 - w) * d0.rca_label.float() + w * d1.rca_label.float()) > 0.5
 
+        if coronary_type == CoronaryType.LCA:
+            coronary_label = lca_interp
+            coronary_centering_affine = self._lca_centering_affine
+        else:
+            coronary_label = rca_interp
+            coronary_centering_affine = self._rca_centering_affine
+        
         return DataReaderResult(
             phase=phase,
-            volume=vol_interp,
-            cavity_label=cav_interp,
-            lca_label=lca_interp,
-            rca_label=rca_interp,
-            affine=d0.affine,
-            lca_centering_affine=self.lca_centering_affine,
-            rca_centering_affine=self.rca_centering_affine
+            volume=vol_interp.cpu(),
+            cavity_label=cav_interp.cpu().to(torch.uint8),
+            affine=self._origin_volume_affine,
+            coronary=Coronary(
+                type=coronary_type,
+                label=coronary_label.cpu().to(torch.bool),
+                centering_affine=coronary_centering_affine,
+                mesh_in_world=get_mesh_in_world(
+                    coronary_label, 
+                    self._origin_volume_affine)
+            )
         )
+    
+    @property
+    def lca_centering_affine(self) -> np.ndarray:
+        return self._lca_centering_affine
+    
+    @property
+    def rca_centering_affine(self) -> np.ndarray:
+        return self._rca_centering_affine
 

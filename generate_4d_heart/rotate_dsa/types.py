@@ -1,4 +1,5 @@
 from typing import TypeVar
+from enum import StrEnum
 
 MM = float | int
 Pixel = int
@@ -13,3 +14,7 @@ type Rot[Angle] = tuple[Angle, Angle, Angle]
 Sec = float | int
 
 Point: tuple[float, float, float]
+
+class CoronaryType(StrEnum):
+    LCA = "LCA"
+    RCA = "RCA"
