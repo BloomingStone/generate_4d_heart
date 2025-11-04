@@ -91,11 +91,15 @@ def save_deepthmap_gif(
     matplotlib.use("Agg")
     
     depth_maps = depth_maps.squeeze()
-    depth_maps_np = depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
+    # Negate depth maps for visualization
+    depth_maps_np = - depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
     fig, ax = plt.subplots()
     ims = []
+    # Negate depth maps for visualization
+    depth_maps_np = - depth_maps_np
     vmin = np.nanmin(depth_maps_np)
-    vmax = np.nanmax(depth_maps_np)
+    vmax = np.nanmax(depth_maps_np[depth_maps_np<0])
+    depth_maps_np[depth_maps_np>0] = vmin   # set background to min value for better visualization
     for i in range(depth_maps_np.shape[0]):
         im = ax.imshow(depth_maps_np[i], animated=True, vmin=vmin, vmax=vmax)
         ims.append([im])

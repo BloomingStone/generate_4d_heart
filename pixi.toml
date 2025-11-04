@@ -33,6 +33,7 @@ notebook = "*"
 pytest = "*"
 scikit-image = ">=0.25.2,<0.26"
 typer = ">=0.20.0,<0.21"
+pytorch3d = ">=0.7.7,<0.8"
 
 
 [pypi-dependencies]

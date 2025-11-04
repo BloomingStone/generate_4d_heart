@@ -7,6 +7,13 @@ import math
 from tqdm import tqdm
 import pyvista as pv
 import numpy as np
+import torch
+from pytorch3d.renderer import (
+    FoVPerspectiveCameras,
+    RasterizationSettings,
+    MeshRasterizer
+)
+from pytorch3d.structures import Meshes
 
 from .data_reader import DataReader
 from .contrast_simulator import ContrastSimulator
@@ -16,33 +23,47 @@ from .cardiac_phase import CardiacPhase
 from ..saver import save_tif, save_gif, save_pngs, save_deepthmap_gif
 
 
-class LabelPlotter:
+class Torch3DLabelRenderer:
     def __init__(self, c_arm: CArmGeometry):
-        self.view_angle = 2 * math.atan(c_arm.width * c_arm.delx / 2 / c_arm.sdd) / math.pi * 180
-        self.width = c_arm.width
-        self.height = c_arm.height
-        self.plotter = pv.Plotter(off_screen=True)
-        self.plotter.window_size = (self.width, self.height)
-        self.plotter.remove_all_lights()
-        self.plotter.background_color = pv.Color("black")
-        self.plotter.camera.view_angle = self.view_angle
-    
-    def get_label_and_depth_map(
-        self,
-        mesh: pv.PolyData,
-        camera_pos: list[int]
-    ) -> tuple[np.ndarray, np.ndarray]:
-        self.plotter.add_mesh(mesh, color='white')    # white mesh as foreground
-        self.plotter.camera.position = camera_pos
-        self.plotter.show(auto_close=False)
-        deepth_map = self.plotter.get_image_depth()
-        label = self.plotter.screenshot(return_img=True)
-        self.plotter.clear()
-        
-        assert label is not None
-        label = (label[:, :, 0] > 0).astype(np.uint8)
-        return label, deepth_map
+        self.fov = 2 * math.atan(c_arm.width * c_arm.delx / 2 / c_arm.sdd) / math.pi * 180
+        self.width = int(c_arm.width)
+        self.height = int(c_arm.height)
+        self.zfar = c_arm.sdd*1.2
+        self.raster_settings = RasterizationSettings(
+            image_size=(self.height, self.width),
+            blur_radius=0.0,
+            faces_per_pixel=1
+        )
 
+    @torch.no_grad()
+    def render(self, mesh_pv: pv.PolyData, R: torch.Tensor, T: torch.Tensor):
+        verts = torch.from_numpy(np.array(mesh_pv.points)).float()
+        faces_np = np.array(mesh_pv.faces.reshape(-1, 4)[:, 1:])  # skip the first number which is the number of points per face
+        faces = torch.from_numpy(faces_np).long()
+        mesh = Meshes([verts.cuda()], [faces.cuda()])
+
+        
+        R = R.squeeze()
+        T = T.squeeze()
+        cameras = FoVPerspectiveCameras(
+            device='cuda',
+            fov=self.fov,
+            R=R[None].cuda(),
+            T=(-R.T @ T)[None].cuda(), 
+            zfar=self.zfar
+        )
+        
+        rasterizer = MeshRasterizer(
+            cameras=cameras,
+            raster_settings=self.raster_settings
+        )
+        
+        # rasterize
+        fragments = rasterizer(mesh)
+        depth = fragments.zbuf[0, ..., 0]  # depth buffer
+        # silhouette
+        silhouette = (fragments.pix_to_face[..., 0] >= 0).float()
+        return silhouette.cpu().numpy(), depth.cpu().numpy()
 
 @dataclass
 class PhysicalConfig:
@@ -56,10 +77,10 @@ class RotateDSA:
     constrast_sim: ContrastSimulator
     drr: RotateDRR
     physical_config: PhysicalConfig = field(default_factory=PhysicalConfig)
-    label_plotter: LabelPlotter = field(init=False)
+    label_plotter: Torch3DLabelRenderer = field(init=False)
     
     def __post_init__(self):
-        self.label_plotter = LabelPlotter(self.drr.c_arm_cfg)
+        self.label_plotter = Torch3DLabelRenderer(self.drr.c_arm_cfg)
 
     def run(
         self, 
@@ -98,10 +119,9 @@ class RotateDSA:
             )
             frames[f] = drr_res.cpu().numpy()
             
-            _, T = self.drr.get_R_T_at_frame(f)
-            label, depth_map = self.label_plotter.get_label_and_depth_map(
-                mesh=read_res.coronary.mesh_in_world,
-                camera_pos=T.squeeze().cpu().numpy().tolist()
+            label, depth_map = self.label_plotter.render(
+                read_res.coronary.mesh_in_world,
+                *self.drr.get_R_T_at_frame(f)
             )
             labels[f] = label
             depth_maps[f] = depth_map
@@ -133,10 +153,9 @@ class RotateDSA:
             phase = self._get_phase_at_frame(f)
             read_res = self.reader.get_data(phase, coronary_type).to_device(self.drr.device)
             
-            _, T = self.drr.get_R_T_at_frame(f)
-            label, depth_map = self.label_plotter.get_label_and_depth_map(
-                mesh=read_res.coronary.mesh_in_world,
-                camera_pos=T.squeeze().cpu().numpy().tolist()
+            label, depth_map = label, depth_map = self.label_plotter.render(
+                read_res.coronary.mesh_in_world,
+                *self.drr.get_R_T_at_frame(f)
             )
             labels[f] = label
             depth_maps[f] = depth_map

@@ -47,7 +47,7 @@ class StaticVolumeReader(DataReader):
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=get_mesh_in_world(
                     coronary_label, 
-                    self._origin_volume_affine)
+                    coronary_centering_affine)
             )
         )
 
@@ -98,7 +98,7 @@ class StaticLabelReader(DataReader):
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=get_mesh_in_world(
                     coronary_label, 
-                    self._origin_volume_affine)
+                    coronary_centering_affine)
             )
         )
 
