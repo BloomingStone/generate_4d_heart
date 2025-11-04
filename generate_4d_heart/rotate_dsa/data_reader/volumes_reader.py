@@ -109,7 +109,7 @@ class VolumesReader(DataReader):
         
         return DataReaderResult(
             phase=data.phase,
-            volume=coronary_label.cpu(),
+            volume=data.volume.cpu(),
             cavity_label=data.cavity_label.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
@@ -151,7 +151,6 @@ class VolumesReader(DataReader):
             cav_interp = d0.cavity_label
         else:
             cav_interp = d1.cavity_label
-        cav_interp = torch.clamp(cav_interp, 0, NUM_TOTAL_CAVITY_LABEL)
 
         # === coronary label interpolation (LCA & RCA) ===
         # binary -> linear then threshold (faster than morphological blending)

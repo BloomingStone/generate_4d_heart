@@ -108,7 +108,6 @@ class TorchDRR(RotateDRR):
             checkpoint_gradients=True
         ).to(self.device)
         
-        pass
     
     
     def _get_projection_after_setup(

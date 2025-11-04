@@ -5,24 +5,20 @@ import pytest
 import torch
 
 from generate_4d_heart.rotate_dsa import RotateDSA
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast, ContrastSimulator
-from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader
+from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 
-from utils import output_root_dir, get_reader, get_simulator, get_static_volume_reader
+from utils import output_root_dir, get_reader, get_simulator
 
 
-@pytest.mark.parametrize("reader_name, reader", (
-    ("volumes_reader", get_reader("volumes_reader")),
-    ("volume_dvf_reader", get_reader("volume_dvf_reader"))
+@pytest.mark.parametrize("reader_name", (
+    "volumes_reader", "volume_dvf_reader"
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration(
     reader_name: str,
-    reader: VolumesReader | VolumeDVFReader,
     coronary_type: Literal["LCA", "RCA"],
     sim_name: str = "multipli_contrast",
-    simulator: ContrastSimulator = get_simulator("multipli_contrast"),
 ):
     """测试完整的 RotateDSA 集成流程"""
     # 配置 DRR 参数为测试模式（减少帧数和图像大小以加快测试速度）
@@ -35,8 +31,8 @@ def test_rotate_dsa_integration(
     
     # 创建 RotateDSA 实例
     dsa = RotateDSA(
-        reader=reader,
-        constrast_sim=simulator,
+        reader=get_reader(reader_name),
+        constrast_sim=get_simulator("multipli_contrast"),
         drr=drr
     )
     
@@ -80,16 +76,15 @@ def test_rotate_dsa_integration(
 
 
 @pytest.mark.parametrize(
-    "reader_name, reader, sim_name, simulator, coronary_type",
+    "reader_name, sim_name, simulator, coronary_type",
     (
-        ("volumes_reader", get_reader("volumes_reader"), "multipli_contrast", MultipliContrast(), "LCA"),
-        ("volume_dvf_reader", get_reader("volume_dvf_reader"), "multipli_contrast", MultipliContrast(), "LCA"),
-        ("static_volume_reader", get_static_volume_reader(), "multipli_contrast", MultipliContrast(), "LCA")
+        ("volumes_reader", "multipli_contrast", MultipliContrast(), "LCA"),
+        ("volume_dvf_reader", "multipli_contrast", MultipliContrast(), "LCA"),
+        ("static_volume_reader", "multipli_contrast", MultipliContrast(), "LCA")
     )
 )
 def test_rotate_dsa_integration_full(
     reader_name: str,
-    reader: VolumesReader | VolumeDVFReader,
     sim_name: str,
     simulator: MultipliContrast | ThresholdMultipliContrast,
     coronary_type: Literal["LCA", "RCA"],
@@ -98,7 +93,7 @@ def test_rotate_dsa_integration_full(
     drr = TorchDRR()
     
     dsa = RotateDSA(
-        reader=reader,
+        reader=get_reader(reader_name),
         constrast_sim=simulator,
         drr=drr
     )

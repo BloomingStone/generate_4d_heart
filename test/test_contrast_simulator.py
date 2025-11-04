@@ -14,20 +14,16 @@ from utils import output_root_dir, get_reader, get_simulator
 
 test_angles = list(range(0, 180, 30))   # list of primary angles
 
-@pytest.mark.parametrize("reader_name, reader", (
-    ("volumes_reader", get_reader("volumes_reader")),
-    ("volume_dvf_reader", get_reader("volume_dvf_reader"))
+@pytest.mark.parametrize("reader_name", (
+    "volumes_reader", "volume_dvf_reader"
 ))
-@pytest.mark.parametrize("sim_name, simulator", (
-    ("multipli_contrast", get_simulator("multipli_contrast")),
-    ("threshold_multipli_contrast", get_simulator("threshold_multipli_contrast"))
+@pytest.mark.parametrize("sim_name", (
+    "multipli_contrast", "threshold_multipli_contrast"
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_contrast_simulators(
     reader_name: str,
-    reader: DataReader,
     sim_name: str,
-    simulator: ContrastSimulator,
     coronary_type: Literal["LCA", "RCA"],
 ):
     output_dir = output_root_dir / "contrast_sim" / f"{reader_name}_{sim_name}_{coronary_type}"
@@ -35,11 +31,13 @@ def test_contrast_simulators(
         shutil.rmtree(output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
     
+    reader = get_reader(reader_name)
     data = reader.get_data(CardiacPhase(0.), coronary_type)
     coronary = data.coronary.label
     affine = data.coronary.centering_affine
     
     drr = TorchDRR(rotate_cfg=RotatedParameters(total_frame=1))
+    simulator = get_simulator(sim_name)
     volume = simulator.simulate(
         ori_volume=data.volume,
         cavity_label=data.cavity_label,
