@@ -1,7 +1,7 @@
 from pathlib import Path
 from functools import lru_cache
 
-from generate_4d_heart.rotate_dsa.movement_enhancer import CoronaryBoundLV
+from generate_4d_heart.rotate_dsa.movement_enhancer import CoronaryBoundLVLinear
 from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader, StaticVolumeReader
 from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
 
@@ -27,7 +27,7 @@ def get_volume_dvf_reader():
         coronary_nii=data_dir / "coronary.nii.gz",
         dvf_dir=data_dir / "dvf",
         roi_json=data_dir / "Normal_01.json",
-        movement_enhancer=CoronaryBoundLV
+        movement_enhancer=CoronaryBoundLVLinear
     )
 
 def get_static_volume_reader():
