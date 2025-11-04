@@ -34,30 +34,28 @@ def save_nii(
 
 def save_tif(
     output_path: Path,
-    frames: torch.Tensor
+    frames: torch.Tensor | np.ndarray
 ) -> None:
     frames = frames.squeeze()
-    T, W, H = frames.shape
-    frames_np = frames.cpu().numpy()
+    frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tifffile.imwrite(output_path, frames_np, imagej=True)
 
 def save_png(
     output_path: Path,
-    image_2d: torch.Tensor
+    image_2d: torch.Tensor | np.ndarray
 ) -> None:
     image_2d = image_2d.squeeze()
-    assert image_2d.dim() == 2
-    image_2d_np = image_2d.cpu().numpy()
+    image_2d_np = image_2d.cpu().numpy() if isinstance(image_2d, torch.Tensor) else image_2d
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), image_2d_np)
 
 def save_pngs(
     output_dir: Path,
-    frames: torch.Tensor
+    frames: torch.Tensor | np.ndarray
 ):
     frames = frames.squeeze()
-    frames_np = frames.cpu().numpy()
+    frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
     output_dir.mkdir(parents=True, exist_ok=True)
     
     for t, image in tqdm(enumerate(frames_np), desc="Saving PNGs..."):
@@ -73,9 +71,35 @@ def save_pngs(
 
 def save_gif(
     output_path: Path,
-    frames: torch.Tensor,
-    fps_gif: float = 30
+    frames: torch.Tensor | np.ndarray,
+    fps_gif: int = 30
 ) -> None:
     frames = frames.squeeze()
-    frames_np = frames.cpu().numpy()
+    frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
     iio.imwrite(output_path, frames_np, extension=".gif", duration=1000/fps_gif)
+
+
+def save_deepthmap_gif(
+    output_path: Path,
+    depth_maps: torch.Tensor | np.ndarray,
+    fps_gif: int = 30
+) -> None:
+    from matplotlib import pyplot as plt
+    import matplotlib.animation as animation
+    import matplotlib
+    
+    matplotlib.use("Agg")
+    
+    depth_maps = depth_maps.squeeze()
+    depth_maps_np = depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
+    fig, ax = plt.subplots()
+    ims = []
+    vmin = np.nanmin(depth_maps_np)
+    vmax = np.nanmax(depth_maps_np)
+    for i in range(depth_maps_np.shape[0]):
+        im = ax.imshow(depth_maps_np[i], animated=True, vmin=vmin, vmax=vmax)
+        ims.append([im])
+    
+    ani = animation.ArtistAnimation(fig, ims, interval=1000/fps_gif, blit=True, repeat_delay=1000)
+    writer = animation.PillowWriter(fps=fps_gif)
+    ani.save(output_path, writer=writer)

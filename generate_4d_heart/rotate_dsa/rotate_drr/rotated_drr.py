@@ -78,7 +78,7 @@ class RotatedParameters:
 class RotateDRR(Protocol):
     c_arm_cfg: CArmGeometry
     rotate_cfg: RotatedParameters
-    
+        
     def get_projection_at_frame(
         self, 
         frame: int,
@@ -87,7 +87,7 @@ class RotateDRR(Protocol):
         affine: np.ndarray
     ) -> torch.Tensor:
         """
-        Get drr image at given frame
+        Get DRR image at given frame
         Args:
             frame (int): frame number, starting from 0
         Returns:
@@ -100,7 +100,7 @@ class RotateDRR(Protocol):
         frame: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Get Rotation(R) and Translation(T) of source (or camera). It may be variant for different drr projectioners.
+        Get Rotation(R) and Translation(T) of source (or camera). It may be variant for different DRR projectioners.
         R and T can be used as calculate world to camera matrix.
         usually z is the direction of X-rays are emitted
 
@@ -114,7 +114,7 @@ class RotateDRR(Protocol):
     
     def get_additional_config(self) -> dict:
         """
-        Get additional config for drr besides `c_arm_geometry`, `rotate_parameters` for output in json file.
+        Get additional config for DRR besides `c_arm_geometry`, `rotate_parameters` for output in json file.
         """
         return {}
     

@@ -4,8 +4,6 @@ import shutil
 import pytest
 import torch
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
-from generate_4d_heart.rotate_dsa.data_reader import DataReader
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.saver import save_png

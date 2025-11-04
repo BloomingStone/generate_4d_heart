@@ -106,7 +106,7 @@ class TorchDRR(RotateDRR):
             patch_size=self.patch_size,
             compile_renderer=True,
             checkpoint_gradients=True
-        ).to(self.device)
+        ).to(self.device).eval()
         
     
     
@@ -125,7 +125,6 @@ class TorchDRR(RotateDRR):
                 trans.to(self.device), 
                 parameterization=self.rotate_cfg.parameterization, 
                 convention=self.rotate_cfg.convention,
-                mask_to_channels=True,
             )
         
         if N == 1:
@@ -152,7 +151,7 @@ class TorchDRR(RotateDRR):
         coronary: torch.Tensor,
         affine: np.ndarray,
     ) -> torch.Tensor:
-        """return shape=(T, C, W, H), C=0: image, C=1: coronary_mask"""
+        """return shape=(T, C, W, H), C=0: image, C=1: coronary_mask, C=2: depthmask"""
         self._setup(volume, coronary, affine)
         
         rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)

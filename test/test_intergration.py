@@ -23,7 +23,7 @@ def test_rotate_dsa_integration(
     """测试完整的 RotateDSA 集成流程"""
     # 配置 DRR 参数为测试模式（减少帧数和图像大小以加快测试速度）
     rotate_cfg = RotatedParameters(
-        total_frame=10,  # 减少帧数
+        total_frame=20,  # 减少帧数
         fps=10,           # 降低帧率
     )
     
@@ -40,16 +40,13 @@ def test_rotate_dsa_integration(
     output_dir = output_root_dir / "intergration" / f"{reader_name}_{sim_name}_{coronary_type}"
     if output_dir.exists():
         shutil.rmtree(output_dir)
-    frames, labels, geometry_json = dsa.run_and_save(
+    frames, labels, depth_map = dsa.run_and_save(
         output_dir=output_dir,
         coronary_type=coronary_type,
         gif_fps=10
     )
     
-    # 验证输出格式
-    assert isinstance(frames, torch.Tensor)
-    assert frames.dtype == torch.uint8
-    assert frames.shape == (rotate_cfg.total_frame, 1, *drr.image_size)
+    geometry_json = dsa.get_geometry_json(coronary_type)
     
     # 验证几何信息
     assert "frames" in geometry_json

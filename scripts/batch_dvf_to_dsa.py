@@ -33,6 +33,7 @@ class BatchDVFToDSA:
         recover_cropped_data: bool = True,
         run_random: bool = False,
         do_enhance: bool = True,
+        only_output_label = False
     ):
         self.gen_dvf_output_dir = gen_dvf_output_dir
         self.dvf_dir = gen_dvf_output_dir / "dvf"
@@ -47,6 +48,7 @@ class BatchDVFToDSA:
         self.recover_cropped_data = recover_cropped_data
         self.run_random = run_random
         self.do_enhance = do_enhance
+        self.only_output_label = only_output_label
         
         dirs = (self.dvf_dir, self.roi_dir, image_dir, coronary_dir, cavity_dir)
         for d in dirs:
@@ -94,14 +96,19 @@ class BatchDVFToDSA:
         output_case_dir = self.output_root / case_name
         output_case_dir.mkdir(parents=True, exist_ok=True)
 
-        RotateDSA(
+        dsa = RotateDSA(
             reader, MultipliContrast(), 
             TorchDRR(rotate_cfg=self._get_rotate_param())
-        ).run_and_save(output_case_dir, coronary_type )
+        )
+        
+        if self.only_output_label:
+            dsa.run_and_save_no_drr(output_case_dir, coronary_type)
+        else:
+            dsa.run_and_save(output_case_dir, coronary_type)
 
         np.save(
             output_case_dir / "central_line.npy", 
-            reader.get_phase_0_data().get_coronary_central_line(coronary_type, "coroanry_centering")
+            reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
         )
 
     def run(self):
@@ -140,6 +147,7 @@ def main(
     dataset_name: str,
     output_root: Path,
     random_seed: int|None=None,
+    output_only_label: bool=False
 ):
     
     if random_seed is not None:
@@ -161,7 +169,8 @@ def main(
                 cavity_dir=origin_dir/"cavity",
                 output_root=output_root,
                 dataset_name=dataset_name,
-                run_random=run_random
+                run_random=run_random,
+                only_output_label=output_only_label
             )
         case "shanghai":
             print(f"{dataset_name} -- {output_root} -- seed:{random_seed}")
@@ -173,8 +182,9 @@ def main(
                 cavity_dir=origin_dir/"cavity",
                 output_root=output_root,
                 dataset_name=dataset_name,
-                # recover_cropped_data=False,     # 原图尺寸太大，如果复原会导致超显存
-                run_random=run_random
+                # recover_cropped_data=False,     # 原图尺寸太大，如果复原会导致超显存(改用 compied drr 后解决)
+                run_random=run_random,
+                only_output_label=output_only_label
             )
         case "imagecas":
             print(f"{dataset_name} -- {output_root} -- seed:{random_seed}")
@@ -187,7 +197,8 @@ def main(
                 output_root=output_root,
                 dataset_name=dataset_name,
                 # recover_cropped_data=False,     # 原图尺寸太大，如果复原会导致超显存
-                run_random=run_random
+                run_random=run_random,
+                only_output_label=output_only_label
             )
         case _:
             print(f"{dataset_name} not supported")
