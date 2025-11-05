@@ -94,9 +94,7 @@ class VolumesReader(DataReader):
     
 
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        if isinstance(coronary_type, str):
-            coronary_type = CoronaryType(coronary_type)
-        return self._get_data_at_index(0, coronary_type)
+        return self._get_data_at_index(0, CoronaryType(coronary_type))
 
     def _get_data_at_index(self, index: int, coronary_type: CoronaryType) -> DataReaderResult:
         data = self.data[index]
@@ -118,7 +116,7 @@ class VolumesReader(DataReader):
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=get_mesh_in_world(
                     coronary_label, 
-                    coronary_centering_affine)
+                    self._origin_volume_affine)
             )
         )
 
@@ -128,8 +126,7 @@ class VolumesReader(DataReader):
         If phase matches an existing frame index exactly, returns cached result.
         Otherwise performs fast linear interpolation between the two nearest frames.
         """
-        if isinstance(coronary_type, str):
-            coronary_type = CoronaryType(coronary_type)
+        coronary_type = CoronaryType(coronary_type)
         
         idx0 = phase.closest_index_floor(self.n_phases)
         idx1 = phase.closest_index_ceil(self.n_phases)
@@ -175,7 +172,7 @@ class VolumesReader(DataReader):
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=get_mesh_in_world(
                     coronary_label, 
-                    coronary_centering_affine)
+                    self._origin_volume_affine)
             )
         )
     

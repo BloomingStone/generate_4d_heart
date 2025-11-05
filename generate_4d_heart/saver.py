@@ -91,8 +91,7 @@ def save_deepthmap_gif(
     matplotlib.use("Agg")
     
     depth_maps = depth_maps.squeeze()
-    # Negate depth maps for visualization
-    depth_maps_np = - depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
+    depth_maps_np = depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
     fig, ax = plt.subplots()
     ims = []
     # Negate depth maps for visualization

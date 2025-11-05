@@ -57,7 +57,7 @@ class CoronaryBoundLV(MovementEnhancer):
             smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
         dvf_cp[:, :, *self.smooth_indices] = smoothed[:, :, *self.smooth_indices]
         
-        dvf = dlpack2tensor(dvf_cp.toDlpack()).cpu()
+        dvf = dlpack2tensor(dvf_cp.toDlpack())
         del dvf_cp
         return dvf
 
@@ -99,6 +99,6 @@ class CoronaryBoundLVLinear(MovementEnhancer):
             smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
         dvf_cp[:, :, *self.smooth_indices] = smoothed[:, :, *self.smooth_indices]
         
-        dvf = dlpack2tensor(dvf_cp.toDlpack()).cpu()
+        dvf = dlpack2tensor(dvf_cp.toDlpack())
         del dvf_cp
         return dvf

@@ -56,15 +56,14 @@ def load_nifti_with_roi_crop(file: Path, roi: ROI, is_label: bool = False) -> tu
 def load_and_zoom_dvf(
     dvf_path: Path, 
     roi: ROI, 
-    operating_device: torch.device,
-    final_device: torch.device = torch.device('cpu')
+    device: torch.device
 ) -> Tensor:
     """
     read dvf from nifti file and zoom it to the roi size
     """
     dvf_nii, _ = pre_load(dvf_path)
     dvf_tensor = torch.from_numpy(dvf_nii.get_fdata())
-    dvf_tensor = dvf_tensor.to(operating_device).to(torch.float)  # (H,W,D,3)
+    dvf_tensor = dvf_tensor.to(device).to(torch.float)  # (H,W,D,3)
     dvf_tensor = dvf_tensor.squeeze().permute(3, 0, 1, 2)[None] # (1,3,H,W,D)
     dvf_tensor = F.interpolate(dvf_tensor, size=roi.get_crop_size(), mode='trilinear', align_corners=False)
     
@@ -72,7 +71,7 @@ def load_and_zoom_dvf(
     zoom_rate = (1 / roi.get_zoom_rate()).flatten().tolist()
     for i in range(3):
         dvf_tensor[:, i] = dvf_tensor[:, i] * zoom_rate[i]
-    return dvf_tensor.to(final_device)
+    return dvf_tensor
 
 
 def separate_coronary(coronary: Tensor) -> tuple[Tensor, Tensor]:

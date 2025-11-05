@@ -26,8 +26,7 @@ class StaticVolumeReader(DataReader):
         self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine)
     
     def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        if isinstance(coronary_type, str):
-            coronary_type = CoronaryType(coronary_type)
+        coronary_type = CoronaryType(coronary_type)
             
         if coronary_type == CoronaryType.LCA:
             coronary_label = self.lca_label
@@ -77,8 +76,7 @@ class StaticLabelReader(DataReader):
         self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine)
     
     def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        if isinstance(coronary_type, str):
-            coronary_type = CoronaryType(coronary_type)
+        coronary_type = CoronaryType(coronary_type)
         
         if coronary_type == CoronaryType.LCA:
             coronary_label = self.lca_label

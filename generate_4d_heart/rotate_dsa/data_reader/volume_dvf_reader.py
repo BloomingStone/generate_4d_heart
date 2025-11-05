@@ -51,22 +51,34 @@ class LazyCardiacDVFWarpModule(nn.Module):
     """
 
     def __init__(
-        self, 
-        dvf_list: list[Tensor],  # list of  (1,3,H,W,D), stored in CPU (pinned)
+        self,
         data: _Data,
-        device: torch.device
+        device: torch.device,
+        *,
+        precomputed_ddf: bool,
+        dvf_list: list[Tensor] | None = None,   #shape=(1, 3, D, H, W)
+        ddf_list: list[Tensor] | None = None    #shape=(2, 3, D, H, W)
     ):
         super().__init__()
 
-        self.dvf_list_cpu = [dvf.pin_memory() for dvf in dvf_list]
+        # DVF data stored on CPU pinned memory
         self.data = data
         self.device = device
-        
-        self.size = torch.tensor(self.dvf_list_cpu[0].shape[-3:]).to(device, non_blocking=True)   # (D H W)
-        spatial_dims = 3
+        self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(device).half()
+        self.warp_image = Warp(mode="bilinear", padding_mode="zeros").to(device).half()
+        self.warp_label = Warp(mode="nearest", padding_mode="zeros").to(device).half()
+        self.n_phases = NUM_TOTAL_PHASE     # TODO for now, we only supported total 20 phases
 
-        # keep only 2 recent DVFs on GPU to save memory
+        spatial_dims = 3
+        self.spatial_size = torch.tensor(self.data.image.shape[-spatial_dims:]).to(device, non_blocking=True)   # (D H W)
+
+        self._gpu_cache_max = 2
         self.gpu_cache = OrderedDict[int, Tensor]()
+
+        # precomputed DDF support
+        self.precomputed_ddf = precomputed_ddf
+        self.ddf_list_cpu = ddf_list
+        self.dvf_list_cpu = dvf_list
 
         self.image = data.image.half().to(device, non_blocking=True)
         self.cavity = data.cavity.half().to(device, non_blocking=True)
@@ -77,7 +89,7 @@ class LazyCardiacDVFWarpModule(nn.Module):
         def init_branch(branch: Tensor) -> tuple[pv.PolyData, Tensor, Tensor]:
             mesh_voxel = get_mesh_in_voxel(branch)
             points = torch.from_numpy(mesh_voxel.points).half().to(device, non_blocking=True)
-            points_norm = points / (self.size - 1) * 2 - 1   # Norm to [-1, 1]
+            points_norm = points / (self.spatial_size - 1) * 2 - 1   # Norm to [-1, 1]
             points_norm = einops.rearrange(points_norm, "n d -> 1 n 1 1 d")
             index_ordering: list[int] = list(range(spatial_dims - 1, -1, -1))
             points_norm = points_norm[..., index_ordering]  # z, y, x -> x, y, z
@@ -86,32 +98,33 @@ class LazyCardiacDVFWarpModule(nn.Module):
         self.lca_mesh_voxel, self.lca_mesh_points, self.lca_mesh_points_norm = init_branch(data.lca)
         self.rca_mesh_voxel, self.rca_mesh_points, self.rca_mesh_points_norm = init_branch(data.rca)
 
-        self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(device).half()
-        self.warp_image = Warp(mode="bilinear", padding_mode="zeros").to(device).half()
-        self.warp_label = Warp(mode="nearest", padding_mode="zeros").to(device).half()
 
-        self.n_phases = len(dvf_list)
-
-    def _get_dvf(self, idx: int) -> Tensor:
+    def _get_maybe_cached_x(self, idx: int) -> Tensor:
         """
         Load DVF to GPU if not cached. Uses async copy.
         """
         if idx in self.gpu_cache:
-            return self.gpu_cache[idx]
+            # move this key to the end to mark as recently used
+            x = self.gpu_cache.pop(idx)
+            self.gpu_cache[idx] = x
+            return x
 
-        dvf_cpu = self.dvf_list_cpu[idx]
-        dvf_gpu = dvf_cpu.to(self.device, non_blocking=True)
+        if self.precomputed_ddf and self.ddf_list_cpu is not None:
+            x = self.ddf_list_cpu[idx].to(self.device)
+        elif (not self.precomputed_ddf) and (self.dvf_list_cpu is not None):
+            x = self.dvf_list_cpu[idx].to(self.device)
+        else:
+            raise RuntimeError("No DVF or DDF data available.")
 
-        # maintain small LRU-like cache
-        if len(self.gpu_cache) > 2:
-            _, dvf_old = self.gpu_cache.popitem(last=False)  # if using OrderedDict
-            dvf_cpu = dvf_old.cpu()   # move to CPU
-            del dvf_old
-            torch.cuda.empty_cache()
-        
-        self.gpu_cache[idx] = dvf_gpu
-        return dvf_gpu
-    
+        # evict least-recently-used entries only when we will exceed the capacity
+        while len(self.gpu_cache) >= self._gpu_cache_max:
+            _, x_old = self.gpu_cache.popitem(last=False)
+            del x_old
+
+        self.gpu_cache[idx] = x
+        return x
+
+
     def _points_warp_and_to_world(self, ddf_inverse: Tensor, coronary_type: CoronaryType) -> pv.PolyData:
         if coronary_type == CoronaryType.LCA:
             points = self.lca_mesh_points
@@ -151,25 +164,29 @@ class LazyCardiacDVFWarpModule(nn.Module):
         w = float(phase) * self.n_phases - idx0
 
         # --- async copy from CPU ---
-        stream = torch.cuda.Stream()
-        with torch.cuda.stream(stream):
-            dvf0 = self._get_dvf(idx0)
-            dvf1 = self._get_dvf(idx1)
-        torch.cuda.current_stream().wait_stream(stream)
-
-        dvf = (dvf0 * (1 - w) + dvf1 * w).float()
-        ddf: Tensor = self.dvf2ddf(dvf).half()   # shape = (B = 1, C = 3, W, H, D)
-        ddf_inverse: Tensor = self.dvf2ddf(-dvf).half()
+        x = self._get_maybe_cached_x(idx0)     # shape = (2, C = 3, W, H, D)
+        x1 = self._get_maybe_cached_x(idx1)
+        with torch.no_grad():
+            x = (x * (1 - w) + x1 * w)
+            if self.precomputed_ddf:
+                assert x.shape[0] == 2
+            else:
+                assert x.shape[0] == 1
+                x: Tensor = self.dvf2ddf(torch.cat((x, -x), dim=0))
+        ddf = x[0:1]
+        ddf_inv = x[1:2]
 
         img_warped: Tensor = self.warp_image(self.image, ddf)
         coronary = self.coronary[:, 0:1] if coronary_type == CoronaryType.LCA else self.coronary[:, 1:2]
         label_tensor = torch.cat([self.cavity, coronary], dim=0)
-        label_warped = self.warp_label(label_tensor, ddf.repeat(2,1,1,1,1))
+        # use expand when possible to avoid a physical repeat copy (ddf has batch dim == 1)
+        label_grid = ddf.expand(2, -1, -1, -1, -1)
+        label_warped = self.warp_label(label_tensor, label_grid)
         
         cav_warped: Tensor = label_warped[0].unsqueeze(0)
         cor_warped: Tensor = label_warped[1].unsqueeze(0)
 
-        return img_warped.half(), cav_warped.byte(), cor_warped.byte(), self._points_warp_and_to_world(ddf_inverse, coronary_type)
+        return img_warped.half(), cav_warped.byte(), cor_warped.byte(), self._points_warp_and_to_world(ddf_inv, coronary_type)
 
 
 
@@ -182,7 +199,8 @@ class VolumeDVFReader(DataReader):
         roi_json: Path,
         dvf_dir: Path,
         movement_enhancer: None | Type[MovementEnhancer] = None,
-        recover_cropped_data: bool = True
+        recover_cropped_data: bool = True,
+        precompute_ddf: bool = True,
     ):
         """Reads volume data and corresponding DVFs for 4D cardiac MRI, which usually generated from ..dvf module.
         
@@ -200,6 +218,8 @@ class VolumeDVFReader(DataReader):
         self.device = device
         self.roi = ROI.from_json(roi_json)
         self.recover_cropped_data = recover_cropped_data
+        self.precompute_ddf = precompute_ddf
+        self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(device)
         
         self._load_3d_data(image_nii, cavity_nii, coronary_nii)
         self._load_dvf_and_init_warpper(dvf_dir, movement_enhancer)
@@ -256,26 +276,49 @@ class VolumeDVFReader(DataReader):
             self.enhancer = movement_enhancer(self.cropped_data.cavity, self.cropped_data.all_coronary_label)
 
         dvf_list: list[Tensor] = []
-        for dvf_file in tqdm(sorted(dvf_dir.glob("*.nii.gz")), desc="loading and updating DVFs"):
+        ddf_list: list[Tensor] = []
+
+        # prepare a dvf2ddf module on device for precomputation if requested
+        for dvf_file in tqdm(sorted(dvf_dir.glob("*.nii.gz")), desc="loading and preprocessing DVFs"):
             # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
             # save as half-precision to save memory
-            dvf_tensor = load_and_zoom_dvf(dvf_file, self.roi, self.device).half()
-            dvf_tensor = self.enhancer(dvf_tensor)
-            dvf_list.append(dvf_tensor)
+            dvf = load_and_zoom_dvf(dvf_file, self.roi, self.device).half()
+            dvf = self.enhancer(dvf).float()
+            
+            if self.precompute_ddf:
+                # compute DDF and inverse DDF on device once, store as CPU pinned to be used later
+                with torch.no_grad():
+                    ddf_batch: Tensor = self.dvf2ddf(torch.cat((dvf, -dvf), dim=0))
+                ddf_list.append(ddf_batch.half().cpu().pin_memory())   # (2, 3, H, W, D)
+            else:
+                dvf_list.append(dvf.half().cpu().pin_memory())
+
             
         # TODO: for now only support fixed NUM_TOTAL_PHASE
-        self.n_phases = len(dvf_list)
+        if self.precompute_ddf:
+            self.n_phases = len(ddf_list)
+        else:
+            self.n_phases = len(dvf_list)
+            
         assert self.n_phases == NUM_TOTAL_PHASE, f"For now, we only support {NUM_TOTAL_PHASE} phases. But the data has {self.n_phases} phases."
         
         # --- Initialize Warp Module ---
-        self.warpper = LazyCardiacDVFWarpModule(
-            dvf_list, self.cropped_data, self.device
-        ).to(self.device)
+        if self.precompute_ddf:
+            self.warpper = LazyCardiacDVFWarpModule(
+                self.cropped_data, self.device,
+                precomputed_ddf=True,
+                ddf_list=ddf_list,
+            ).to(self.device)
+        else:
+            self.warpper = LazyCardiacDVFWarpModule(
+                self.cropped_data, self.device,
+                precomputed_ddf=False,
+                dvf_list=dvf_list
+            ).to(self.device)
     
     
     def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        if isinstance(coronary_type, str):
-            coronary_type = CoronaryType(coronary_type)
+        coronary_type = CoronaryType(coronary_type)
         
         image, cavity, coronary_label, coronary_mesh = self.warpper(phase, coronary_type)
         if self.recover_cropped_data:
@@ -304,8 +347,7 @@ class VolumeDVFReader(DataReader):
         )
     
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        if isinstance(coronary_type, str):
-            coronary_type = CoronaryType(coronary_type)
+        coronary_type = CoronaryType(coronary_type)
         
         if self.recover_cropped_data:
             data = self.origin_data
