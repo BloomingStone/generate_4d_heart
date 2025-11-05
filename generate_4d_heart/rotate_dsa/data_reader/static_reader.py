@@ -16,14 +16,18 @@ class StaticVolumeReader(DataReader):
         cavity_path: Path,
         coronary_path: Path
     ):
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda:1")
+        else:
+            raise RuntimeError("No CUDA device available for StaticVolumeReader")
         self.n_phases: int = NUM_TOTAL_PHASE
         self.volume, self._origin_volume_affine = load_nifti(image_path)
         self.cavity, _ = load_nifti(cavity_path, is_label=True)
         coronary, _ = load_nifti(coronary_path, is_label=True)
-        self.lca_label, self.rca_label = separate_coronary(coronary)
+        self.lca_label, self.rca_label = separate_coronary(coronary, self.device)
         self._origin_volume_size = self.volume.shape[-3:]   #type: ignore
-        self._lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine)
-        self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine)
+        self._lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine, self.device)
+        self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine, self.device)
     
     def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
@@ -67,13 +71,17 @@ class StaticLabelReader(DataReader):
         cavity_path: Path,
         coronary_path: Path,
     ):
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda:1")
+        else:
+            raise RuntimeError("No CUDA device available for StaticLabelReader")
         self.n_phases: int = NUM_TOTAL_PHASE
         self.cavity, _ = load_nifti(cavity_path, is_label=True)
         coronary, self._origin_volume_affine = load_nifti(coronary_path, is_label=True)
-        self.lca_label, self.rca_label = separate_coronary(coronary)
+        self.lca_label, self.rca_label = separate_coronary(coronary, self.device)
         self._origin_volume_size = self.cavity.shape[-3:]   #type: ignore
-        self._lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine)
-        self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine)
+        self._lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine, self.device)
+        self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine, self.device)
     
     def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)

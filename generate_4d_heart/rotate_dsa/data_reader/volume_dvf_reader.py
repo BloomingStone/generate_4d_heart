@@ -25,6 +25,7 @@ from .data_reader import (
 
 @dataclass
 class _Data:
+    device: torch.device
     image: Tensor
     cavity: Tensor
     affine: np.ndarray
@@ -34,8 +35,8 @@ class _Data:
     rca_centering_affine: np.ndarray = field(init=False)
     
     def __post_init__(self):
-        self.lca_centering_affine = get_coronary_centering_affine(self.lca, self.affine)
-        self.rca_centering_affine = get_coronary_centering_affine(self.rca, self.affine)
+        self.lca_centering_affine = get_coronary_centering_affine(self.lca, self.affine, self.device)
+        self.rca_centering_affine = get_coronary_centering_affine(self.rca, self.affine, self.device)
     
     @property
     def all_coronary_label(self) -> Tensor:
@@ -214,12 +215,14 @@ class VolumeDVFReader(DataReader):
         | - phase_01.nii.gz
         | - ...
         """
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.device = device
+        if not torch.cuda.is_available() and torch.cuda.device_count() < 2:
+            raise RuntimeError("No CUDA device available for VolumeDVFReader")
+        
+        self.device = torch.device("cuda:1")
         self.roi = ROI.from_json(roi_json)
         self.recover_cropped_data = recover_cropped_data
         self.precompute_ddf = precompute_ddf
-        self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(device)
+        self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(self.device)
         
         self._load_3d_data(image_nii, cavity_nii, coronary_nii)
         self._load_dvf_and_init_warpper(dvf_dir, movement_enhancer)
@@ -250,9 +253,9 @@ class VolumeDVFReader(DataReader):
         assert np.allclose(affine, cavity_affine)
         assert np.allclose(affine, coronary_affine)
         
-        lca, rca = separate_coronary(coronary)        
+        lca, rca = separate_coronary(coronary, self.device)        
         self.origin_data = _Data(
-            image, cavity, affine, 
+            self.device, image, cavity, affine, 
             lca, rca
         )
 
@@ -264,7 +267,7 @@ class VolumeDVFReader(DataReader):
             return self.roi.crop_on_data(x.clone())
 
         self.cropped_data = _Data(
-            crop(image), crop(cavity), self.roi.get_affine_after_crop(affine),
+            self.device, crop(image), crop(cavity), self.roi.get_affine_after_crop(affine),
             crop(lca), crop(rca)
         )
 
@@ -273,7 +276,7 @@ class VolumeDVFReader(DataReader):
         if movement_enhancer is None:
             self.enhancer: Callable[[Tensor], Tensor] = lambda x: x
         else:
-            self.enhancer = movement_enhancer(self.cropped_data.cavity, self.cropped_data.all_coronary_label)
+            self.enhancer = movement_enhancer(self.cropped_data.cavity, self.cropped_data.all_coronary_label, self.device)
 
         dvf_list: list[Tensor] = []
         ddf_list: list[Tensor] = []

@@ -68,7 +68,10 @@ class TorchDRR(RotateDRR):
         self.patch_size = patch_size
         self.orientation_type = orientation_type
         self.diff_drr: DRR | None = None
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            self._device = torch.device("cuda:0")
+        else:
+            raise RuntimeError("No CUDA device available for TorchDRR")
         self.reorient = get_reorientation(self.orientation_type)
         sod = self.c_arm_cfg.sod
         self.translations = torch.tensor([[0.0, sod, 0.0]], device=self.device)

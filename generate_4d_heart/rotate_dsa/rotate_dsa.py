@@ -34,22 +34,26 @@ class Torch3DLabelRenderer:
             blur_radius=0.0,
             faces_per_pixel=1
         )
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda:0")
+        else:
+            raise RuntimeError("No CUDA device available for Torch3DLabelRenderer")
 
     @torch.no_grad()
     def render(self, mesh_pv: pv.PolyData, R: torch.Tensor, T: torch.Tensor):
         verts = torch.from_numpy(np.array(mesh_pv.points)).float()
         faces_np = np.array(mesh_pv.faces.reshape(-1, 4)[:, 1:])  # skip the first number which is the number of points per face
         faces = torch.from_numpy(faces_np).long()
-        mesh = Meshes([verts.cuda()], [faces.cuda()])
+        mesh = Meshes([verts.to(self.device)], [faces.to(self.device)])
 
         
         R = R.squeeze()
         T = T.squeeze()
         cameras = FoVPerspectiveCameras(
-            device='cuda',
+            device=self.device,
             fov=self.fov,
-            R=R[None].cuda(),
-            T=(-R.T @ T)[None].cuda(), 
+            R=R[None].to(self.device),
+            T=(-R.T @ T)[None].to(self.device), 
             zfar=self.zfar
         )
         

@@ -74,7 +74,7 @@ def load_and_zoom_dvf(
     return dvf_tensor
 
 
-def separate_coronary(coronary: Tensor) -> tuple[Tensor, Tensor]:
+def separate_coronary(coronary: Tensor, device: torch.device) -> tuple[Tensor, Tensor]:
     """
     separate coronary to LCA(1) and RCA(2)
     Args:
@@ -87,30 +87,31 @@ def separate_coronary(coronary: Tensor) -> tuple[Tensor, Tensor]:
     coronary = coronary.squeeze()
     assert coronary.ndim == 3, "Coronary tensor after squeeze must be in shape (D, H, W)"
     
-    coronary = cp.from_dlpack(tensor2dlpack(coronary.cuda()))
-    labeled_array, num_features = label(coronary.astype(cp.int8))  # type: ignore
+    with cp.cuda.Device(device.index):
+        coronary = cp.from_dlpack(tensor2dlpack(coronary.to(device)))
+        labeled_array, num_features = label(coronary.astype(cp.int8))  # type: ignore
+        
+        if num_features <= 1:
+            raise ValueError("Coronary segmentation must have at least 2 components")
+        
+        assert labeled_array is not None
+        component_sizes = cp.bincount(labeled_array.ravel())[1:]  # Skip background (0)
+        
+        largest_indices = cp.argsort(component_sizes)[-2:][::-1] + 1
+        
+        region_0 = (labeled_array == largest_indices[0]).astype(cp.bool_)
+        region_1 = (labeled_array == largest_indices[1]).astype(cp.bool_)
+        
+        center_0 = center_of_mass(region_0)
+        center_1 = center_of_mass(region_1)
+        
+        region_0 = dlpack2tensor(region_0.toDlpack()).reshape(shape).to(torch.bool)
+        region_1 = dlpack2tensor(region_1.toDlpack()).reshape(shape).to(torch.bool)
     
-    if num_features <= 1:
-        raise ValueError("Coronary segmentation must have at least 2 components")
-    
-    assert labeled_array is not None
-    component_sizes = cp.bincount(labeled_array.ravel())[1:]  # Skip background (0)
-    
-    largest_indices = cp.argsort(component_sizes)[-2:][::-1] + 1
-    
-    region_0 = (labeled_array == largest_indices[0]).astype(cp.bool_)
-    region_1 = (labeled_array == largest_indices[1]).astype(cp.bool_)
-    
-    center_0 = center_of_mass(region_0)
-    center_1 = center_of_mass(region_1)
-    
-    region_0 = dlpack2tensor(region_0.toDlpack()).reshape(shape).to(torch.bool)
-    region_1 = dlpack2tensor(region_1.toDlpack()).reshape(shape).to(torch.bool)
-    
-    if center_0[0] > center_1[0]:
-        return region_0, region_1
-    else:
-        return region_1, region_0
+        if center_0[0] > center_1[0]:
+            return region_0, region_1
+        else:
+            return region_1, region_0
 
 def recenter(
     original_affine: ndarray,
@@ -125,7 +126,7 @@ def recenter(
     T[:3, 3] = new_t
     return T
 
-def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray) -> ndarray:
+def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray, device: torch.device) -> ndarray:
     """
     Compute an affine transform that recenters the heart coronary region in world coordinates for CTA
 
@@ -145,16 +146,17 @@ def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray
     Returns:
         ndarray: New affine matrix that centers the coronary structure in world space.
     """
-    label_center: tuple[int, int, int] = center_of_mass(cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().cuda()))) # type: ignore
-    W, H, D = coronary_label.shape[-3:]
-    image_center = (W/2, H/2, D/2)
-    label_center_voxel = (
-        int( (image_center[0] + label_center[0]) / 2 ), # left and right, set as the mean of image_center and label_center
-        int( (image_center[1] + label_center[1]) / 2 ), # antero-posterior, same as above
-        int( image_center[2] )                          # up and down, set as the center of image
-    )
-    
-    return recenter(volume_affine, label_center_voxel)
+    with cp.cuda.Device(device.index):
+        label_center: tuple[int, int, int] = center_of_mass(cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(device)))) # type: ignore
+        W, H, D = coronary_label.shape[-3:]
+        image_center = (W/2, H/2, D/2)
+        label_center_voxel = (
+            int( (image_center[0] + label_center[0]) / 2 ), # left and right, set as the mean of image_center and label_center
+            int( (image_center[1] + label_center[1]) / 2 ), # antero-posterior, same as above
+            int( image_center[2] )                          # up and down, set as the center of image
+        )
+        
+        return recenter(volume_affine, label_center_voxel)
 
 def get_mesh_in_voxel(label: Tensor) -> pv.PolyData:
     label_np = label.squeeze().cpu().numpy().astype(np.uint8)

@@ -331,7 +331,7 @@ environments:
       - pypi: git+https://github.com/BloomingStone/CPD-Pytorch.git?rev=28ad5b70390ebee6caf5162d1acff70d2cacb66c#28ad5b70390ebee6caf5162d1acff70d2cacb66c
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/1b/0f/65cfffa49c63814f6c8d74bebdb27da52d7bbf4055cb5af834d3cda4abd9/diffdrr-0.6.0-py3-none-any.whl
-      - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/ed/c6/236247deaa155fad1b38b6deb95b8b76efd20f5107b4577eee42002cbf11/fastcore-1.8.14-py3-none-any.whl
+      - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/2e/7a/c11883a98676e74a405d6503d65f58c3fa076ddd9c0cee6044884f6eac38/fastcore-1.8.15-py3-none-any.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/2d/8b/371ab3cec97ee3fe1126b3406b7abd60c8fec8975fd79a3c75cdea0c3d83/fonttools-4.60.1-cp313-cp313-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/d5/4e/e4691508f9477ce67da2015d8c00acd751e6287739123113a9fca6f1604e/frozenlist-1.8.0-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/da/71/ae30dadffc90b9006d77af76b393cb9dfbfc9629f339fc1574a1c52e6806/future-1.0.0-py3-none-any.whl
@@ -1298,10 +1298,10 @@ packages:
   purls: []
   size: 140948
   timestamp: 1752719584725
-- pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/ed/c6/236247deaa155fad1b38b6deb95b8b76efd20f5107b4577eee42002cbf11/fastcore-1.8.14-py3-none-any.whl
+- pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/2e/7a/c11883a98676e74a405d6503d65f58c3fa076ddd9c0cee6044884f6eac38/fastcore-1.8.15-py3-none-any.whl
   name: fastcore
-  version: 1.8.14
-  sha256: a02a749c26243ffd54d6dd11165cf4a556c7cb08f4c7e47ff67b32c7b0183ce9
+  version: 1.8.15
+  sha256: d005d10d7ee5c2abb7ac0544da7c9f0a0a2f7706b48892a27c1906487ca6dea9
   requires_dist:
   - packaging
   - numpy ; extra == 'dev'

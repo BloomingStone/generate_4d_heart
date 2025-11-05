@@ -44,6 +44,10 @@ class VolumesReader(DataReader):
         | - phase_001.nii.gz
         | - ...
         """
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda:1")
+        else:
+            raise RuntimeError("No CUDA device available for VolumesReader")
         image_file_list = sorted(image_dir.glob("*.nii*"))
         cavity_file_list = sorted(cavity_dir.glob("*.nii*"))
         coronary_file_list = sorted(coronary_dir.glob("*.nii*"))
@@ -77,11 +81,11 @@ class VolumesReader(DataReader):
             cavity_label, _ = load_nifti(cav_file, is_label=True)
             coronary_label, _ = load_nifti(cor_file, is_label=True)
 
-            lca_label, rca_label = separate_coronary(coronary_label)
+            lca_label, rca_label = separate_coronary(coronary_label, self.device)
             
             if index == 0:
-                self._lca_centering_affine = get_coronary_centering_affine(lca_label, self._origin_volume_affine)
-                self._rca_centering_affine = get_coronary_centering_affine(rca_label, self._origin_volume_affine)
+                self._lca_centering_affine = get_coronary_centering_affine(lca_label, self._origin_volume_affine, self.device)
+                self._rca_centering_affine = get_coronary_centering_affine(rca_label, self._origin_volume_affine, self.device)
 
             self.data.append(_Data(
                 phase=phase,
