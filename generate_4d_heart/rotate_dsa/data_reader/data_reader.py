@@ -162,14 +162,18 @@ def get_mesh_in_voxel(label: Tensor) -> pv.PolyData:
     label_np = label.squeeze().cpu().numpy().astype(np.uint8)
     label_big = zoom(cp.asarray(label_np), zoom=2).astype(cp.uint8).get()  # type: ignore
     mesh = pv.wrap(label_big)\
-        .contour([1], method='flying_edges')\
+        .contour([1], method='marching_cubes')\
         .smooth_taubin(
             n_iter=40, pass_band=0.001, normalize_coordinates=True)\
         .triangulate().clean()
-    cluster = pyacvd.Clustering(mesh)
-    cluster.cluster(10000)
-    
-    mesh: pv.PolyData = cluster.create_mesh().triangulate().clean()  # type: ignore
+    try:
+        cluster = pyacvd.Clustering(mesh)
+        cluster.cluster(10000)
+        
+        mesh: pv.PolyData = cluster.create_mesh().triangulate().clean()  # type: ignore
+    except Exception as e:
+        import logging
+        logging.warning(f"pyacvd clustering failed: {e}, use original mesh")
     mesh.points /= 2.0  # 因为上采样了2倍，所以点坐标要除以2
     return mesh
 

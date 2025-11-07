@@ -71,7 +71,7 @@ class CoronaryBoundLVLinear(MovementEnhancer):
         cavity_label: torch.Tensor, 
         coronary_label: torch.Tensor,
         device: torch.device,
-        enhance_weight_at_farthest_coroanry: float = 0.1
+        enhance_weight_at_farthest_coroanry: float = 0.3
     ) -> None:
         self.device = device
         with cp.cuda.Device(device.index):
