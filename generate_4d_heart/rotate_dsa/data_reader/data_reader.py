@@ -6,7 +6,7 @@ import numpy as np
 from numpy import ndarray
 from skimage.morphology import skeletonize
 import cupy as cp
-from cupyx.scipy.ndimage import label, center_of_mass, zoom
+from cupyx.scipy.ndimage import label, center_of_mass
 import torch
 from torch import Tensor
 from torch.nn import functional as F
@@ -62,15 +62,12 @@ def load_and_zoom_dvf(
     read dvf from nifti file and zoom it to the roi size
     """
     dvf_nii, _ = pre_load(dvf_path)
-    dvf_tensor = torch.from_numpy(dvf_nii.get_fdata())
-    dvf_tensor = dvf_tensor.to(device).to(torch.float)  # (H,W,D,3)
-    dvf_tensor = dvf_tensor.squeeze().permute(3, 0, 1, 2)[None] # (1,3,H,W,D)
-    dvf_tensor = F.interpolate(dvf_tensor, size=roi.get_crop_size(), mode='trilinear', align_corners=False)
+    dvf_tensor = torch.from_numpy(dvf_nii.get_fdata()).to(device=device, dtype=torch.float, non_blocking=True)  # (H,W,D,1,3)
     
-    # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
-    zoom_rate = (1 / roi.get_zoom_rate()).flatten().tolist()
-    for i in range(3):
-        dvf_tensor[:, i] = dvf_tensor[:, i] * zoom_rate[i]
+    zoom_rate = torch.from_numpy((1 / roi.get_zoom_rate()).flatten()).to(dvf_tensor, non_blocking=True)  # (3,)
+    dvf_tensor.squeeze_().mul_(zoom_rate)  #(H, W, D, 3)
+    dvf_tensor = F.interpolate(dvf_tensor, size=roi.get_roi_size_before_crop(), mode='trilinear', align_corners=False)  # (H', W', D', 3)
+    dvf_tensor = dvf_tensor.squeeze().permute(3, 0, 1, 2)[None] # (1,3,H,W,D)
     return dvf_tensor
 
 
@@ -158,17 +155,17 @@ def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray
         
         return recenter(volume_affine, label_center_voxel)
 
-def get_mesh_in_voxel(label: Tensor) -> pv.PolyData:
-    label_np = label.squeeze().cpu().numpy().astype(np.uint8)
-    label_big = zoom(cp.asarray(label_np), zoom=2).astype(cp.uint8).get()  # type: ignore
+def get_mesh_in_voxel(label: Tensor, device: torch.device, max_points: int=10000) -> pv.PolyData:
+    label_big = F.interpolate(label.squeeze()[None, None].to(torch.float16).to(device), scale_factor=2, mode='trilinear').cpu().numpy().squeeze()
+    label_big = (label_big>0.5).astype(np.uint8)
     mesh = pv.wrap(label_big)\
         .contour([1], method='marching_cubes')\
         .smooth_taubin(
             n_iter=40, pass_band=0.001, normalize_coordinates=True)\
-        .triangulate().clean()
+        .triangulate().clean().triangulate()
     try:
         cluster = pyacvd.Clustering(mesh)
-        cluster.cluster(10000)
+        cluster.cluster(max_points)
         
         mesh: pv.PolyData = cluster.create_mesh().triangulate().clean()  # type: ignore
     except Exception as e:
@@ -177,8 +174,8 @@ def get_mesh_in_voxel(label: Tensor) -> pv.PolyData:
     mesh.points /= 2.0  # 因为上采样了2倍，所以点坐标要除以2
     return mesh
 
-def get_mesh_in_world(label: Tensor, affine: ndarray) -> pv.PolyData:
-    mesh = get_mesh_in_voxel(label)
+def get_mesh_in_world(label: Tensor, affine: ndarray, device: torch.device, max_points: int=10000) -> pv.PolyData:
+    mesh = get_mesh_in_voxel(label, device, max_points)
     mesh.points = apply_affine(mesh.points, affine)
     return mesh
 

@@ -14,12 +14,10 @@ from generate_4d_heart.rotate_dsa import RotateDSA
 
 logging.basicConfig(
     filename='processing_errors.log',
-    level=logging.ERROR,
+    level=logging.WARNING,
     format='%(asctime)s - %(name)s - [%(levelname)s] %(filename)s:%(lineno)d -- %(message)s',
     encoding='utf-8'
 )
-
-logger = logging.getLogger("batch-gen-dsa")
 
 class BatchDVFToDSA:
     def __init__(
@@ -132,7 +130,7 @@ class BatchDVFToDSA:
                     recover_cropped_data=self.recover_cropped_data
                 )
             except Exception as e:
-                logger.exception(f"{image_nii} failed due to error: {e}")
+                logging.exception(f"{image_nii} failed due to error: {e}")
                 continue
             
             for coronary_type in ("LCA", "RCA"):
@@ -140,71 +138,76 @@ class BatchDVFToDSA:
                 try:
                     self._gen_dsa_inner(reader, case_name, coronary_type)
                 except Exception as e:
-                    logger.exception(f"{image_nii} with {coronary_type} failed due to error: {e}")
+                    logging.exception(f"{image_nii} with {coronary_type} failed due to error: {e}")
                     continue
 
 def main(
-    dataset_name: str,
+    dataset_names: list[str],
     output_root: Path,
     random_seed: int|None=None,
     output_only_label: bool=False
 ):
+    for d in dataset_names:
+        d = d.lower()
+        
+        if random_seed is not None:
+            name_hash = int(hashlib.sha256(d.lower().encode()).hexdigest(), 16)
+            combined_seed = (name_hash + random_seed) % (2**32)  # numpy seed 必须 < 2**32
+            np.random.seed(combined_seed)
+            run_random = True
+        else:
+            run_random = False
+        
+        if d not in ("asoca", "shanghai", "imagecas"):
+            raise ValueError(f"{d} is not supported")
     
-    if random_seed is not None:
-        name_hash = int(hashlib.sha256(dataset_name.lower().encode()).hexdigest(), 16)
-        combined_seed = (name_hash + random_seed) % (2**32)  # numpy seed 必须 < 2**32
-        np.random.seed(combined_seed)
-        run_random = True
-    else:
-        run_random = False
+        match d:
+            case "asoca":
+                print(f"{d} -- {output_root} -- seed:{random_seed}")
+                origin_dir = Path("/media/data3/sj/Data/ASOCA/normal_gen_4d")
+                dsa = BatchDVFToDSA(
+                    gen_dvf_output_dir=Path("/media/data3/sj/Data/ASOCA/normal_gen_4d_output_new"),
+                    image_dir=origin_dir/"CTCA_nii",
+                    coronary_dir=origin_dir/"coronary",
+                    cavity_dir=origin_dir/"cavity",
+                    output_root=output_root,
+                    dataset_name=d,
+                    run_random=run_random,
+                    only_output_label=output_only_label
+                )
+            case "shanghai":
+                print(f"{d} -- {output_root} -- seed:{random_seed}")
+                origin_dir = Path("/media/data3/sj/Data/Shanghai_139_partial")
+                dsa = BatchDVFToDSA(
+                    gen_dvf_output_dir=Path("/media/data3/sj/Data/Shanghai_139_partial/4d_heart"),
+                    image_dir=origin_dir/"re_affined_image",
+                    coronary_dir=origin_dir/"re_affined_coronary",
+                    cavity_dir=origin_dir/"cavity",
+                    output_root=output_root,
+                    dataset_name=d,
+                    # recover_cropped_data=False,     # 原图尺寸太大，如果复原会导致超显存(改用 compied drr 后解决)
+                    run_random=run_random,
+                    only_output_label=output_only_label
+                )
+            case "imagecas":
+                print(f"{d} -- {output_root} -- seed:{random_seed}")
+                origin_dir = Path("/media/data3/sj/Data/imageCAS")
+                dsa = BatchDVFToDSA(
+                    gen_dvf_output_dir=Path("/media/data3/sj/Data/imageCAS/gen_4d_output"),
+                    image_dir=origin_dir/"imageCAS_Selected_nnunet",
+                    coronary_dir=origin_dir/"coronary",
+                    cavity_dir=origin_dir/"postprocessed",
+                    output_root=output_root,
+                    dataset_name=d,
+                    # recover_cropped_data=False,     # 原图尺寸太大，如果复原会导致超显存
+                    run_random=run_random,
+                    only_output_label=output_only_label
+                )
+            case _:
+                print(f"{d} not supported")
+                raise ValueError(f"{d} not supported")
     
-    match dataset_name.lower():
-        case "asoca":
-            print(f"{dataset_name} -- {output_root} -- seed:{random_seed}")
-            origin_dir = Path("/media/data3/sj/Data/ASOCA/normal_gen_4d")
-            app = BatchDVFToDSA(
-                gen_dvf_output_dir=Path("/media/data3/sj/Data/ASOCA/normal_gen_4d_output_new"),
-                image_dir=origin_dir/"CTCA_nii",
-                coronary_dir=origin_dir/"coronary",
-                cavity_dir=origin_dir/"cavity",
-                output_root=output_root,
-                dataset_name=dataset_name,
-                run_random=run_random,
-                only_output_label=output_only_label
-            )
-        case "shanghai":
-            print(f"{dataset_name} -- {output_root} -- seed:{random_seed}")
-            origin_dir = Path("/media/data3/sj/Data/Shanghai_139_partial")
-            app = BatchDVFToDSA(
-                gen_dvf_output_dir=Path("/media/data3/sj/Data/Shanghai_139_partial/4d_heart"),
-                image_dir=origin_dir/"re_affined_image",
-                coronary_dir=origin_dir/"re_affined_coronary",
-                cavity_dir=origin_dir/"cavity",
-                output_root=output_root,
-                dataset_name=dataset_name,
-                # recover_cropped_data=False,     # 原图尺寸太大，如果复原会导致超显存(改用 compied drr 后解决)
-                run_random=run_random,
-                only_output_label=output_only_label
-            )
-        case "imagecas":
-            print(f"{dataset_name} -- {output_root} -- seed:{random_seed}")
-            origin_dir = Path("/media/data3/sj/Data/imageCAS")
-            app = BatchDVFToDSA(
-                gen_dvf_output_dir=Path("/media/data3/sj/Data/imageCAS/gen_4d_output"),
-                image_dir=origin_dir/"imageCAS_Selected_nnunet",
-                coronary_dir=origin_dir/"coronary",
-                cavity_dir=origin_dir/"postprocessed",
-                output_root=output_root,
-                dataset_name=dataset_name,
-                # recover_cropped_data=False,     # 原图尺寸太大，如果复原会导致超显存
-                run_random=run_random,
-                only_output_label=output_only_label
-            )
-        case _:
-            print(f"{dataset_name} not supported")
-            raise ValueError(f"{dataset_name} not supported")
-    
-    app.run()
+        dsa.run()
 
 if __name__ == "__main__":
     import typer

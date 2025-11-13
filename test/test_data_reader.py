@@ -98,3 +98,7 @@ def test_volume_dvf_reader():
     )
     
     _read_and_save(reader, output_dir)
+
+
+if __name__ == "__main__":
+    test_volumes_reader()

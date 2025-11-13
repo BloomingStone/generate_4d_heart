@@ -3,7 +3,7 @@ import shutil
 
 from generate_4d_heart.rotate_dsa.data_reader import StaticLabelReader
 from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
-from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR
+from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa.rotate_dsa import RotateDSA
 
 
@@ -21,7 +21,12 @@ def test_only_static_label():
     dsa = RotateDSA(
         reader=reader,
         constrast_sim=IdentityContrast(),
-        drr=TorchDRR()
+        drr=TorchDRR(
+            rotate_cfg=RotatedParameters(
+                total_frame=10,
+                fps=10
+            )
+        )
     )
     
     output_dir = output_root_dir / "only_static_label"

@@ -12,7 +12,8 @@ cuda = "12.0"
 index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 
 [activation.env]
-BUILD_MONAI = "1"
+PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+
 
 [tasks]
 pytest = "pytest"

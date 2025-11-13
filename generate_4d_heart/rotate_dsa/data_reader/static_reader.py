@@ -28,6 +28,11 @@ class StaticVolumeReader(DataReader):
         self._origin_volume_size = self.volume.shape[-3:]   #type: ignore
         self._lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine, self.device)
         self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine, self.device)
+        
+        self.meshes = {
+            CoronaryType.LCA: get_mesh_in_world(self.lca_label, self._lca_centering_affine, self.device),
+            CoronaryType.RCA: get_mesh_in_world(self.rca_label, self._rca_centering_affine, self.device)
+        }
     
     def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
@@ -48,9 +53,7 @@ class StaticVolumeReader(DataReader):
                 type=coronary_type,
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
-                mesh_in_world=get_mesh_in_world(
-                    coronary_label, 
-                    coronary_centering_affine)
+                mesh_in_world=self.meshes[coronary_type]
             )
         )
 
@@ -82,6 +85,10 @@ class StaticLabelReader(DataReader):
         self._origin_volume_size = self.cavity.shape[-3:]   #type: ignore
         self._lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine, self.device)
         self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine, self.device)
+        self.meshes = {
+            CoronaryType.LCA: get_mesh_in_world(self.lca_label, self._lca_centering_affine, self.device),
+            CoronaryType.RCA: get_mesh_in_world(self.rca_label, self._rca_centering_affine, self.device)
+        }
     
     def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
@@ -102,9 +109,7 @@ class StaticLabelReader(DataReader):
                 type=coronary_type,
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
-                mesh_in_world=get_mesh_in_world(
-                    coronary_label, 
-                    coronary_centering_affine)
+                mesh_in_world=self.meshes[coronary_type]
             )
         )
 

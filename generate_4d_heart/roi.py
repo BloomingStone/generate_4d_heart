@@ -213,10 +213,10 @@ class ROI:
         """
         return np.array(self.crop_box)
     
-    def get_crop_size(self) -> tuple[int, int, int]:
+    def get_roi_size_before_crop(self) -> tuple[int, int, int]:
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
         return (
-            (x1 - x0), (y1 - y0), (z1 - z0)
+            int(x1 - x0), int(y1 - y0), int(z1 - z0)
         )
     
     def get_zoom_rate(self) -> np.ndarray:

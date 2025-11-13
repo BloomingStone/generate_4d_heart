@@ -7,10 +7,12 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torch.utils.data import DataLoader, Dataset
 from monai.networks.blocks.warp import DVF2DDF, Warp
 from tqdm import tqdm
 import einops
 import pyvista as pv
+import cupy as cp
 
 from ... import NUM_TOTAL_PHASE
 from ...roi import ROI
@@ -19,7 +21,7 @@ from ..types import CoronaryType
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
     DataReader, DataReaderResult, Coronary, separate_coronary, get_coronary_centering_affine,
-    load_and_zoom_dvf, load_nifti, get_mesh_in_voxel, apply_affine, get_mesh_in_world
+    load_nifti, get_mesh_in_voxel, apply_affine, get_mesh_in_world
 )
 
 
@@ -88,7 +90,7 @@ class LazyCardiacDVFWarpModule(nn.Module):
         self.coronary = torch.concat((data.lca, data.rca), dim=1).half().to(device, non_blocking=True)
         
         def init_branch(branch: Tensor) -> tuple[pv.PolyData, Tensor, Tensor]:
-            mesh_voxel = get_mesh_in_voxel(branch)
+            mesh_voxel = get_mesh_in_voxel(branch, self.device)
             points = torch.from_numpy(mesh_voxel.points).half().to(device, non_blocking=True)
             points_norm = points / (self.spatial_size - 1) * 2 - 1   # Norm to [-1, 1]
             points_norm = einops.rearrange(points_norm, "n d -> 1 n 1 1 d")
@@ -168,7 +170,7 @@ class LazyCardiacDVFWarpModule(nn.Module):
         x = self._get_maybe_cached_x(idx0)     # shape = (2, C = 3, W, H, D)
         x1 = self._get_maybe_cached_x(idx1)
         with torch.no_grad():
-            x = (x * (1 - w) + x1 * w)
+            x = (x * (1 - w) + x1 * w).half()
             if self.precomputed_ddf:
                 assert x.shape[0] == 2
             else:
@@ -190,42 +192,58 @@ class LazyCardiacDVFWarpModule(nn.Module):
         return img_warped.half(), cav_warped.byte(), cor_warped.byte(), self._points_warp_and_to_world(ddf_inv, coronary_type)
 
 
+class DVFDataset(Dataset):
+    def __init__(self, dvf_files: list[Path]):
+        super().__init__()
+        self.dvf_files = dvf_files
+    
+    def __getitem__(self, index) -> Tensor:
+        return load_nifti(self.dvf_files[index])[0]
+    
+    def __len__(self) -> int:
+        return len(self.dvf_files)
 
+@dataclass
 class VolumeDVFReader(DataReader):
-    def __init__(
-        self,
-        image_nii: Path,
-        cavity_nii: Path,
-        coronary_nii: Path,
-        roi_json: Path,
-        dvf_dir: Path,
-        movement_enhancer: None | Type[MovementEnhancer] = None,
-        recover_cropped_data: bool = True,
-        precompute_ddf: bool = True,
-    ):
-        """Reads volume data and corresponding DVFs for 4D cardiac MRI, which usually generated from ..dvf module.
+    """Reads volume data and corresponding DVFs for 4D cardiac MRI, which usually generated from ..dvf module.
+    
+    the data is assumed to be in the following format:
+    - image_nii: 3D volume image of one phase
+    - cavity_nii: 3D cavity label image of one phase
+    - coronary_nii: 3D coronary label image of one phase
+    - roi_json: JSON file containing ROI information
+    - dvf_dir: contains 3D DVF images for all phases
+    | - phase_00.nii.gz   # do not use phase_0.nii which may cause ordering issues
+    | - phase_01.nii.gz
+    | - ...
+    
+    Args:
+        movement_enhancer: a class that can enhance the DDF by coronary and cavity labels.
+        recover_cropped_data: flag control whether to recover data to the size before cropped
+        precompute_ddf: flag control whether compute DDF at init, and use it rather than DVF to interpolate between frames.
+    """
+    image_nii: Path
+    cavity_nii: Path
+    coronary_nii: Path
+    roi_json: Path
+    dvf_dir: Path
+    movement_enhancer: None | Type[MovementEnhancer] = None
+    recover_cropped_data: bool = True
+    precompute_ddf: bool = True
+    
+    def __post_init__(self):
         
-        the data is assumed to be in the following format:
-        - image_nii: 3D volume image of one phase
-        - cavity_nii: 3D cavity label image of one phase
-        - coronary_nii: 3D coronary label image of one phase
-        - roi_json: JSON file containing ROI information
-        - dvf_dir: contains 3D DVF images for all phases
-        | - phase_00.nii.gz   # do not use phase_0.nii which may cause ordering issues
-        | - phase_01.nii.gz
-        | - ...
-        """
         if not torch.cuda.is_available() and torch.cuda.device_count() < 2:
             raise RuntimeError("No CUDA device available for VolumeDVFReader")
-        
         self.device = torch.device("cuda:1")
-        self.roi = ROI.from_json(roi_json)
-        self.recover_cropped_data = recover_cropped_data
-        self.precompute_ddf = precompute_ddf
-        self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(self.device)
+        self.roi = ROI.from_json(self.roi_json)
+        self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(self.device).half()
         
-        self._load_3d_data(image_nii, cavity_nii, coronary_nii)
-        self._load_dvf_and_init_warpper(dvf_dir, movement_enhancer)
+        self._load_3d_data()
+        self._load_dvf_and_init_warpper()
+        
+        cp._default_memory_pool.free_all_blocks()
+        torch.cuda.empty_cache()
 
     @staticmethod
     def _preprocess_image(image: Tensor) -> Tensor:
@@ -243,13 +261,13 @@ class VolumeDVFReader(DataReader):
         
         return image
     
-    def _load_3d_data(self, image_nii: Path, cavity_nii: Path, coronary_nii: Path):
-        image, affine = load_nifti(image_nii)
+    def _load_3d_data(self):
+        image, affine = load_nifti(self.image_nii)
         assert affine is not None
         image = self._preprocess_image(image)
         
-        cavity, cavity_affine = load_nifti(cavity_nii, is_label=True)
-        coronary, coronary_affine = load_nifti(coronary_nii, is_label=True)
+        cavity, cavity_affine = load_nifti(self.cavity_nii, is_label=True)
+        coronary, coronary_affine = load_nifti(self.coronary_nii, is_label=True)
         assert np.allclose(affine, cavity_affine)
         assert np.allclose(affine, coronary_affine)
         
@@ -271,52 +289,56 @@ class VolumeDVFReader(DataReader):
             crop(lca), crop(rca)
         )
 
-    def _load_dvf_and_init_warpper(self, dvf_dir: Path, movement_enhancer: None | Type[MovementEnhancer] = None):
-        # --- Load and Enhance DVFs ---
-        if movement_enhancer is None:
-            self.enhancer: Callable[[Tensor], Tensor] = lambda x: x
-        else:
-            self.enhancer = movement_enhancer(self.cropped_data.cavity, self.cropped_data.all_coronary_label, self.device)
-
-        dvf_list: list[Tensor] = []
-        ddf_list: list[Tensor] = []
-
-        # prepare a dvf2ddf module on device for precomputation if requested
-        for dvf_file in tqdm(sorted(dvf_dir.glob("*.nii.gz")), desc="loading and preprocessing DVFs"):
-            # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
-            # save as half-precision to save memory
-            dvf = load_and_zoom_dvf(dvf_file, self.roi, self.device).half()
-            dvf = self.enhancer(dvf).float()
-            
-            if self.precompute_ddf:
-                # compute DDF and inverse DDF on device once, store as CPU pinned to be used later
-                with torch.no_grad():
-                    ddf_batch: Tensor = self.dvf2ddf(torch.cat((dvf, -dvf), dim=0))
-                ddf_list.append(ddf_batch.half().cpu().pin_memory())   # (2, 3, H, W, D)
-            else:
-                dvf_list.append(dvf.half().cpu().pin_memory())
-
-            
-        # TODO: for now only support fixed NUM_TOTAL_PHASE
-        if self.precompute_ddf:
-            self.n_phases = len(ddf_list)
-        else:
-            self.n_phases = len(dvf_list)
-            
-        assert self.n_phases == NUM_TOTAL_PHASE, f"For now, we only support {NUM_TOTAL_PHASE} phases. But the data has {self.n_phases} phases."
+    @torch.inference_mode()
+    def _preprocess_dvf(self, dvf: Tensor, enhance: Callable[[Tensor], Tensor]) -> Tensor:
+        x = dvf.to(device=self.device, non_blocking=True)  # (..., H,W,D,1,3) half()
         
+        # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
+        zoom_rate = torch.from_numpy((1 / self.roi.get_zoom_rate()).flatten()).to(x, non_blocking=True)  # (3,)
+        x = x.squeeze_().mul_(zoom_rate)  #(H, W, D, 3)
+        
+        # resample to original roi size (H', W', D', 3) 
+        x = x.permute(3, 0, 1, 2).unsqueeze_(0)     # (1,3,H',W',D')
+        x: Tensor = F.interpolate(x, size=self.roi.get_roi_size_before_crop(), mode='trilinear', align_corners=False)  
+        
+        # Enhance DVF movement around coronary area
+        x = enhance(x).half()
+        
+        if self.precompute_ddf:
+            # compute DDF and inverse DDF on device once, store as CPU pinned to be used later
+            x: Tensor = self.dvf2ddf(torch.cat((x, -x), dim=0))  # (2, 3, H', W', D')
+
+        x = x.half().cpu().pin_memory()  # save as half to save memory
+        return x
+
+    def _load_dvf_and_init_warpper(self):
+        # --- Load and Enhance DVFs ---
+        if self.movement_enhancer is None:
+            enhance: Callable[[Tensor], Tensor] = lambda x: x
+        else:
+            enhance = self.movement_enhancer(self.cropped_data.cavity, self.cropped_data.all_coronary_label, self.device)
+
+        nii_files = list(sorted(self.dvf_dir.glob("*.nii.gz")))
+        # TODO: for now only support fixed NUM_TOTAL_PHASE
+        self.n_phases = len(nii_files)
+        assert self.n_phases == NUM_TOTAL_PHASE, f"For now, we only support {NUM_TOTAL_PHASE} phases. But the data has {self.n_phases} phases."
+
+        res_list: list[Tensor] = []     # shape = (B, 3, H, W, D) # store [ddf; inverse ddf] (B = 2) if precompute_ddf is True, otherwise store dvf (B = 1)
+        for dvf in tqdm(DataLoader(dataset=DVFDataset(nii_files), num_workers=4), desc="Loading and Preprocessing DVFs"):
+            res_list.append(self._preprocess_dvf(dvf, enhance))  # dtype=half, device=cpu
+
         # --- Initialize Warp Module ---
         if self.precompute_ddf:
             self.warpper = LazyCardiacDVFWarpModule(
                 self.cropped_data, self.device,
                 precomputed_ddf=True,
-                ddf_list=ddf_list,
+                ddf_list=res_list,
             ).to(self.device)
         else:
             self.warpper = LazyCardiacDVFWarpModule(
                 self.cropped_data, self.device,
                 precomputed_ddf=False,
-                dvf_list=dvf_list
+                dvf_list=res_list
             ).to(self.device)
     
     
@@ -373,7 +395,7 @@ class VolumeDVFReader(DataReader):
                 type=coronary_type,
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
-                mesh_in_world=get_mesh_in_world(coronary_label, coronary_centering_affine)
+                mesh_in_world=get_mesh_in_world(coronary_label, coronary_centering_affine, self.device)
             )
         )
     
