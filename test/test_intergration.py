@@ -102,3 +102,32 @@ def test_rotate_dsa_integration_full(
         output_dir=output_dir,
         coronary_type=coronary_type
     )
+
+def test_static_rotate_dsa_integration_full(
+    coronary_type: Literal["LCA", "RCA"] = "LCA",
+    sim_name: str = "multipli_contrast",
+    simulator: MultipliContrast | ThresholdMultipliContrast = MultipliContrast(),
+    reader_name: str = "static_volume_reader",
+):
+    """测试完整的 RotateDSA 集成流程 并生成完整数据"""
+    rotate_cfg = RotatedParameters(
+        total_frame=20,  # 减少帧数
+        fps=10,           # 降低帧率
+    )
+    
+    drr = TorchDRR(rotate_cfg=rotate_cfg)
+    
+    dsa = RotateDSA(
+        reader=get_reader(reader_name),
+        constrast_sim=simulator,
+        drr=drr
+    )
+    
+    output_dir = output_root_dir / "static_intergration_full" / f"{reader_name}_{sim_name}_{coronary_type}"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    dsa.run_and_save(
+        output_dir=output_dir,
+        coronary_type=coronary_type
+    )
+

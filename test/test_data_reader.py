@@ -66,7 +66,20 @@ def _read_and_save(reader: DataReader, output_dir: Path):
         plotter.write_frame()
 
     plotter.close()
+    
+    phase_0_data = reader.get_phase_0_data("LCA")
+    central_line = phase_0_data.get_coronary_central_line("coroanry_centering")
+    mesh = phase_0_data.coronary.mesh_in_world
+    
+    assert len(central_line.shape) == 2 and central_line.shape[-1] == 3
+    x_max, y_max, z_max = central_line.max(axis=0)
+    x_min, y_min, z_min = central_line.min(axis=0)
+    
+    x_max_mesh, y_max_mesh, z_max_mesh = mesh.points.max(axis=0)
+    x_min_mesh, y_min_mesh, z_min_mesh = mesh.points.min(axis=0)
 
+    assert x_max < x_max_mesh and y_max < y_max_mesh and z_max < z_max_mesh
+    assert x_min > x_min_mesh and y_min > y_min_mesh and z_min > z_min_mesh
 
 def test_volumes_reader():
     volumes_dir = test_data_root_dir / "volumes"

@@ -104,11 +104,6 @@ class BatchDVFToDSA:
         else:
             dsa.run_and_save(output_case_dir, coronary_type)
 
-        np.save(
-            output_case_dir / "central_line.npy", 
-            reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
-        )
-
     def run(self):
         for index, p in enumerate(self.paths_list):
             print(f"{index}/{len(self.paths_list)}")

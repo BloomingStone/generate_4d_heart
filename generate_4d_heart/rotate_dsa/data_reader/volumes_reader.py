@@ -36,6 +36,8 @@ def mapper(args: tuple[int, _Data, CoronaryType, np.ndarray]) -> tuple[int, Coro
         else:
             res = get_mesh_in_world(data.rca_label, affine, device, max_points=2000)
         return (index, coronary_type, res)
+    
+    
 class VolumesReader(DataReader):
     def __init__(
         self, 

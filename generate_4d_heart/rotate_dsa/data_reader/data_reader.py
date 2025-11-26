@@ -183,6 +183,7 @@ def apply_affine(points: Tensor | ndarray, affine: ndarray) -> ndarray:
     assert len(points.shape) == 2 and points.shape[-1] == 3
     if isinstance(points, ndarray):
         points = torch.from_numpy(points)
+    points = points.to(torch.float32)
     _affine = torch.from_numpy(affine).to(device=points.device, dtype=points.dtype)
     new_points = F.pad(points, (0, 1), "constant", 1)   # shape=(N, 4), [x, y, z, 1]
     new_points = new_points @ _affine.T
@@ -259,12 +260,8 @@ class DataReaderResult:
                 raise ValueError(f"Invalid coordinate system: {coordinate_system}")
         
         skel = skeletonize(self.coronary.label.squeeze().cpu().numpy())
-        skel_xyz = np.nonzero(skel)
-        skel_xyz = np.stack(skel_xyz, axis=1)
-        skel_xyz1 = np.ones((skel_xyz.shape[0], 4))
-        skel_xyz1[:, :3] = skel_xyz
-        skel_xyz1 = (affine @ skel_xyz1.T).T
-        skel_xyz1 = skel_xyz1[:, :3]
+        skel_xyz = np.stack(np.nonzero(skel), axis=1)
+        skel_xyz = apply_affine(skel_xyz, affine)
         return skel_xyz
     
     def save(
