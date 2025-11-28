@@ -21,4 +21,10 @@ RV_LABEL = 3
 LA_LABEL = 4
 RA_LABEL = 5
 
+ALL_CAVITY_LABEL = [LV_MYO_LABEL, LV_LABEL, RV_LABEL, LA_LABEL, RA_LABEL]
+assert len(ALL_CAVITY_LABEL) == NUM_TOTAL_CAVITY_LABEL
+
+PV_LABEL = 6    # pulmonary vein
+AORTA_LABEL = 7
+
 from .moving_dvf.dvf import generate_4d_dvf

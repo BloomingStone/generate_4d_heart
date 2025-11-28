@@ -2,14 +2,14 @@ from pathlib import Path
 
 from monai.networks.nets.voxelmorph import VoxelMorphUNet
 from monai.networks.blocks.warp import DVF2DDF, Warp
-from monai.transforms import (EnsureChannelFirst, AsDiscrete, ToTensor, Compose) # type: ignore
+from monai.transforms import (EnsureChannelFirst, AsDiscrete, ToTensor, Compose, Lambda) # type: ignore
 import torch
 from torch import nn
 import numpy as np
 from nibabel.nifti1 import Nifti1Image
 
 
-from .. import NUM_TOTAL_CAVITY_LABEL
+from .. import NUM_TOTAL_CAVITY_LABEL, ALL_CAVITY_LABEL
 from .utils import MaybeFlipTransform
 
 class ShapeMorph(nn.Module):
@@ -90,8 +90,15 @@ class ShapeMorphPredictor:
 
         assert source_cavity_zoomed.affine is not None
         self.flips = MaybeFlipTransform(source_cavity_zoomed.affine)
+        
+        def label_filter_fun(x: torch.Tensor) -> torch.Tensor:
+            mask = torch.isin(x, torch.tensor(ALL_CAVITY_LABEL))
+            x[~mask] = 0
+            return x
+            
         self.transform_cavity = Compose([
             ToTensor(),
+            Lambda(label_filter_fun),
             self.flips,
             EnsureChannelFirst(channel_dim='no_channel'),
             AsDiscrete(to_onehot=NUM_TOTAL_CAVITY_LABEL + 1)

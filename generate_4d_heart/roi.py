@@ -1,12 +1,11 @@
 from scipy import ndimage
 import numpy as np
-import cupy as cp
 import torch
 from nibabel.nifti1 import Nifti1Image
 from pathlib import Path
-from typing import TypeVar
+from typing import overload
 
-from . import SSM_SHAPE
+from . import SSM_SHAPE, ALL_CAVITY_LABEL
 
 def load_array(
     array: tuple | list | np.ndarray | None, 
@@ -55,7 +54,9 @@ class ROI:
             padding: the padding size around the cavity, the padding will be added to the both sides of the cavity as passible.
         """
         cavity_data = cavity.get_fdata()
-        mask = cavity_data > 0
+        mask = np.zeros_like(cavity_data, dtype=bool)
+        for label in ALL_CAVITY_LABEL:
+            mask[cavity_data == label] = True
         if not mask.any():
             raise ValueError("The cavity label is empty")
         
@@ -156,8 +157,13 @@ class ROI:
     def get_affine_after_crop_and_zoom(self, affine: np.ndarray) -> np.ndarray:
         raise NotImplementedError() # need to clearify the order of R and T
     
-    ImageData = TypeVar("ImageData", np.ndarray, torch.Tensor)
-    def crop_on_data(self, image: ImageData) -> ImageData:
+    @overload
+    def crop_on_data(self, image: np.ndarray) -> np.ndarray: ...
+    
+    @overload
+    def crop_on_data(self, image: torch.Tensor) -> torch.Tensor: ...
+    
+    def crop_on_data(self, image: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
         """ 
         Args:
             image_np: the 3d image data that needs to be cropped
@@ -167,6 +173,18 @@ class ROI:
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
         return image[..., x0:x1, y0:y1, z0:z1]
 
+    def _zoom_np(self, np_data: np.ndarray, is_label: bool) -> np.ndarray:
+        if is_label:
+            res = ndimage.zoom(np_data, self.zoom_rate, order=0)
+            assert isinstance(res, np.ndarray)
+            res = res.astype(np.uint8)
+        else:
+            res = ndimage.zoom(np_data, self.zoom_rate, order=3)
+            assert isinstance(res, np.ndarray)
+            res = res.astype(np.float32)
+        return res
+        
+    
     def crop_zoom(self, image: Nifti1Image, is_label: bool) -> Nifti1Image:
         """ 
         Args:
@@ -177,10 +195,7 @@ class ROI:
         """
         cropped_image = self.crop(image)
         image_data = cropped_image.get_fdata()
-        if is_label:
-            image_data = ndimage.zoom(image_data, self.zoom_rate, order=0).astype(np.uint8)
-        else:
-            image_data = ndimage.zoom(image_data, self.zoom_rate, order=3)
+        self._zoom_np(image_data, is_label)
         
         assert cropped_image.affine is not None
         new_affine = cropped_image.affine.copy()
@@ -189,7 +204,13 @@ class ROI:
         new_affine = new_affine @ R
         return Nifti1Image(image_data, new_affine)
     
-    def crop_zoom_on_data(self, image: ImageData, is_label: bool) -> ImageData:
+    @overload
+    def crop_zoom_on_data(self, image: np.ndarray, is_label: bool) -> np.ndarray: ...
+    
+    @overload
+    def crop_zoom_on_data(self, image: torch.Tensor, is_label: bool) -> torch.Tensor: ...
+    
+    def crop_zoom_on_data(self, image: np.ndarray | torch.Tensor, is_label: bool) -> np.ndarray | torch.Tensor:
         """ 
         Args:
             image: the 3d image data that needs to be cropped and zoomed
@@ -197,14 +218,19 @@ class ROI:
         Returns:
             np.ndarray: the cropped and then zoomed image data
         """
-        cropped_image = self.crop_on_data(image)
-        image_data = cropped_image.get_fdata()
-        if is_label:
-            image_data = ndimage.zoom(image_data, self.zoom_rate, order=0).astype(np.uint8)
+        res = self.crop_on_data(image)
+        if isinstance(res, np.ndarray):
+            res = self._zoom_np(res, is_label)
+        elif isinstance(res, torch.Tensor):
+            if is_label:
+                res = torch.nn.functional.interpolate(res, scale_factor=self.zoom_rate, mode='nearest')
+            else:
+                res = torch.nn.functional.interpolate(res, scale_factor=self.zoom_rate, mode='trilinear')
+            assert isinstance(res, torch.Tensor)
         else:
-            image_data = ndimage.zoom(image_data, self.zoom_rate, order=3)
+            raise TypeError(f"Unsupported image type: {type(image)}")
         
-        return image_data
+        return res
 
     def get_crop_box(self) -> np.ndarray:
         """
@@ -225,100 +251,7 @@ class ROI:
             np.ndarray: the zoom rate, in the format of [x_rate, y_rate, z_rate], the rate = SSM_SHAPE / cropped_shape. and new_spacing = original_spacing / rate
         """
         return self.zoom_rate
-    
-    def recover(self, cropped_and_zoomed_image: Nifti1Image | np.ndarray, is_label: bool, background: Nifti1Image | None = None) -> Nifti1Image:
-        """
-        Recover the cropped and zoomed image to the original size based on the crop box and zoom rate.
-        Args:
-            cropped_and_zoomed_image: the cropped and zoomed image
-            is_label: whether the image is a label. For label, the output will be binarized
-            background: the background image which has the same shape as original image, if not provided, the background will be zeros
-        Returns:
-            Nifti1Image: the recovered image
-        """
-        if isinstance(cropped_and_zoomed_image, Nifti1Image):
-            image_data = cropped_and_zoomed_image.get_fdata().copy()
-        else:
-            image_data = cropped_and_zoomed_image.copy()
 
-        # Handle 4D case (3D + vector components)
-        if image_data.ndim == 4:
-            # Zoom each component separately
-            zoomed_components = []
-            for i in range(image_data.shape[-1]):
-                component = image_data[..., i]
-                if is_label:
-                    zoomed = ndimage.zoom(component, 1/self.zoom_rate, order=0).astype(np.uint8)
-                else:
-                    zoomed = ndimage.zoom(component, 1/self.zoom_rate, order=3)
-                zoomed_components.append(zoomed)
-            image_data = np.stack(zoomed_components, axis=-1)
-        else:
-            # Standard 3D case
-            if is_label:
-                image_data = ndimage.zoom(image_data, 1/self.zoom_rate, order=0).astype(np.uint8)
-            else:
-                image_data = ndimage.zoom(image_data, 1/self.zoom_rate, order=3)
-        
-        # Handle output shape for vector fields (4D) vs scalar fields (3D)
-        if image_data.ndim == 4:  # Vector field case
-            output_shape = (*self.original_shape, image_data.shape[-1])
-        else:  # Scalar field case
-            output_shape = self.original_shape
-
-        if background is not None:
-            assert (
-                background.shape == output_shape[:3] and  # Only check spatial dims
-                background.affine is not None and
-                np.allclose(background.affine, self.original_affine, rtol=1e-5, atol=1e-8)
-            )
-            output_data = background.get_fdata().copy()
-            if output_data.ndim == 3 and image_data.ndim == 4:
-                # Expand background to match vector field dims
-                output_data = np.stack([output_data]*image_data.shape[-1], axis=-1)
-        else:
-            output_data = np.zeros(output_shape, dtype=image_data.dtype)
-        
-        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
-        
-        if image_data.ndim == 4:  # Vector field
-            for i in range(image_data.shape[-1]):
-                output_data[x0:x1, y0:y1, z0:z1, i] = image_data[..., i]
-        else:  # Scalar field
-            output_data[x0:x1, y0:y1, z0:z1] = image_data
-
-        return Nifti1Image(output_data, self.original_affine)
-    
-    def revocer_cropped_nifti(self, cropped_image: Nifti1Image, background: Nifti1Image | None = None) -> Nifti1Image:
-        """
-        Recover the cropped image to the original size based on the crop box and zoom rate.
-        Args:
-            cropped_image: the cropped image
-            background: the background image which has the same shape as original image, if not provided, the background will be zeros
-        Returns:
-            Nifti1Image: the recovered image
-        """
-        assert isinstance(cropped_image, Nifti1Image)
-        image_data = cropped_image.get_fdata().copy()
-        if image_data.ndim > 3:
-            output_shape = (*self.original_shape, *image_data.shape[3:])
-        else:
-            output_shape = self.original_shape
-        
-        if background is not None:
-            assert (
-                background.shape == self.original_shape and
-                background.affine is not None and
-                np.allclose(background.affine, self.original_affine, rtol=1e-5, atol=1e-8)
-            )
-            output_data = background.get_fdata().copy()
-        else:
-            output_data = np.zeros(output_shape, dtype=image_data.dtype)
-        
-        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
-        output_data[x0:x1, y0:y1, z0:z1] = image_data
-        return Nifti1Image(output_data, self.original_affine)
-    
     def recover_cropped_tensor(self, cropped_image: torch.Tensor, background: torch.Tensor | None = None) -> torch.Tensor:
         """
         Recover the cropped image to the original size based on the crop box and zoom rate.

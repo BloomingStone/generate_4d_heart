@@ -8,7 +8,7 @@ import torchcpd
 from nibabel.nifti1 import Nifti1Image
 import nibabel as nib
 
-from .. import SSM_DIRECTION, NUM_TOTAL_CAVITY_LABEL, NUM_TOTAL_PHASE, NUM_TOTAL_POINTS
+from .. import SSM_DIRECTION, NUM_TOTAL_CAVITY_LABEL, NUM_TOTAL_PHASE, NUM_TOTAL_POINTS, ALL_CAVITY_LABEL, LV_MYO_LABEL, LV_LABEL
 from .utils import MaybeFlipTransform
 
 def _get_largest_connected_component(data: np.ndarray) -> np.ndarray:
@@ -60,17 +60,15 @@ def get_surface_from_label(
         np.ndarray: the affine matrix of the nii file
     """
     label = MaybeFlipTransform(affine)(label, is_vector_field=False)
-    
-    label_ids = sorted(np.unique(label).astype(np.int8))[1:]
     surface_all = pv.PolyData()
     
-    for label_id in label_ids:
+    for label_id in ALL_CAVITY_LABEL:
         assert label_id > 0
-        if label_id == 1:
+        if label_id == LV_MYO_LABEL:
             # The myocardial part of the left ventricle is combined with the left ventricular cavity part
-            mask_1 = (label == 1).astype(np.uint8)
-            mask_2 = (label == 2).astype(np.uint8)
-            mask = mask_1 + mask_2
+            mask = np.zeros(label.shape, dtype=np.uint8)
+            mask[label == LV_MYO_LABEL] = 1
+            mask[label == LV_LABEL] = 1
             mask = (mask > 0).astype(np.uint8)
         else:
             mask = (label == label_id).astype(np.uint8)
