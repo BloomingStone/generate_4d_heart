@@ -55,27 +55,10 @@ class StaticVolumeReader(DataReader):
             CoronaryType.LCA: get_mesh_in_world(self.origin_data.lca, self.origin_data.lca_centering_affine, self.device),
             CoronaryType.RCA: get_mesh_in_world(self.origin_data.rca, self.origin_data.rca_centering_affine, self.device)
         }
-        
-    @staticmethod
-    def _preprocess_image(image: Tensor) -> Tensor:
-        # Some CTs may use -3023 or -2000 as 'sentinel' to mark invalid voxels
-        # Set all invalid voxels to the minimum value, usually is air
-        sentinel_mask = (image <= -2000)  
-        min_value = image[~sentinel_mask].min()
-        image[sentinel_mask] = min_value    
-        
-        # Add the offset of 1024 that is commonly used in CT
-        if image.min() < -1000:
-            image +=1024
-        # These two values should be described in DICOM head
-        # However, nifti does not have this field, we can only guess it from the value range
-        
-        return image
     
     def _load_3d_data(self):
         image, affine = load_nifti(self.image_nii)
         assert affine is not None
-        image = self._preprocess_image(image)
         
         cavity, cavity_affine = load_nifti(self.cavity_nii, is_label=True)
         coronary, coronary_affine = load_nifti(self.coronary_nii, is_label=True)

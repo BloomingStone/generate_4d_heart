@@ -7,13 +7,14 @@ import torch
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.saver import save_png
+from generate_4d_heart.rotate_dsa.postprocess import postprocess_drr_differentiable
 
 from utils import output_root_dir, get_reader, get_simulator
 
 test_angles = list(range(0, 180, 30))   # list of primary angles
 
 @pytest.mark.parametrize("reader_name", (
-    "volumes_reader", "volume_dvf_reader"
+    "volumes_reader", "static_volume_reader"
 ))
 @pytest.mark.parametrize("sim_name", (
     "multipli_contrast", "threshold_multipli_contrast"
@@ -41,19 +42,17 @@ def test_contrast_simulators(
         cavity_label=data.cavity_label,
         coronary_label=coronary
     )
-    res = drr.get_projections_at_degrees(
+    drr_res = drr.get_projections_at_degrees(
         angles=test_angles,
         volume=volume,
         coronary=coronary,
         affine=affine
     )
-    res = res[:, 0:1]
+    drr_res = drr_res[:, 0:1]
     
-    res = ((res - res.min()) / (res.max() - res.min())) * 255
-    res = res.to(torch.uint8)
-    res = torch.tensor(255) - res
+    res = postprocess_drr_differentiable(drr_res.squeeze())
     
-    N, _, H, W = res.shape
+    N, H, W = res.shape
     assert N == len(test_angles)
     
     for img, angle in zip(res, test_angles):

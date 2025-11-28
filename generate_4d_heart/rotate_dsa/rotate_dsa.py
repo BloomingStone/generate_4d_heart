@@ -21,6 +21,7 @@ from .rotate_drr import RotateDRR, CArmGeometry
 from .types import Sec
 from .cardiac_phase import CardiacPhase
 from ..saver import save_tif, save_gif, save_pngs, save_deepthmap_gif
+from .postprocess import postprocess_drr_differentiable
 
 
 class Torch3DLabelRenderer:
@@ -101,7 +102,7 @@ class RotateDSA:
         assert coronary_type in ["LCA", "RCA"]
         total_frame = self.drr.rotate_cfg.total_frame
         w, h = self.drr.image_size
-        frames = np.zeros((total_frame, w, h))
+        frames = torch.zeros(total_frame, w, h).to(torch.float32)
         labels = np.zeros((total_frame, w, h), dtype=np.uint8)
         depth_maps = np.zeros((total_frame, w, h), dtype=np.float32)
         for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
@@ -121,7 +122,9 @@ class RotateDSA:
                 coronary=coronary_label,
                 affine=affine
             )
-            frames[f] = drr_res.cpu().numpy()
+            if frames.device != drr_res.device:
+                frames = frames.to(drr_res.device)
+            frames[f] = drr_res
             
             label, depth_map = self.label_plotter.render(
                 read_res.coronary.mesh_in_world,
@@ -130,12 +133,10 @@ class RotateDSA:
             labels[f] = label
             depth_maps[f] = depth_map
         
-        frames = ((frames - frames.min()) / (frames.max() - frames.min()))*255
-        frames = frames.astype(np.uint8)
-        if gray_reverse:
-            frames = - frames + 255
+        # frames = postprocess_drr_differentiable(frames, gray_reverse)
+        frames = (frames - frames.min()) / (frames.max() - frames.min()) * 255
 
-        return frames, labels, depth_maps
+        return frames.cpu().numpy().astype(np.uint8), labels, depth_maps
 
 
     def run_no_drr(
@@ -191,6 +192,11 @@ class RotateDSA:
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(self.get_geometry_json(coronary_type), f)
         
+        np.save(
+            output_dir / "central_line.npy", 
+            self.reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
+        )
+        
         return frames, labels, depth_maps
     
     
@@ -213,6 +219,11 @@ class RotateDSA:
         
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(self.get_geometry_json(coronary_type), f)
+        
+        np.save(
+            output_dir / "central_line.npy", 
+            self.reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
+        )
         
         return labels, depth_maps
     
