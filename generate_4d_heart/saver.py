@@ -76,7 +76,7 @@ def save_gif(
 ) -> None:
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
-    iio.imwrite(output_path, frames_np, extension=".gif", duration=1000/fps_gif)
+    iio.imwrite(output_path, frames_np, extension=".gif", duration=1000/fps_gif, loops=True)
 
 
 def save_deepthmap_gif(

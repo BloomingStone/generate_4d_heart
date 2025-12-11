@@ -10,6 +10,7 @@ from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
 from generate_4d_heart.rotate_dsa.data_reader import VolumeDVFReader
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa import RotateDSA
+from generate_4d_heart.saver import save_nii
 
 
 logging.basicConfig(
@@ -93,6 +94,14 @@ class BatchDVFToDSA:
         case_name = f"{self.dataset_name}__{case_name}__{coronary_type}"
         output_case_dir = self.output_root / case_name
         output_case_dir.mkdir(parents=True, exist_ok=True)
+        phase_0_data = reader.get_phase_0_data(coronary_type)
+        save_nii(
+            output_case_dir / f"{coronary_type}_label.nii.gz",
+            phase_0_data.coronary.label,
+            affine=phase_0_data.coronary.centering_affine,
+            is_label=True
+        )
+        phase_0_data.coronary.mesh_in_world.save(output_case_dir / f"{coronary_type}_mesh.vtk")
 
         dsa = RotateDSA(
             reader, MultipliContrast(), 
@@ -172,9 +181,9 @@ def main(
                 )
             case "shanghai":
                 print(f"{d} -- {output_root} -- seed:{random_seed}")
-                origin_dir = Path("/media/data3/sj/Data/Shanghai_139_partial")
+                origin_dir = Path("/media/data2/sj/Data/Shanghai_139_partial")
                 dsa = BatchDVFToDSA(
-                    gen_dvf_output_dir=Path("/media/data3/sj/Data/Shanghai_139_partial/4d_heart"),
+                    gen_dvf_output_dir=Path("/media/data2/sj/Data/Shanghai_139_partial/4d_heart"),
                     image_dir=origin_dir/"re_affined_image",
                     coronary_dir=origin_dir/"re_affined_coronary",
                     cavity_dir=origin_dir/"cavity",
@@ -186,9 +195,9 @@ def main(
                 )
             case "imagecas":
                 print(f"{d} -- {output_root} -- seed:{random_seed}")
-                origin_dir = Path("/media/data3/sj/Data/imageCAS")
+                origin_dir = Path("/media/data2/sj/Data/imageCAS")
                 dsa = BatchDVFToDSA(
-                    gen_dvf_output_dir=Path("/media/data3/sj/Data/imageCAS/gen_4d_output"),
+                    gen_dvf_output_dir=Path("/media/data2/sj/Data/imageCAS/gen_4d_output"),
                     image_dir=origin_dir/"imageCAS_Selected_nnunet",
                     coronary_dir=origin_dir/"coronary",
                     cavity_dir=origin_dir/"postprocessed",

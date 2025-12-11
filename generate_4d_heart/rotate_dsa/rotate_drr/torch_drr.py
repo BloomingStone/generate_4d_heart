@@ -2,7 +2,6 @@ from typing import Literal, Optional, Sequence
 from math import radians
 
 import numpy as np
-from scipy.ndimage import center_of_mass
 import torch
 from torchio import LabelMap, ScalarImage, Subject
 from diffdrr.drr import DRR
@@ -10,6 +9,7 @@ from diffdrr.pose import convert, RigidTransform
 
 from .rotated_drr import RotateDRR, CArmGeometry, RotatedParameters
 from ..types import Degree
+from ... import MU_WATER
 
 
 def get_reorientation(
@@ -61,7 +61,8 @@ class TorchDRR(RotateDRR):
         c_arm_cfg: CArmGeometry = CArmGeometry(),
         rotate_cfg: RotatedParameters = RotatedParameters(),
         patch_size: int = 256,
-        orientation_type: Optional[Literal["AP", "PA"]] = "AP"
+        orientation_type: Optional[Literal["AP", "PA"]] = "AP",
+        zoom_rate: float = 2.0
     ):
         self.c_arm_cfg = c_arm_cfg
         self.rotate_cfg = rotate_cfg
@@ -75,6 +76,7 @@ class TorchDRR(RotateDRR):
         self.reorient = get_reorientation(self.orientation_type)
         sod = self.c_arm_cfg.sod
         self.translations = torch.tensor([[0.0, sod, 0.0]], device=self.device)
+        self.zoom_rate = zoom_rate
         
 
 
@@ -107,15 +109,17 @@ class TorchDRR(RotateDRR):
             x0=geo.x0,
             y0=geo.y0,
             patch_size=self.patch_size,
+            renderer = "trilinear",
             compile_renderer=True,
-            checkpoint_gradients=True
+            checkpoint_gradients=True,
         ).to(self.device).eval()
         
     
     
     def _get_projection_after_setup(
         self,
-        rotations: torch.Tensor
+        rotations: torch.Tensor,
+        add_background: bool = True
     ):
         assert self.diff_drr is not None, "diff_drr is None, call setup() first"
         drr = self.diff_drr
@@ -123,12 +127,17 @@ class TorchDRR(RotateDRR):
         assert D == 3
         
         def do_drr(rots: torch.Tensor, trans: torch.Tensor) -> torch.Tensor:
-            return drr(
+            res = drr(
                 - rots.to(self.device),     # here has negtived
                 trans.to(self.device), 
                 parameterization=self.rotate_cfg.parameterization, 
                 convention=self.rotate_cfg.convention,
             )
+            # TODO 可能需要移动到 multiple_contrast 中去
+            if add_background:
+                # 心脏冠脉CTA因为进行过裁剪，部分区域没有组织遮挡，需要增加背景吸收率
+                res += 100 * MU_WATER     # 组织基础厚度50mm
+            return res
         
         if N == 1:
             # in DiffDrr, X Y Z coreesponding to R A S, the rotate angle is oppsite to standard C-Arm 

@@ -27,4 +27,7 @@ assert len(ALL_CAVITY_LABEL) == NUM_TOTAL_CAVITY_LABEL
 PV_LABEL = 6    # pulmonary vein
 AORTA_LABEL = 7
 
+MU_WATER = 0.02     # mm^-1
+MU_IDODINE = 0.25   # mm^-1
+
 from .moving_dvf.dvf import generate_4d_dvf

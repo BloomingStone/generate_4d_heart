@@ -21,7 +21,7 @@ from .rotate_drr import RotateDRR, CArmGeometry
 from .types import Sec
 from .cardiac_phase import CardiacPhase
 from ..saver import save_tif, save_gif, save_pngs, save_deepthmap_gif
-from .postprocess import postprocess_drr_differentiable
+from .postprocess import postprocess_drr
 
 
 class Torch3DLabelRenderer:
@@ -90,7 +90,6 @@ class RotateDSA:
     def run(
         self, 
         coronary_type: Literal["LCA", "RCA"] = "LCA",
-        gray_reverse: bool = True,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Run whole process of rotate DRR
@@ -133,8 +132,7 @@ class RotateDSA:
             labels[f] = label
             depth_maps[f] = depth_map
         
-        # frames = postprocess_drr_differentiable(frames, gray_reverse)
-        frames = (frames - frames.min()) / (frames.max() - frames.min()) * 255
+        frames = postprocess_drr(frames)
 
         return frames.cpu().numpy().astype(np.uint8), labels, depth_maps
 
@@ -172,10 +170,9 @@ class RotateDSA:
         self, 
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
-        gray_reverse: bool = True,
         gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        frames, labels, depth_maps = self.run(coronary_type, gray_reverse)
+        frames, labels, depth_maps = self.run(coronary_type)
         save_tif(output_dir / "rotate_dsa.tif", frames)
         save_tif(output_dir / "label.tif", labels)
         

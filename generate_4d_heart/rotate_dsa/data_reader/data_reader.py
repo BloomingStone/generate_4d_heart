@@ -290,7 +290,6 @@ class DataReaderResult:
             np.save(output_case_dir / f"{self.coronary.type}_central_line_{central_line_coordinate_type}.npy", lca_central_line)
 
 
-# TODO 用 Dataset/Dataloader 的形式实现 reader
 class DataReader(Protocol):
     n_phases: int
     _origin_volume_size: tuple[int, int, int]

@@ -7,7 +7,7 @@ import torch
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.saver import save_png
-from generate_4d_heart.rotate_dsa.postprocess import postprocess_drr_differentiable
+from generate_4d_heart.rotate_dsa.postprocess import postprocess_drr
 
 from utils import output_root_dir, get_reader, get_simulator
 
@@ -50,7 +50,7 @@ def test_contrast_simulators(
     )
     drr_res = drr_res[:, 0:1]
     
-    res = postprocess_drr_differentiable(drr_res.squeeze())
+    res = postprocess_drr(drr_res.squeeze())
     
     N, H, W = res.shape
     assert N == len(test_angles)
