@@ -195,7 +195,7 @@ class ROI:
         """
         cropped_image = self.crop(image)
         image_data = cropped_image.get_fdata()
-        self._zoom_np(image_data, is_label)
+        image_data = self._zoom_np(image_data, is_label)
         
         assert cropped_image.affine is not None
         new_affine = cropped_image.affine.copy()

@@ -90,7 +90,7 @@ The generated images will be stored as
         try:
             ssm_res = ssm.apply(cavity_zoomed, device=device, moving_enhance_factor=moving_enhance_factor)
         except Exception as e:
-            logger.error(f"case {cavity_path} fail to be apply ssm with error: {e}")
+            logger.error(f"case {cavity_path} fail to be apply ssm with error: {e}", exc_info=True)
             continue
         ssm_res.landmark_vtk.save(landmark_dir / f'{case_name}.vtk')
         nib.loadsave.save(ssm_res.get_landmark_volume(), landmark_dir / f'{case_name}.nii.gz')
