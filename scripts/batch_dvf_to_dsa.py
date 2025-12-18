@@ -5,9 +5,8 @@ import hashlib
 
 import numpy as np
 
-from generate_4d_heart.rotate_dsa.movement_enhancer import CoronaryBoundLVLinear
 from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
-from generate_4d_heart.rotate_dsa.data_reader import VolumeDVFReader
+from generate_4d_heart.rotate_dsa.data_reader import VolumeDVFReader, CoronaryBoundLVLinearEnhancer
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa import RotateDSA
 from generate_4d_heart.saver import save_nii
@@ -123,7 +122,7 @@ class BatchDVFToDSA:
             case_name = image_nii.stem.split('.')[0]
             
             if self.do_enhance:
-                enhancer = CoronaryBoundLVLinear
+                enhancer = CoronaryBoundLVLinearEnhancer(enhance_coronary="LCA")
             else:
                 enhancer = None
             

@@ -1,8 +1,7 @@
 import shutil
 
-from generate_4d_heart.rotate_dsa.movement_enhancer import CoronaryBoundLVLinear
 from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
-from generate_4d_heart.rotate_dsa.data_reader import VolumeDVFReader
+from generate_4d_heart.rotate_dsa.data_reader import VolumeDVFReader, CoronaryBoundLVLinearEnhancer
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa import RotateDSA
@@ -18,7 +17,7 @@ def test_coronary_bound_lv():
         coronary_nii=data_dir / "coronary.nii.gz",
         dvf_dir=data_dir / "dvf",
         roi_json=data_dir / "Normal_01.json",
-        movement_enhancer=CoronaryBoundLVLinear
+        movement_enhancer=CoronaryBoundLVLinearEnhancer(enhance_coronary="LCA")
     )
     
     drr = TorchDRR(rotate_cfg=rotate_cfg)

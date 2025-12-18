@@ -77,6 +77,7 @@ def test_rotate_dsa_integration(
     (
         ("volumes_reader", "multipli_contrast", MultipliContrast(), "LCA"),
         ("volume_dvf_reader", "multipli_contrast", MultipliContrast(), "LCA"),
+        ("volume_dvf_reader", "multipli_contrast", MultipliContrast(), "RCA"),
         ("static_volume_reader", "multipli_contrast", MultipliContrast(), "LCA")
     )
 )

@@ -6,8 +6,7 @@ from tqdm import tqdm
 import torch
 import pyvista as pv
 
-from generate_4d_heart.rotate_dsa.movement_enhancer import CoronaryBoundLVLinear
-from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, DataReader, VolumeDVFReader
+from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, DataReader, VolumeDVFReader, CoronaryBoundLVLinearEnhancer
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_gif
 from utils import output_root_dir, test_data_root_dir
@@ -107,7 +106,7 @@ def test_volume_dvf_reader():
         coronary_nii=data_dir / "coronary.nii.gz",
         dvf_dir=data_dir / "dvf",
         roi_json=data_dir / "Normal_01.json",
-        movement_enhancer=CoronaryBoundLVLinear
+        movement_enhancer=CoronaryBoundLVLinearEnhancer(enhance_coronary="LCA")
     )
     
     _read_and_save(reader, output_dir)

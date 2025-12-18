@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Type, Callable, override, Literal
+from typing import Callable, override, Literal, Protocol
 from dataclasses import dataclass, field
 from collections import OrderedDict
 
@@ -13,10 +13,12 @@ from tqdm import tqdm
 import einops
 import pyvista as pv
 import cupy as cp
+from cupyx.scipy.ndimage import distance_transform_edt, binary_dilation, gaussian_filter
+from torch.utils.dlpack import to_dlpack as tensor2dlpack
+from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
-from ... import NUM_TOTAL_PHASE
+from ... import NUM_TOTAL_PHASE, LV_LABEL, LV_MYO_LABEL, RV_LABEL
 from ...roi import ROI
-from ..movement_enhancer import MovementEnhancer
 from ..types import CoronaryType
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
@@ -227,7 +229,7 @@ class VolumeDVFReader(DataReader):
     coronary_nii: Path
     roi_json: Path
     dvf_dir: Path
-    movement_enhancer: None | Type[MovementEnhancer] = None
+    movement_enhancer: "None | MovementEnhancer" = None
     recover_cropped_data: bool = True
     precompute_ddf: bool = True
     
@@ -299,7 +301,8 @@ class VolumeDVFReader(DataReader):
         if self.movement_enhancer is None:
             enhance: Callable[[Tensor], Tensor] = lambda x: x
         else:
-            enhance = self.movement_enhancer(self.cropped_data.cavity, self.cropped_data.all_coronary_label, self.device)
+            self.movement_enhancer.setup(self)
+            enhance = self.movement_enhancer
 
         nii_files = list(sorted(self.dvf_dir.glob("*.nii.gz")))
         # TODO: for now only support fixed NUM_TOTAL_PHASE
@@ -423,3 +426,204 @@ class VolumeDVFReader(DataReader):
             return self._origin_volume_affine
         else:
             return self.cropped_data.affine
+
+
+def tensor2cp(tensor: torch.Tensor, device: torch.device):
+    return cp.from_dlpack(tensor2dlpack(tensor.to(device)))
+
+class MovementEnhancer(Protocol):
+    def setup(self, dvf_reader: VolumeDVFReader) -> None:
+        ...
+
+    def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
+        ...
+
+@dataclass
+class CoronaryBoundLVEnhancer(MovementEnhancer):
+    enhance_weight_at_myo_external_contour: float = 0.5
+    enhance_coronary: Literal["LCA", "RCA", "ALL"] = "ALL"
+    
+    def setup(self, dvf_reader: VolumeDVFReader) -> None:
+        self.device = dvf_reader.device
+        cavity_label = dvf_reader.cropped_data.cavity
+        
+        if self.enhance_coronary == "ALL":
+            coronary_label = dvf_reader.cropped_data.all_coronary_label
+        elif self.enhance_coronary == "LCA":
+            coronary_label = dvf_reader.cropped_data.lca
+        elif self.enhance_coronary == "RCA":
+            coronary_label = dvf_reader.cropped_data.rca
+        else:
+            raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
+    
+        with cp.cuda.Device(self.device.index):
+            lv = (cavity_label.to(torch.uint8) == LV_LABEL).squeeze()
+            myo = (cavity_label.to(torch.uint8) == LV_MYO_LABEL).squeeze()
+            
+            lv_cp = cp.from_dlpack(tensor2dlpack(lv.to(self.device))).astype(cp.bool_)
+            myo_cp = cp.from_dlpack(tensor2dlpack(myo.to(self.device))).astype(cp.bool_)
+            
+            coronary_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(self.device))).astype(cp.uint8)
+            dilate_coronary_mask = binary_dilation(coronary_cp, structure=cp.ones((9,9,9))).astype(cp.bool_)
+            smooth_mask = binary_dilation(dilate_coronary_mask).astype(cp.bool_)
+            
+            dist: cp.ndarray
+            indices: cp.ndarray
+            dist, indices = distance_transform_edt(~lv_cp, return_distances=True, return_indices=True) # type: ignore
+            self.indices = indices[:, dilate_coronary_mask]  # shape = (3, N), N is the total numpy of coronary voxels
+
+            dist_myo_max = dist[myo_cp].max()
+            alpha = -dist_myo_max / cp.log(self.enhance_weight_at_myo_external_contour)
+            self.alpha = cp.exp( - dist / alpha )
+            self.alpha = self.alpha[dilate_coronary_mask]
+            
+            self.dilate_coronary_indices = cp.where(dilate_coronary_mask)
+            self.smooth_indices = cp.where(smooth_mask)
+
+    def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
+        with cp.cuda.Device(self.device.index):
+            dvf_cp = cp.from_dlpack(tensor2dlpack(dvf.to(self.device)))
+            dvf_cp[:,:, *self.dilate_coronary_indices] = (
+                dvf_cp[:, :, *self.indices] * self.alpha
+                + dvf_cp[:, :, *self.dilate_coronary_indices] * (1 - self.alpha)
+            )
+            smoothed = cp.zeros_like(dvf_cp)
+            for i in range(3):
+                smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
+            dvf_cp[:, :, *self.smooth_indices] = smoothed[:, :, *self.smooth_indices]
+            
+            dvf = dlpack2tensor(dvf_cp.toDlpack())
+            del dvf_cp
+        return dvf
+
+@dataclass
+class CoronaryBoundLVLinearEnhancer(MovementEnhancer):
+    enhance_weight_at_farthest_coroanry: float = 0.6
+    enhance_coronary: Literal["LCA", "RCA", "ALL"] = "ALL"
+    
+    def setup(self, dvf_reader: VolumeDVFReader)->None:
+        self.device = dvf_reader.device
+        cavity_label = dvf_reader.cropped_data.cavity
+        
+        if self.enhance_coronary == "ALL":
+            coronary_label = dvf_reader.cropped_data.all_coronary_label
+        elif self.enhance_coronary == "LCA":
+            coronary_label = dvf_reader.cropped_data.lca
+        elif self.enhance_coronary == "RCA":
+            coronary_label = dvf_reader.cropped_data.rca
+        else:
+            raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
+        
+        with cp.cuda.Device(self.device.index):
+            lv = (cavity_label.to(torch.uint8) == LV_LABEL).squeeze()
+            lv_cp = cp.from_dlpack(tensor2dlpack(lv.to(self.device))).astype(cp.bool_)
+            
+            coronary_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(self.device))).astype(cp.uint8)
+            dilate_coronary_mask = binary_dilation(coronary_cp, structure=cp.ones((9,9,9))).astype(cp.bool_)
+            smooth_mask = binary_dilation(dilate_coronary_mask).astype(cp.bool_)
+            
+            dist: cp.ndarray
+            indices: cp.ndarray
+            dist, indices = distance_transform_edt(~lv_cp, return_distances=True, return_indices=True) # type: ignore
+            self.indices = indices[:, dilate_coronary_mask]  # shape = (3, N), N is the total numpy of coronary voxels
+
+            dist_coronary_max = dist[dilate_coronary_mask].max()
+            alpha = (1 - self.enhance_weight_at_farthest_coroanry) / dist_coronary_max
+            self.alpha = cp.clip(1 - dist * alpha, 0.0, 1.0)
+            self.alpha = self.alpha[dilate_coronary_mask]
+            
+            self.dilate_coronary_indices = cp.where(dilate_coronary_mask)
+            self.smooth_indices = cp.where(smooth_mask)
+
+    def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
+        with cp.cuda.Device(self.device.index):
+            dvf_cp = cp.from_dlpack(tensor2dlpack(dvf.to(self.device)))
+            dvf_cp[:,:, *self.dilate_coronary_indices] = (
+                dvf_cp[:, :, *self.indices] * self.alpha
+                + dvf_cp[:, :, *self.dilate_coronary_indices] * (1 - self.alpha)
+            )
+            smoothed = cp.zeros_like(dvf_cp)
+            for i in range(3):
+                smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
+            dvf_cp[:, :, *self.smooth_indices] = smoothed[:, :, *self.smooth_indices]
+            
+            dvf = dlpack2tensor(dvf_cp.toDlpack())
+            del dvf_cp
+        return dvf
+
+
+class CoronarySeprateEnhancer(MovementEnhancer):
+    
+    @dataclass
+    class PreCalculateData:
+        i_nearest_ref: cp.ndarray
+        i_dilated: cp.ndarray
+        i_smooth: cp.ndarray
+        w: cp.ndarray
+        
+    def __init__(self, enhance_weight_at_farthest_coroanry: float = 0.6):
+        self.enhance_weight_at_farthest_coroanry = enhance_weight_at_farthest_coroanry
+    
+    
+    def setup(self, dvf_reader: VolumeDVFReader)->None:
+        self.device = dvf_reader.device
+        read_data = dvf_reader.cropped_data
+        cavity_label = read_data.cavity.to(torch.uint8)
+
+        with cp.cuda.Device(self.device.index):
+            self.lca_data = self._inner_setup(read_data.lca, cavity_label==LV_LABEL)
+            self.rca_data = self._inner_setup(read_data.rca, cavity_label==RV_LABEL)
+    
+    def _inner_setup(self, target_label: torch.Tensor, ref_label: torch.Tensor):
+        """
+        Use the dvf at ref_label to enhance the dvf at target_label
+        Pre-calculate the indices and weight
+        """
+        ref_cp = cp.from_dlpack(tensor2dlpack(ref_label.squeeze().to(self.device))).astype(cp.bool_)
+        target_cp = cp.from_dlpack(tensor2dlpack(target_label.squeeze().to(self.device))).astype(cp.bool_)
+        
+        # enhance the dilated mask
+        dilate_target_mask = binary_dilation(target_cp, structure=cp.ones((9,9,9))).astype(cp.bool_)
+        # dilate again to get the gaussian smooth mask when calling
+        smooth_target_mask = binary_dilation(dilate_target_mask).astype(cp.bool_)
+        
+        d: cp.ndarray    # distance from other voxel (v) to the nearest voxel in ref_label (u)
+        indices: cp.ndarray # the index of the nearest voxel in ref_label (u). shape=(3, w, h, d). indices[:, v_i, v_j, v_k] = u_i, u_j, u_k
+        d, indices = distance_transform_edt(~ref_cp, return_distances=True, return_indices=True) # type: ignore
+        
+        # linear enhancement weight at v. w(d): w(0) = 1, w(d_max) = w_0
+        w_0 = self.enhance_weight_at_farthest_coroanry
+        d_max = d[dilate_target_mask].max()
+        w = 1 - (1 - w_0) * d / d_max
+        w = cp.clip(w, 0.0, 1.0)
+        
+        return self.PreCalculateData(
+            i_nearest_ref = indices[:, dilate_target_mask],      # shape = (3, N) N is the amount of dilated target voxels
+            i_dilated = cp.where(dilate_target_mask),            # shape = (3, N) 
+            i_smooth = cp.where(smooth_target_mask),             # shape = (3, M) M is the amount of somooth voxels
+            w = w[dilate_target_mask],
+        )
+    
+    def _enhance(self, dvf_cp: cp.ndarray, data: PreCalculateData) -> cp.ndarray:
+        # dvf = w*dvf_at_nearest_ref + (1-w)*dvf_at_dilated
+        dvf_cp[:,:, *data.i_dilated] = (
+            dvf_cp[:, :, *data.i_nearest_ref] * data.w
+            + dvf_cp[:, :, *data.i_dilated] * (1 - data.w)
+        )
+        
+        # smooth the dvf
+        smoothed: cp.ndarray = cp.zeros_like(dvf_cp)
+        for i in range(3):
+            smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
+        dvf_cp[:, :, *data.i_smooth] = smoothed[:, :, *data.i_smooth]
+        del smoothed
+        return dvf_cp
+
+
+    def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
+        with cp.cuda.Device(self.device.index):
+            dvf_cp = cp.from_dlpack(tensor2dlpack(dvf.to(self.device)))
+            dvf_cp = self._enhance(dvf_cp, self.lca_data)
+            dvf_cp = self._enhance(dvf_cp, self.rca_data)
+            del dvf_cp
+        return dvf

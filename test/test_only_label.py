@@ -35,6 +35,5 @@ def test_only_static_label():
         shutil.rmtree(output_dir)
     dsa.run_and_save(
         output_dir=output_dir,
-        coronary_type="LCA",
-        gray_reverse=False
+        coronary_type="LCA"
     )
