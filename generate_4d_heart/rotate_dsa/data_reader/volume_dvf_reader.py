@@ -17,7 +17,7 @@ from cupyx.scipy.ndimage import distance_transform_edt, binary_dilation, gaussia
 from torch.utils.dlpack import to_dlpack as tensor2dlpack
 from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
-from ... import NUM_TOTAL_PHASE, LV_LABEL, LV_MYO_LABEL, RV_LABEL
+from ... import NUM_TOTAL_PHASE, LV_LABEL, LV_MYO_LABEL, RV_LABEL, RA_LABEL
 from ...roi import ROI
 from ..types import CoronaryType
 from ..cardiac_phase import CardiacPhase
@@ -232,12 +232,9 @@ class VolumeDVFReader(DataReader):
     movement_enhancer: "None | MovementEnhancer" = None
     recover_cropped_data: bool = True
     precompute_ddf: bool = True
+    device: torch.device = field(default_factory= lambda: torch.device("cuda:0"))
     
     def __post_init__(self):
-        
-        if not torch.cuda.is_available() and torch.cuda.device_count() < 2:
-            raise RuntimeError("No CUDA device available for VolumeDVFReader")
-        self.device = torch.device("cuda:1")
         self.roi = ROI.from_json(self.roi_json)
         self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(self.device).half()
         
@@ -428,8 +425,11 @@ class VolumeDVFReader(DataReader):
             return self.cropped_data.affine
 
 
-def tensor2cp(tensor: torch.Tensor, device: torch.device):
-    return cp.from_dlpack(tensor2dlpack(tensor.to(device)))
+def tensor2cp(tensor: torch.Tensor, device: torch.device, dtype_cp=None):
+    if dtype_cp is None:
+        return cp.from_dlpack(tensor2dlpack(tensor.to(device)))
+    else:
+        return cp.from_dlpack(tensor2dlpack(tensor.to(device))).astype(dtype_cp)
 
 class MovementEnhancer(Protocol):
     def setup(self, dvf_reader: VolumeDVFReader) -> None:
@@ -460,10 +460,10 @@ class CoronaryBoundLVEnhancer(MovementEnhancer):
             lv = (cavity_label.to(torch.uint8) == LV_LABEL).squeeze()
             myo = (cavity_label.to(torch.uint8) == LV_MYO_LABEL).squeeze()
             
-            lv_cp = cp.from_dlpack(tensor2dlpack(lv.to(self.device))).astype(cp.bool_)
-            myo_cp = cp.from_dlpack(tensor2dlpack(myo.to(self.device))).astype(cp.bool_)
+            lv_cp = tensor2cp(lv, self.device, cp.bool_)
+            myo_cp = tensor2cp(myo, self.device, cp.bool_)
             
-            coronary_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(self.device))).astype(cp.uint8)
+            coronary_cp = tensor2cp(coronary_label.squeeze(), self.device, cp.uint8)
             dilate_coronary_mask = binary_dilation(coronary_cp, structure=cp.ones((9,9,9))).astype(cp.bool_)
             smooth_mask = binary_dilation(dilate_coronary_mask).astype(cp.bool_)
             
@@ -482,7 +482,7 @@ class CoronaryBoundLVEnhancer(MovementEnhancer):
 
     def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
         with cp.cuda.Device(self.device.index):
-            dvf_cp = cp.from_dlpack(tensor2dlpack(dvf.to(self.device)))
+            dvf_cp = tensor2cp(dvf, self.device)
             dvf_cp[:,:, *self.dilate_coronary_indices] = (
                 dvf_cp[:, :, *self.indices] * self.alpha
                 + dvf_cp[:, :, *self.dilate_coronary_indices] * (1 - self.alpha)
@@ -516,9 +516,9 @@ class CoronaryBoundLVLinearEnhancer(MovementEnhancer):
         
         with cp.cuda.Device(self.device.index):
             lv = (cavity_label.to(torch.uint8) == LV_LABEL).squeeze()
-            lv_cp = cp.from_dlpack(tensor2dlpack(lv.to(self.device))).astype(cp.bool_)
+            lv_cp = tensor2cp(lv, self.device, cp.bool_)
             
-            coronary_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(self.device))).astype(cp.uint8)
+            coronary_cp = tensor2cp(coronary_label.squeeze(), self.device, cp.uint8)
             dilate_coronary_mask = binary_dilation(coronary_cp, structure=cp.ones((9,9,9))).astype(cp.bool_)
             smooth_mask = binary_dilation(dilate_coronary_mask).astype(cp.bool_)
             
@@ -537,7 +537,7 @@ class CoronaryBoundLVLinearEnhancer(MovementEnhancer):
 
     def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
         with cp.cuda.Device(self.device.index):
-            dvf_cp = cp.from_dlpack(tensor2dlpack(dvf.to(self.device)))
+            dvf_cp = tensor2cp(dvf, self.device)
             dvf_cp[:,:, *self.dilate_coronary_indices] = (
                 dvf_cp[:, :, *self.indices] * self.alpha
                 + dvf_cp[:, :, *self.dilate_coronary_indices] * (1 - self.alpha)
@@ -561,8 +561,17 @@ class CoronarySeprateEnhancer(MovementEnhancer):
         i_smooth: cp.ndarray
         w: cp.ndarray
         
-    def __init__(self, enhance_weight_at_farthest_coroanry: float = 0.6):
-        self.enhance_weight_at_farthest_coroanry = enhance_weight_at_farthest_coroanry
+    def __init__(
+        self,
+        w_0_lca: float = 1,
+        w_1_lca: float = 0.6,
+        w_0_rca: float = 2,
+        w_1_rca: float = 1,
+    ):
+        self.w_0_lca = w_0_lca
+        self.w_1_lca = w_1_lca
+        self.w_0_rca = w_0_rca
+        self.w_1_rca = w_1_rca
     
     
     def setup(self, dvf_reader: VolumeDVFReader)->None:
@@ -571,16 +580,16 @@ class CoronarySeprateEnhancer(MovementEnhancer):
         cavity_label = read_data.cavity.to(torch.uint8)
 
         with cp.cuda.Device(self.device.index):
-            self.lca_data = self._inner_setup(read_data.lca, cavity_label==LV_LABEL)
-            self.rca_data = self._inner_setup(read_data.rca, cavity_label==RV_LABEL)
+            self.lca_data = self._inner_setup(read_data.lca, cavity_label==LV_LABEL, self.w_0_lca, self.w_1_lca)
+            self.rca_data = self._inner_setup(read_data.rca, cavity_label==LV_LABEL, self.w_0_rca, self.w_1_rca)
     
-    def _inner_setup(self, target_label: torch.Tensor, ref_label: torch.Tensor):
+    def _inner_setup(self, target_label: torch.Tensor, ref_label: torch.Tensor, w_0: float, w_1: float):
         """
         Use the dvf at ref_label to enhance the dvf at target_label
         Pre-calculate the indices and weight
         """
-        ref_cp = cp.from_dlpack(tensor2dlpack(ref_label.squeeze().to(self.device))).astype(cp.bool_)
-        target_cp = cp.from_dlpack(tensor2dlpack(target_label.squeeze().to(self.device))).astype(cp.bool_)
+        ref_cp = tensor2cp(ref_label.squeeze(), self.device, cp.bool_)
+        target_cp = tensor2cp(target_label.squeeze(), self.device, cp.bool_)
         
         # enhance the dilated mask
         dilate_target_mask = binary_dilation(target_cp, structure=cp.ones((9,9,9))).astype(cp.bool_)
@@ -591,10 +600,9 @@ class CoronarySeprateEnhancer(MovementEnhancer):
         indices: cp.ndarray # the index of the nearest voxel in ref_label (u). shape=(3, w, h, d). indices[:, v_i, v_j, v_k] = u_i, u_j, u_k
         d, indices = distance_transform_edt(~ref_cp, return_distances=True, return_indices=True) # type: ignore
         
-        # linear enhancement weight at v. w(d): w(0) = 1, w(d_max) = w_0
-        w_0 = self.enhance_weight_at_farthest_coroanry
+        # linear enhancement weight at v. w(d): w(0) = w_0, w(d_max) = w_1
         d_max = d[dilate_target_mask].max()
-        w = 1 - (1 - w_0) * d / d_max
+        w = (w_1 - w_0) / d_max * d + w_0
         w = cp.clip(w, 0.0, 1.0)
         
         return self.PreCalculateData(
@@ -622,7 +630,7 @@ class CoronarySeprateEnhancer(MovementEnhancer):
 
     def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
         with cp.cuda.Device(self.device.index):
-            dvf_cp = cp.from_dlpack(tensor2dlpack(dvf.to(self.device)))
+            dvf_cp = tensor2cp(dvf, self.device)
             dvf_cp = self._enhance(dvf_cp, self.lca_data)
             dvf_cp = self._enhance(dvf_cp, self.rca_data)
             del dvf_cp

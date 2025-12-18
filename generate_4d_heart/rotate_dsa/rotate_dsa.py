@@ -53,7 +53,7 @@ class Torch3DLabelRenderer:
         cameras = FoVPerspectiveCameras(
             device=self.device,
             fov=self.fov,
-            R=R[None].to(self.device),
+            R=R[None].to(self.device),      # pytorch3D 默认使用行向量，因此这里输入的 作用于列向量的 R_c2w 可以不用转置，直接视为R_w2c 矩阵
             T=(-R.T @ T)[None].to(self.device), 
             zfar=self.zfar
         )

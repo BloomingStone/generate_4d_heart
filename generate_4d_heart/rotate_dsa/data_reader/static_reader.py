@@ -39,14 +39,15 @@ class StaticVolumeReader(DataReader):
         self, 
         image_path: Path,
         cavity_path: Path,
-        coronary_path: Path
+        coronary_path: Path,
+        device: torch.device = torch.device("cuda:0")
     ):
         self.image_nii = image_path
         self.cavity_nii = cavity_path
         self.coronary_nii = coronary_path
         if not torch.cuda.is_available() and torch.cuda.device_count() < 2:
             raise RuntimeError("No CUDA device available for VolumeDVFReader")
-        self.device = torch.device("cuda:1")
+        self.device = device
         self._load_3d_data()
         
         self.n_phases: int = 1
@@ -114,11 +115,9 @@ class StaticLabelReader(DataReader):
         self, 
         cavity_path: Path,
         coronary_path: Path,
+        device: torch.device = torch.device("cuda:0")
     ):
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda:1")
-        else:
-            raise RuntimeError("No CUDA device available for StaticLabelReader")
+        self.device = device
         self.n_phases: int = NUM_TOTAL_PHASE
         self.cavity, _ = load_nifti(cavity_path, is_label=True)
         coronary, self._origin_volume_affine = load_nifti(coronary_path, is_label=True)

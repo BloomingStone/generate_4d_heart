@@ -26,24 +26,22 @@ class _Data:
     rca_label: Tensor
     lca_mesh_in_world: pv.PolyData | None = None
     rca_mesh_in_world: pv.PolyData | None = None
-    
-def mapper(args: tuple[int, _Data, CoronaryType, np.ndarray]) -> tuple[int, CoronaryType, pv.PolyData]:
-        index, data, coronary_type, affine = args
-        # 子进程中使用固定的 CUDA 设备（与主进程相同）
-        device = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
-        if coronary_type == CoronaryType.LCA:
-            res = get_mesh_in_world(data.lca_label, affine, device, max_points=2000)
-        else:
-            res = get_mesh_in_world(data.rca_label, affine, device, max_points=2000)
-        return (index, coronary_type, res)
-    
-    
+
+def mapper(args: tuple[int, _Data, CoronaryType, np.ndarray, torch.device]) -> tuple[int, CoronaryType, pv.PolyData]:
+    index, data, coronary_type, affine, device = args
+    if coronary_type == CoronaryType.LCA:
+        res = get_mesh_in_world(data.lca_label, affine, device, max_points=2000)
+    else:
+        res = get_mesh_in_world(data.rca_label, affine, device, max_points=2000)
+    return (index, coronary_type, res)
+
 class VolumesReader(DataReader):
     def __init__(
         self, 
         image_dir: Path,
         cavity_dir: Path,
         coronary_dir: Path,
+        device: torch.device = torch.device("cuda:0")
     ):
         """
         Volume data reader for 4D cardiac MRI.
@@ -62,10 +60,7 @@ class VolumesReader(DataReader):
         | - phase_001.nii.gz
         | - ...
         """
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda:1")
-        else:
-            raise RuntimeError("No CUDA device available for VolumesReader")
+        self.device = device
         image_file_list = sorted(image_dir.glob("*.nii*"))
         cavity_file_list = sorted(cavity_dir.glob("*.nii*"))
         coronary_file_list = sorted(coronary_dir.glob("*.nii*"))
@@ -114,16 +109,16 @@ class VolumesReader(DataReader):
         num_workers = torch.cuda.get_device_properties(self.device).total_memory / self.data[0].lca_label.numel() // 8
         num_cpu = os.process_cpu_count()
         assert num_cpu is not None
-        num_workers = max(min(num_workers, num_cpu-2), 1)
+        num_workers = max(min(num_workers, num_cpu//2), 1)
         
-        tasks: list[tuple[int, _Data, CoronaryType, np.ndarray]] = []
+        tasks: list[tuple[int, _Data, CoronaryType, np.ndarray, torch.device]] = []
         for index, data in enumerate(self.data):
-            tasks.append((index, data, CoronaryType.LCA, self._lca_centering_affine))
-            tasks.append((index, data, CoronaryType.RCA, self._rca_centering_affine))
+            tasks.append((index, data, CoronaryType.LCA, self._lca_centering_affine, self.device))
+            tasks.append((index, data, CoronaryType.RCA, self._rca_centering_affine, self.device))
         
         print(f"Using {num_workers} workers to generate mesh")
         with get_context("spawn").Pool(num_workers) as executor:
-            results: list[tuple[int, CoronaryType, pv.PolyData]] = list(executor.map(mapper,tasks))
+            results: list[tuple[int, CoronaryType, pv.PolyData]] = list(executor.map(mapper, tasks))
         
         # results = [mapper(task) for task in tasks]
         

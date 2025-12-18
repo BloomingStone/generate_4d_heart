@@ -162,15 +162,14 @@ def get_mesh_in_voxel(label: Tensor, device: torch.device, max_points: int=10000
         .contour([1], method='marching_cubes')\
         .smooth_taubin(
             n_iter=40, pass_band=0.001, normalize_coordinates=True)\
-        .triangulate().clean().triangulate()
-    try:
-        cluster = pyacvd.Clustering(mesh)
-        cluster.cluster(max_points)
-        
-        mesh: pv.PolyData = cluster.create_mesh().triangulate().clean()  # type: ignore
-    except Exception as e:
-        import logging
-        logging.warning(f"pyacvd clustering failed: {e}, use original mesh")
+        .triangulate()\
+        .decimate_pro(
+            reduction=0.8,          # 减少 80% 三角面片
+            preserve_topology=True, # 防止破洞
+            feature_angle=30.0
+        )\
+        .triangulate()\
+        .clean()
     mesh.points /= 2.0  # 因为上采样了2倍，所以点坐标要除以2
     return mesh
 
