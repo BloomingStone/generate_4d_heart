@@ -9,6 +9,11 @@ import cv2
 from tqdm import tqdm
 from nibabel.nifti1 import Nifti1Image
 from nibabel.loadsave import save as nib_save
+from matplotlib import pyplot as plt
+import matplotlib.animation as animation
+import matplotlib
+
+matplotlib.use("Agg")
 
 
 def save_nii(
@@ -72,11 +77,43 @@ def save_pngs(
 def save_gif(
     output_path: Path,
     frames: torch.Tensor | np.ndarray,
-    fps_gif: int = 30
+    fps_gif: int = 30,
+    **imshow_kwargs
 ) -> None:
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
-    iio.imwrite(output_path, frames_np, extension=".gif", duration=1000/fps_gif, loops=True)
+
+    h, w = frames_np.shape[1], frames_np.shape[2]
+
+    dpi = 100
+    fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)
+    ax = plt.axes((0, 0, 1, 1))  # 填满整个 figure
+    ax.axis("off")
+
+    ims = []
+    for i in range(frames_np.shape[0]):
+        im = ax.imshow(frames_np[i], animated=True, **imshow_kwargs)
+        ims.append([im])
+
+    ani = animation.ArtistAnimation(
+        fig,
+        ims,
+        interval=1000 / fps_gif,
+        blit=True,
+        repeat_delay=1000
+    )
+
+    writer = animation.PillowWriter(fps=fps_gif)
+    ani.save(
+        output_path,
+        writer=writer,
+        dpi=dpi,
+        savefig_kwargs={
+            "pad_inches": 0
+        }
+    )
+
+    plt.close(fig)
 
 
 def save_deepthmap_gif(
@@ -84,25 +121,16 @@ def save_deepthmap_gif(
     depth_maps: torch.Tensor | np.ndarray,
     fps_gif: int = 30
 ) -> None:
-    from matplotlib import pyplot as plt
-    import matplotlib.animation as animation
-    import matplotlib
-    
-    matplotlib.use("Agg")
-    
     depth_maps = depth_maps.squeeze()
     depth_maps_np = depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
-    fig, ax = plt.subplots()
-    ims = []
-    # Negate depth maps for visualization
-    depth_maps_np = - depth_maps_np
-    vmin = np.nanmin(depth_maps_np)
-    vmax = np.nanmax(depth_maps_np[depth_maps_np<0])
-    depth_maps_np[depth_maps_np>0] = vmin   # set background to min value for better visualization
-    for i in range(depth_maps_np.shape[0]):
-        im = ax.imshow(depth_maps_np[i], animated=True, vmin=vmin, vmax=vmax)
-        ims.append([im])
+    vmin = np.min(depth_maps_np[depth_maps_np>0])
+    vmax = np.max(depth_maps_np)
     
-    ani = animation.ArtistAnimation(fig, ims, interval=1000/fps_gif, blit=True, repeat_delay=1000)
-    writer = animation.PillowWriter(fps=fps_gif)
-    ani.save(output_path, writer=writer)
+    save_gif(
+        output_path,
+        depth_maps_np,
+        fps_gif=fps_gif,
+        cmap='gray',
+        vmin=vmin,
+        vmax=vmax
+    )
