@@ -38,7 +38,7 @@ class ThresholdMultipliContrast(ContrastSimulator):
         
         assert density.dtype == torch.float32
         assert coronary_label.dtype == torch.bool
-        air = torch.where(-1000 < ori_volume <= self.lung_threshold)
+        air = torch.where((-1000 < ori_volume) & (ori_volume <= self.lung_threshold))
         lung = torch.where((self.lung_threshold < ori_volume) & (ori_volume <= self.heart_threshold))
         heart = torch.where((self.heart_threshold < ori_volume) & (ori_volume <= self.bone_threshold))
         bone = torch.where(ori_volume > self.bone_threshold)

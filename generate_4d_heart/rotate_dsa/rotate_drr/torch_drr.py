@@ -62,7 +62,6 @@ class TorchDRR(RotateDRR):
         rotate_cfg: RotatedParameters = RotatedParameters(),
         patch_size: int = 256,
         orientation_type: Optional[Literal["AP", "PA"]] = "AP",
-        zoom_rate: float = 2.0
     ):
         self.c_arm_cfg = c_arm_cfg
         self.rotate_cfg = rotate_cfg
@@ -76,7 +75,6 @@ class TorchDRR(RotateDRR):
         self.reorient = get_reorientation(self.orientation_type)
         sod = self.c_arm_cfg.sod
         self.translations = torch.tensor([[0.0, sod, 0.0]], device=self.device)
-        self.zoom_rate = zoom_rate
         
 
 
