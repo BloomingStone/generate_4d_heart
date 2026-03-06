@@ -52,9 +52,9 @@ def _read_and_save(reader: DataReader, output_dir: Path):
     frames_h = uniform(frames_h)
     frames_d = uniform(frames_d)
     
-    save_gif(output_dir / "frames_w.gif", frames_w)
-    save_gif(output_dir / "frames_h.gif", frames_h)
-    save_gif(output_dir / "frames_d.gif", frames_d)
+    save_gif(output_dir / "frames_w.gif", frames_w, cmap='gray')
+    save_gif(output_dir / "frames_h.gif", frames_h, cmap='gray')
+    save_gif(output_dir / "frames_d.gif", frames_d, cmap='gray')
     
     plotter = pv.Plotter(off_screen=True)
     plotter.open_gif(output_dir / "animation.gif")
@@ -74,8 +74,8 @@ def _read_and_save(reader: DataReader, output_dir: Path):
     x_max, y_max, z_max = central_line.max(axis=0)
     x_min, y_min, z_min = central_line.min(axis=0)
     
-    x_max_mesh, y_max_mesh, z_max_mesh = mesh.points.max(axis=0)
-    x_min_mesh, y_min_mesh, z_min_mesh = mesh.points.min(axis=0)
+    x_max_mesh, y_max_mesh, z_max_mesh = (mesh.points + 1).max(axis=0)  # plus/minus 1 to avoid small bias
+    x_min_mesh, y_min_mesh, z_min_mesh = (mesh.points - 1).min(axis=0)
 
     assert x_max < x_max_mesh and y_max < y_max_mesh and z_max < z_max_mesh
     assert x_min > x_min_mesh and y_min > y_min_mesh and z_min > z_min_mesh

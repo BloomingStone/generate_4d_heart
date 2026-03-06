@@ -176,8 +176,8 @@ class RotateDSA:
         save_tif(output_dir / "rotate_dsa.tif", frames)
         save_tif(output_dir / "label.tif", labels)
         
-        save_gif(output_dir / "rotate_dsa.gif", frames, gif_fps)
-        save_gif(output_dir / "label.gif", labels*255, gif_fps)
+        save_gif(output_dir / "rotate_dsa.gif", frames, gif_fps,cmap='gray')
+        save_gif(output_dir / "label.gif", labels*255, gif_fps,cmap='gray')
         save_deepthmap_gif(output_dir / "depth_map.gif", depth_maps, gif_fps)
         
         save_pngs(output_dir / "rotate_dsa", frames)
@@ -206,7 +206,7 @@ class RotateDSA:
         labels, depth_maps = self.run_no_drr(coronary_type)
         save_tif(output_dir / "label.tif", labels)
         
-        save_gif(output_dir / "label.gif", labels*255, gif_fps)
+        save_gif(output_dir / "label.gif", labels*255, gif_fps, cmap='gray')
         save_deepthmap_gif(output_dir / "depth_map.gif", depth_maps, gif_fps)
         
         save_pngs(output_dir / "label", labels*255)
