@@ -183,14 +183,14 @@ class RotateDSA:
         save_pngs(output_dir / "rotate_dsa", frames)
         save_pngs(output_dir / "label", labels*255)
         
-        np.save(output_dir / "label.npy", labels)
-        np.save(output_dir / "depth_map.npy", depth_maps)
+        np.savez(output_dir / "label.npz", labels)
+        np.savez(output_dir / "depth_map.npz", depth_maps)
         
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(self.get_geometry_json(coronary_type), f)
         
-        np.save(
-            output_dir / "central_line.npy", 
+        np.savez(
+            output_dir / "central_line.npz", 
             self.reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
         )
         

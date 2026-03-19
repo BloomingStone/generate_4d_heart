@@ -155,9 +155,13 @@ def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray
 def get_mesh_in_voxel(label: Tensor, device: torch.device, max_points: int=10000) -> pv.PolyData:
     label_np = label.squeeze().cpu().numpy()
     label_np = (label_np>0.5).astype(np.uint8)
-    mesh = pv.wrap(label_np)\
+    mesh: pv.PolyData = pv.wrap(label_np)\
         .contour([1], method='flying_edges')\
-        .triangulate().smooth_taubin(n_iter=50).clean()
+        .triangulate().smooth_taubin().clean()
+    
+    if mesh.n_points > max_points:
+        decimate_rate = max_points / mesh.n_points
+        mesh = mesh.decimate_pro(reduction=decimate_rate, preserve_topology=True, feature_angle=30.0)  #type: ignore
     return mesh
 
 def get_mesh_in_world(label: Tensor, affine: ndarray, device: torch.device, max_points: int=10000) -> pv.PolyData:

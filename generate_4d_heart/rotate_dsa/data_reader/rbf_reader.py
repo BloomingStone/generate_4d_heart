@@ -59,7 +59,7 @@ class RBFReader(DataReader):
     ssm_reader: SSMReader= field(default_factory=SSMReader)
     device: torch.device = field(default_factory= lambda: torch.device("cuda:0"))
     num_components_used: int = 1
-    motion_multiplier: float = 1.2
+    motion_multiplier: float = 1.3
     attenuation_transition: float = 5.0
 
     def __post_init__(self):
