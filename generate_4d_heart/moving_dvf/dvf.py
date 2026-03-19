@@ -4,6 +4,9 @@ import logging
 
 import nibabel as nib
 from tqdm import tqdm
+from nibabel.nifti1 import Nifti1Image
+from nibabel import loadsave as nib_io
+from nibabel import funcs as nib_F
 
 from ..roi import ROI
 from .ssm import SSM
@@ -12,9 +15,9 @@ from .. import NUM_TOTAL_PHASE
 
 logger = logging.getLogger(__name__)
 
-def read_nifti(path: Path) -> nib.nifti1.Nifti1Image:
-    image = nib.loadsave.load(path)
-    assert isinstance(image, nib.nifti1.Nifti1Image)
+def read_nifti(path: Path) -> Nifti1Image:
+    image = nib_io.load(path)
+    assert isinstance(image, Nifti1Image)
     return image
 
 # TODO 提取分离主要处理逻辑和save逻辑
@@ -93,7 +96,7 @@ The generated images will be stored as
             logger.error(f"case {cavity_path} fail to be apply ssm with error: {e}", exc_info=True)
             continue
         ssm_res.landmark_vtk.save(landmark_dir / f'{case_name}.vtk')
-        nib.loadsave.save(ssm_res.get_landmark_volume(), landmark_dir / f'{case_name}.nii.gz')
+        nib_io.save(ssm_res.get_landmark_volume(), landmark_dir / f'{case_name}.nii.gz')
         
         # generate heart beating gif (optional)
         if gen_gif:
@@ -119,15 +122,15 @@ The generated images will be stored as
                 logger.error(f"when shape morpher prediting, case {cavity_path} fail at {phase=} with error: {e}")
                 continue
         
-            nib.loadsave.save(dvf, dvf_case_dir / f'phase_{phase:02d}.nii.gz')
+            nib_io.save(dvf, dvf_case_dir / f'phase_{phase:02d}.nii.gz')
             
             if gen_cavity:
                 cavity_list.append(cavity_phase)
 
         if gen_cavity:
             (cavity_4d_dir := output_dir / '4d_cavity').mkdir(exist_ok=True, parents=True)
-            concat = nib.funcs.concat_images(cavity_list)
-            nib.loadsave.save(concat, cavity_4d_dir / f'{case_name}.nii.gz')
+            concat = nib_F.concat_images(cavity_list)
+            nib_io.save(concat, cavity_4d_dir / f'{case_name}.nii.gz')
 
 
 if __name__ == '__main__':

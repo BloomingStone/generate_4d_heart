@@ -9,7 +9,7 @@ import numpy as np
 from nibabel.nifti1 import Nifti1Image
 
 
-from .. import NUM_TOTAL_CAVITY_LABEL, ALL_CAVITY_LABEL
+from generate_4d_heart import CavityLabel
 from .utils import MaybeFlipTransform
 
 class ShapeMorph(nn.Module):
@@ -69,7 +69,7 @@ class ShapeMorphPredictor:
             device_id: int = 0,
         ):
         self.device = torch.device(device_id)
-        self.model = ShapeMorph(label_class_num=NUM_TOTAL_CAVITY_LABEL, norm='SyncBatch').to(self.device)
+        self.model = ShapeMorph(label_class_num=len(CavityLabel), norm='SyncBatch').to(self.device)
         self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
         self.model.eval()
 
@@ -92,7 +92,7 @@ class ShapeMorphPredictor:
         self.flips = MaybeFlipTransform(source_cavity_zoomed.affine)
         
         def label_filter_fun(x: torch.Tensor) -> torch.Tensor:
-            mask = torch.isin(x, torch.tensor(ALL_CAVITY_LABEL))
+            mask = torch.isin(x, torch.tensor(list(CavityLabel)))
             x[~mask] = 0
             return x
             
@@ -101,7 +101,7 @@ class ShapeMorphPredictor:
             Lambda(label_filter_fun),
             self.flips,
             EnsureChannelFirst(channel_dim='no_channel'),
-            AsDiscrete(to_onehot=NUM_TOTAL_CAVITY_LABEL + 1)
+            AsDiscrete(to_onehot=len(CavityLabel) + 1)
         ])
         self.source_cavity_tensor = self._get_tensor(source_cavity_zoomed, self.transform_cavity)
 

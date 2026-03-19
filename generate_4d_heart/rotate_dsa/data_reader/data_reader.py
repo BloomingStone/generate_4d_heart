@@ -11,11 +11,10 @@ import torch
 from torch import Tensor
 from torch.nn import functional as F
 from torch.utils.dlpack import from_dlpack as dlpack2tensor
-from torch.utils.dlpack import to_dlpack as tensor2dlpack
+from torch.utils.dlpack import to_dlpack as tensor2dlpack   #type: ignore
 from nibabel.loadsave import load as nib_load
 from nibabel.nifti1 import Nifti1Image
 import pyvista as pv
-import pyacvd
 
 from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
@@ -123,54 +122,42 @@ def recenter(
     T[:3, 3] = new_t
     return T
 
+import cupy as cp
+
 def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray, device: torch.device) -> ndarray:
-    """
-    Compute an affine transform that recenters the heart coronary region in world coordinates for CTA
-
-    The centroid of the coronary label (LCA or RCA) is computed in voxel space.
-    We then build a new target center by combining the label centroid with the 
-    geometric center of the image:
-        - X (left–right) and Y (anterior–posterior) use the mean of image center and label centroid
-        - Z (superior–inferior) uses the middle of the image (image center on Z axis)
-
-    This heuristic shifts the heart region toward the center of the field of view 
-    while preserving vertical alignment.
-
-    Args:
-        coronary_label (Tensor): Binary coronary artery mask of shape (1, 1, D, H, W).
-        volume_affine (ndarray): Original volume affine matrix of shape (4, 4).
-
-    Returns:
-        ndarray: New affine matrix that centers the coronary structure in world space.
-    """
+    W, H, D = coronary_label.shape[-3:]
+    image_center = (W//2, H//2, D//2)
     with cp.cuda.Device(device.index):
-        label_center: tuple[int, int, int] = center_of_mass(cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(device)))) # type: ignore
-        W, H, D = coronary_label.shape[-3:]
-        image_center = (W/2, H/2, D/2)
-        label_center_voxel = (
-            int( (image_center[0] + label_center[0]) / 2 ), # left and right, set as the mean of image_center and label_center
-            int( (image_center[1] + label_center[1]) / 2 ), # antero-posterior, same as above
-            int( image_center[2] )                          # up and down, set as the center of image
-        )
+        # 1. 将数据转为 cupy 阵列并压缩维度
+        label_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(device)))
         
+        # 2. 找到所有非零（标签）点的坐标
+        coords = cp.argwhere(label_cp > 0)
+        
+        if coords.size == 0:
+            # 如果没找到标签，退回到图像物理中心
+            label_center_voxel = image_center
+        else:
+            # 3. 计算 AABB (Axis-Aligned Bounding Box) 的边界
+            min_coords = coords.min(axis=0)
+            max_coords = coords.max(axis=0)
+            
+            # 4. 计算包围盒的中心
+            # 这能确保最左边和最右边的分支被平等对待
+            label_center_voxel = (
+                int((min_coords[0] + max_coords[0]) / 2),
+                int((min_coords[1] + max_coords[1]) / 2),
+                int(image_center[2])    # Z轴保持在图像中心
+            )
+
         return recenter(volume_affine, label_center_voxel)
 
 def get_mesh_in_voxel(label: Tensor, device: torch.device, max_points: int=10000) -> pv.PolyData:
-    label_big = F.interpolate(label.squeeze()[None, None].to(torch.float16).to(device), scale_factor=2, mode='trilinear').cpu().numpy().squeeze()
-    label_big = (label_big>0.5).astype(np.uint8)
-    mesh = pv.wrap(label_big)\
-        .contour([1], method='marching_cubes')\
-        .smooth_taubin(
-            n_iter=40, pass_band=0.001, normalize_coordinates=True)\
-        .triangulate()\
-        .decimate_pro(
-            reduction=0.8,          # 减少 80% 三角面片
-            preserve_topology=True, # 防止破洞
-            feature_angle=30.0
-        )\
-        .triangulate()\
-        .clean()
-    mesh.points /= 2.0  # 因为上采样了2倍，所以点坐标要除以2
+    label_np = label.squeeze().cpu().numpy()
+    label_np = (label_np>0.5).astype(np.uint8)
+    mesh = pv.wrap(label_np)\
+        .contour([1], method='flying_edges')\
+        .triangulate().smooth_taubin(n_iter=50).clean()
     return mesh
 
 def get_mesh_in_world(label: Tensor, affine: ndarray, device: torch.device, max_points: int=10000) -> pv.PolyData:
@@ -179,14 +166,14 @@ def get_mesh_in_world(label: Tensor, affine: ndarray, device: torch.device, max_
     return mesh
 
 def apply_affine(points: Tensor | ndarray, affine: ndarray) -> ndarray:
-    assert len(points.shape) == 2 and points.shape[-1] == 3
+    assert points.shape[-1] == 3
     if isinstance(points, ndarray):
         points = torch.from_numpy(points)
     points = points.to(torch.float32)
     _affine = torch.from_numpy(affine).to(device=points.device, dtype=points.dtype)
-    new_points = F.pad(points, (0, 1), "constant", 1)   # shape=(N, 4), [x, y, z, 1]
+    new_points = F.pad(points, (0, 1), "constant", 1)   # shape=(..., 4), [x, y, z, 1]
     new_points = new_points @ _affine.T
-    new_points = new_points[:, :3]
+    new_points = new_points[..., :3]
     return new_points.cpu().numpy()
 
     

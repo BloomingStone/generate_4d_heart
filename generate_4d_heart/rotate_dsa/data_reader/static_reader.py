@@ -7,7 +7,7 @@ from torch import Tensor
 import numpy as np
 
 from .data_reader import DataReader, DataReaderResult, Coronary, separate_coronary, load_nifti, get_coronary_centering_affine, get_mesh_in_world
-from ... import NUM_TOTAL_PHASE, NUM_TOTAL_CAVITY_LABEL
+from generate_4d_heart import NUM_TOTAL_PHASE
 from ..cardiac_phase import CardiacPhase
 from ..types import CoronaryType
 

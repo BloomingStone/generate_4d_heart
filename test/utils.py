@@ -1,7 +1,7 @@
 from pathlib import Path
 from functools import lru_cache
 
-from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader, StaticVolumeReader, CoronarySeprateEnhancer
+from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader, StaticVolumeReader, CoronarySeprateEnhancer, RBFReader
 from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
 
 test_root_dir = Path(__file__).parent
@@ -37,6 +37,14 @@ def get_static_volume_reader():
         coronary_path=data_dir / "coronary.nii.gz",
     )
 
+def get_rbf_reader():
+    data_dir = test_data_root_dir / "volume_with_dvf"
+    return RBFReader(
+        image_nii=data_dir / "image.nii.gz",
+        cavity_nii=data_dir / "cavity.nii.gz",
+        coronary_nii=data_dir / "coronary.nii.gz"
+    )
+
 @lru_cache(maxsize=None)
 def get_reader(reader_name: str):
     print("Creating readers...")  # 可用于验证只执行一次
@@ -47,6 +55,8 @@ def get_reader(reader_name: str):
             return get_volume_dvf_reader()
         case "static_volume_reader":
             return get_static_volume_reader()
+        case "rbf_reader":
+            return get_rbf_reader()
         case _:
             raise ValueError(f"Unknown reader name: {reader_name}")
 

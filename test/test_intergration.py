@@ -12,7 +12,7 @@ from utils import output_root_dir, get_reader, get_simulator
 
 
 @pytest.mark.parametrize("reader_name", (
-    "volumes_reader", "volume_dvf_reader"
+    "volumes_reader", "volume_dvf_reader", "static_volume_reader", "rbf_reader"
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration(
@@ -25,6 +25,7 @@ def test_rotate_dsa_integration(
     rotate_cfg = RotatedParameters(
         total_frame=20,  # 减少帧数
         fps=10,           # 降低帧率
+        angular_velocity = 20,  # 降低旋转速度
     )
     
     drr = TorchDRR(rotate_cfg=rotate_cfg)
@@ -78,6 +79,8 @@ def test_rotate_dsa_integration(
         ("volumes_reader", "multipli_contrast", MultipliContrast(), "LCA"),
         ("volume_dvf_reader", "multipli_contrast", MultipliContrast(), "LCA"),
         ("volume_dvf_reader", "multipli_contrast", MultipliContrast(), "RCA"),
+        ("rbf_reader", "multipli_contrast", MultipliContrast(), "LCA"),
+        ("rbf_reader", "multipli_contrast", MultipliContrast(), "RCA"),
         ("static_volume_reader", "multipli_contrast", MultipliContrast(), "LCA")
     )
 )

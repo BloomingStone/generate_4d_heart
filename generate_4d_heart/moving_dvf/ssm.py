@@ -1,17 +1,25 @@
 from pathlib import Path
 
 import numpy as np
-from scipy import ndimage
+import cupy as cp
+from cupyx.scipy import ndimage
 import pyvista as pv
 import pyacvd
 import torchcpd
 from nibabel.nifti1 import Nifti1Image
 import nibabel as nib
+from scipy.spatial import KDTree
+import torch
+from pytorch3d.structures import Meshes
+from pytorch3d.loss import chamfer_distance, mesh_laplacian_smoothing, mesh_edge_loss
+import logging
 
-from .. import SSM_DIRECTION, NUM_TOTAL_CAVITY_LABEL, NUM_TOTAL_PHASE, NUM_TOTAL_POINTS, ALL_CAVITY_LABEL, LV_MYO_LABEL, LV_LABEL
+from generate_4d_heart import NUM_TOTAL_POINTS, CavityLabel, NUM_TOTAL_PHASE
 from .utils import MaybeFlipTransform
 
-def _get_largest_connected_component(data: np.ndarray) -> np.ndarray:
+logger = logging.getLogger(__name__)
+
+def _get_largest_connected_component(data):
     """
     Obtain the largest connected region in the binary image. Copy from Phantom/script/get_surface_cloud.py
     Args:
@@ -19,13 +27,13 @@ def _get_largest_connected_component(data: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: the largest connected region in the binary image
     """
-    res = ndimage.label(data)
-    assert isinstance(res, tuple) and isinstance(res[0], np.ndarray) and isinstance(res[1], int)
-    labeled_data, num_features = res
-    assert num_features > 0
-    sizes = ndimage.sum(data, labeled_data, range(num_features + 1))
+    data_cp = cp.asarray(data)
+    labeled_data, num_features = ndimage.label(data_cp)  # type: ignore
+    if num_features == 1:
+        return data_cp
+    sizes = ndimage.sum(data_cp, labeled_data)
     largest_component = sizes.argmax()
-    return (labeled_data == largest_component).astype(np.uint8)
+    return (labeled_data == largest_component).astype(cp.uint8)
 
 def identify_faces(polydata: pv.PolyData) -> pv.PolyData:
     """
@@ -59,28 +67,29 @@ def get_surface_from_label(
         pv.PolyData: the cloud
         np.ndarray: the affine matrix of the nii file
     """
-    label = MaybeFlipTransform(affine)(label, is_vector_field=False)
+    label = MaybeFlipTransform(affine)(label, is_vector_field=False)    # TODO 这里更正确的做法是使用affine将voxel坐标转换到world坐标系
     surface_all = pv.PolyData()
     
-    for label_id in ALL_CAVITY_LABEL:
+    label_cp = cp.asarray(label)
+    for label_id in CavityLabel:
         assert label_id > 0
-        if label_id == LV_MYO_LABEL:
+        if label_id == CavityLabel.LV_MYO:
             # The myocardial part of the left ventricle is combined with the left ventricular cavity part
-            mask = np.zeros(label.shape, dtype=np.uint8)
-            mask[label == LV_MYO_LABEL] = 1
-            mask[label == LV_LABEL] = 1
-            mask = (mask > 0).astype(np.uint8)
+            mask = cp.zeros(label_cp.shape, dtype=cp.uint8)
+            mask[label_cp == CavityLabel.LV_MYO] = 1
+            mask[label_cp == CavityLabel.LV] = 1
+            mask = (mask > 0).astype(cp.uint8)
         else:
-            mask = (label == label_id).astype(np.uint8)
+            mask = (label_cp == label_id).astype(cp.uint8)
         
         structure = ndimage.generate_binary_structure(3, 3)
         mask = ndimage.binary_closing(mask, iterations=1, structure=structure)
         mask = ndimage.binary_opening(mask, iterations=1, structure=structure)
         mask = _get_largest_connected_component(mask)
+        mask: np.ndarray = cp.asnumpy(mask)
 
-        surface = pv.wrap(mask).contour([1], method="flying_edges").triangulate().smooth_taubin(n_iter=50).clean()
+        surface = pv.wrap(mask).contour([1], method="flying_edges").triangulate().smooth_taubin().clean()
         cluster = pyacvd.Clustering(surface)
-        cluster.subdivide(2)
         cluster.cluster(NUM_TOTAL_POINTS)
         surface = cluster.create_mesh().triangulate().clean()
         assert isinstance(surface, pv.PolyData)
@@ -93,6 +102,58 @@ def get_surface_from_label(
         surface_all = surface_all.merge(surface)
     assert isinstance(surface_all, pv.PolyData)
     return surface_all
+
+
+def pytorch3d_refine(
+    source_pv: pv.PolyData, 
+    target_pv: pv.PolyData, 
+    device: str = "cuda:0",
+    steps: int = 100,
+    lr: float = 0.01,
+    w_chamfer: float = 1.0,
+    w_laplacian: float = 0.1,
+    w_edge: float = 0.1
+) -> pv.PolyData:
+    """
+    使用 PyTorch3D 对已经初步对齐的网格进行高精度形变微调。
+    """
+    # PyVista -> PyTorch3D 
+    src_verts = torch.from_numpy(source_pv.points).float().to(device)
+    src_faces = torch.from_numpy(np.array(source_pv.faces).reshape(-1, 4)[:, 1:]).long().to(device) #faces[i] = [n, id1, id2, id3]
+    tgt_verts = torch.from_numpy(target_pv.points).float().to(device)
+
+    src_mesh = Meshes(verts=[src_verts], faces=[src_faces])
+    
+    # optimize offsets of verts for stable topol structure
+    deform_verts = torch.full(src_verts.shape, 0.0, device=device, requires_grad=True)
+    optimizer = torch.optim.Adam([deform_verts], lr=lr)
+    
+    for step in range(steps):
+        optimizer.zero_grad()
+
+        new_mesh = src_mesh.offset_verts(deform_verts)
+
+        # A. Chamfer Loss: Bring the point cloud closer to the target surface
+        loss_chamfer, _ = chamfer_distance(new_mesh.verts_packed().unsqueeze(0),  #type: ignore
+                                           tgt_verts.unsqueeze(0))
+        
+        # B. Laplacian Loss: keep smooth
+        loss_laplacian = mesh_laplacian_smoothing(new_mesh, method="uniform")
+        
+        # C. Edge Loss: prevent the stretching distortion of the triangle
+        loss_edge = mesh_edge_loss(new_mesh)
+        
+        total_loss = w_chamfer * loss_chamfer + w_laplacian * loss_laplacian + w_edge * loss_edge  #type: ignore
+        if step % 10 == 0:
+            logger.debug(f"{step=:03d}, {loss_chamfer=:.5f} {loss_laplacian=:.5f} {loss_edge=:.5f}")
+        
+        total_loss.backward()
+        optimizer.step()
+
+    final_verts = src_mesh.offset_verts(deform_verts).verts_packed().detach().cpu().numpy()  #type: ignore
+    refined_pv = source_pv.copy()
+    refined_pv.points = final_verts
+    return refined_pv
 
 def deform_surface(
         source_surface: pv.PolyData, 
@@ -110,8 +171,9 @@ def deform_surface(
     Returns:
         pv.PolyData: the deformed surface
     """
-    moving_labels = source_surface.point_data["label"]
-    fix_labels = target_surface.point_data["label"]
+    source_surface = source_surface.copy()
+    moving_labels = source_surface.cell_data["label"]
+    fix_labels = target_surface.cell_data["label"]
     labels = np.unique(moving_labels)
     labels = labels[labels != 0]
     new_cloud = pv.PolyData()
@@ -120,11 +182,20 @@ def deform_surface(
     
     source_surface.points = new_points_all.cpu().numpy()
     for label in sorted(labels):
-        source_submesh = source_surface.extract_points(moving_labels == label)
-        target_submesh = target_surface.extract_points(fix_labels == label)
+        logger.debug(f"process label:{label+1}")
+        source_submesh: pv.PolyData = source_surface.extract_cells(moving_labels == label).extract_surface(algorithm=None)
+        target_submesh: pv.PolyData = target_surface.extract_cells(fix_labels == label).extract_surface(algorithm=None)
         new_points, _ = torchcpd.AffineRegistration(X=target_submesh.points, Y=source_submesh.points, device=device).register()
         new_points, _ = torchcpd.DeformableRegistration(X=target_submesh.points, Y=new_points.cpu().numpy(), device=device, kwargs=deform_kwargs).register()
         source_submesh.points = new_points.cpu().numpy()
+        
+        source_submesh = pytorch3d_refine(
+            source_pv=source_submesh, 
+            target_pv=target_submesh, 
+            device=f"cuda:{device}",
+            steps=200,
+        )
+        
         new_cloud = new_cloud.merge(source_submesh)
     
     return new_cloud
@@ -143,7 +214,7 @@ def _extract_faces_by_label(polydata: pv.PolyData, label: int) -> pv.PolyData:
     if label not in unique_labels:
         raise ValueError(f"Label {label} not found in polydata.")
     face_indices = np.where(labels == label)[0]
-    return polydata.extract_cells(face_indices).extract_surface()
+    return polydata.extract_cells(face_indices).extract_surface(algorithm=None)
 
 def polydata_to_label_volume(
     polydata: pv.PolyData,
@@ -177,7 +248,7 @@ def polydata_to_label_volume(
 class SSM:
     def __init__(
             self,
-            template_surface: pv.PolyData | Path,
+            template_surface: pv.DataObject | Path,
             b_motion: np.ndarray | Path,
             P_motion: np.ndarray | Path, 
     ):
@@ -190,24 +261,26 @@ class SSM:
         temp_path = None
         if isinstance(template_surface, Path):
             temp_path = template_surface
-            template_surface = pv.read(template_surface)
+            template_surface_ = pv.read(template_surface)
+        else:
+            template_surface_ = template_surface
         if isinstance(b_motion, Path):
             b_motion = np.load(b_motion)
         if isinstance(P_motion, Path):
             P_motion = np.load(P_motion)
-        assert isinstance(template_surface, pv.PolyData) and isinstance(b_motion, np.ndarray) and isinstance(P_motion, np.ndarray)
+        assert isinstance(template_surface_, pv.PolyData) and isinstance(b_motion, np.ndarray) and isinstance(P_motion, np.ndarray)
         num_labels, _, num_points, num_dim = P_motion.shape
         num_labels_, num_phases = b_motion.shape[:2]
-        assert num_labels == num_labels_ == NUM_TOTAL_CAVITY_LABEL and num_phases == NUM_TOTAL_PHASE and num_dim == 3 and NUM_TOTAL_POINTS == num_points
+        assert num_labels == num_labels_ == len(CavityLabel) and num_phases == NUM_TOTAL_PHASE and num_dim == 3 and NUM_TOTAL_POINTS == num_points
 
-        if 'label' not in template_surface.cell_data:
-            if 'label' not in template_surface.point_data:
+        if 'label' not in template_surface_.cell_data:
+            if 'label' not in template_surface_.point_data:
                 raise ValueError("The template surface should have cell data 'label'.")
-            template_surface = identify_faces(template_surface)
+            template_surface_ = identify_faces(template_surface_)
             if temp_path is not None:
-                template_surface.save(temp_path)
+                template_surface_.save(temp_path)
         
-        self.template_surface = template_surface
+        self.template_surface = template_surface_
         self.b_motion = b_motion
         self.P_motion = P_motion
     
@@ -257,7 +330,7 @@ class SSM:
             list[pv.PolyData]: the 4d cavity label for each phase
         """
         points_dict = {
-            label_i: landmark_surface.points[landmark_surface.point_data['label'] == label_i+1] for label_i in range(NUM_TOTAL_CAVITY_LABEL)
+            label_i: landmark_surface.points[landmark_surface.point_data['label'] == label_i] for label_i in CavityLabel
         }
 
         for points in points_dict.values():
@@ -267,12 +340,13 @@ class SSM:
         res = []
         for phase in range(NUM_TOTAL_PHASE):
             all_deformed_points = pv.PolyData()
-            for label_i in range(NUM_TOTAL_CAVITY_LABEL):
+            for label in CavityLabel:
+                label_i = label-1
                 b = self.b_motion[label_i, phase, :num_components_used] * motion_zoom_rate
                 P = self.P_motion[label_i, :num_components_used]
                 deformation = np.einsum('K, KMD -> MD', b, P)
-                deformed_points = pv.PolyData(points_dict[label_i] + deformation)
-                deformed_points.point_data['label'] = np.ones(deformed_points.n_points, dtype=np.uint8)* (label_i+1)
+                deformed_points = pv.PolyData(points_dict[label] + deformation)
+                deformed_points.point_data['label'] = np.ones(deformed_points.n_points, dtype=np.uint8)* (label+1)
                 all_deformed_points = all_deformed_points.merge(deformed_points)
             assert isinstance(all_deformed_points, pv.PolyData)
             t = landmark_surface.copy()

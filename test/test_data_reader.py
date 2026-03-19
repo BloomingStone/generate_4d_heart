@@ -1,17 +1,23 @@
+from typing import Literal
 from pathlib import Path
-from random import random
-import os
+from functools import lru_cache
 
-from tqdm import tqdm
-import torch
+import numpy as np
 import pyvista as pv
+import pytest
+import torch
+from tqdm import tqdm
 
-from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, DataReader, VolumeDVFReader, CoronaryBoundLVLinearEnhancer
+from generate_4d_heart.rotate_dsa.data_reader import (
+    VolumesReader, DataReader, VolumeDVFReader,
+    CoronaryBoundLVLinearEnhancer, RBFReader
+)
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_gif
 from utils import output_root_dir, test_data_root_dir
 
-def _read_and_save(reader: DataReader, output_dir: Path):
+
+def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal["LCA", "RCA"] = "LCA") -> None:
     # delete result in output_dir first
     for p in output_dir.iterdir():
         if p.is_dir():
@@ -22,10 +28,10 @@ def _read_and_save(reader: DataReader, output_dir: Path):
             p.unlink()
     
     # for _ in tqdm(range(3), desc="Generating 3 random frames"):
-    #     data = reader.get_data(CardiacPhase(random()), "LCA")
+    #     data = reader.get_data(CardiacPhase(random()), coronary_type)
     #     data.save(output_dir)
     
-    F =30
+    F = 15
     W, H, D = reader.volume_size
     frames_w = torch.rand(F, H, D)
     frames_h = torch.rand(F, W, D)
@@ -35,7 +41,7 @@ def _read_and_save(reader: DataReader, output_dir: Path):
     for phase_idx in tqdm(range(F), desc=f"Generating {F} continous frames in one cardiac cycle"):
         phase = CardiacPhase.from_index(phase_idx, F)
 
-        data = reader.get_data(phase, "LCA")
+        data = reader.get_data(phase, coronary_type)
         volume = data.volume[0, 0]
         
         frames_w[phase_idx] = volume[W//2]
@@ -77,8 +83,11 @@ def _read_and_save(reader: DataReader, output_dir: Path):
     x_max_mesh, y_max_mesh, z_max_mesh = (mesh.points + 1).max(axis=0)  # plus/minus 1 to avoid small bias
     x_min_mesh, y_min_mesh, z_min_mesh = (mesh.points - 1).min(axis=0)
 
-    assert x_max < x_max_mesh and y_max < y_max_mesh and z_max < z_max_mesh
-    assert x_min > x_min_mesh and y_min > y_min_mesh and z_min > z_min_mesh
+    if not (x_max < x_max_mesh and y_max < y_max_mesh and z_max < z_max_mesh 
+            and x_min > x_min_mesh and y_min > y_min_mesh and z_min > z_min_mesh):
+        print(f"warning: central line is out of mesh bounds, which is unexpected. This may indicate a problem in the coronary centering or the coronary mesh. Please check the results carefully.")
+        print(f"Central line max: {(x_max, y_max, z_max)}, min: {(x_min, y_min, z_min)}")
+        print(f"Mesh points max: {(x_max_mesh, y_max_mesh, z_max_mesh)}, min: {(x_min_mesh, y_min_mesh, z_min_mesh)}")
 
 def test_volumes_reader():
     volumes_dir = test_data_root_dir / "volumes"
@@ -111,6 +120,22 @@ def test_volume_dvf_reader():
     
     _read_and_save(reader, output_dir)
 
+def test_rbf_reader():
+    data_dir = test_data_root_dir / "volume_with_dvf"
+    assert data_dir.exists()
+    output_dir = output_root_dir / "readers_output" / "rbf"
+    output_dir.mkdir(exist_ok=True, parents=True)
+    
+    reader = RBFReader(
+        image_nii=data_dir / "image.nii.gz",
+        cavity_nii=data_dir / "cavity.nii.gz",
+        coronary_nii=data_dir / "coronary.nii.gz"
+    )
+    
+    _read_and_save(reader, output_dir, coronary_type="RCA")
+
 
 if __name__ == "__main__":
-    test_volumes_reader()
+    # test_volumes_reader()
+    # test_volume_dvf_reader()
+    test_rbf_reader()

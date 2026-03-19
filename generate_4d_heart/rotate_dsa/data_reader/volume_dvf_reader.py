@@ -14,10 +14,10 @@ import einops
 import pyvista as pv
 import cupy as cp
 from cupyx.scipy.ndimage import distance_transform_edt, binary_dilation, gaussian_filter
-from torch.utils.dlpack import to_dlpack as tensor2dlpack
+from torch.utils.dlpack import to_dlpack as tensor2dlpack   #type: ignore
 from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
-from ... import NUM_TOTAL_PHASE, LV_LABEL, LV_MYO_LABEL, RV_LABEL, RA_LABEL
+from ... import NUM_TOTAL_PHASE, CavityLabel
 from ...roi import ROI
 from ..types import CoronaryType
 from ..cardiac_phase import CardiacPhase
@@ -131,6 +131,7 @@ class LazyCardiacDVFWarpModule(nn.Module):
 
 
     def _points_warp_and_to_world(self, ddf_inverse: Tensor, coronary_type: CoronaryType) -> pv.PolyData:
+        """ddf 方向与实际运动方向是相反的，它代表的是从采样目标所在位置。因此这里描述运动需要用ddf^-1"""
         if coronary_type == CoronaryType.LCA:
             points = self.lca_mesh_points
             points_norm = self.lca_mesh_points_norm
@@ -267,7 +268,7 @@ class VolumeDVFReader(DataReader):
             return self.roi.crop_on_data(x.clone())
 
         self.cropped_data = _Data(
-            self.device, crop(image), crop(cavity), self.roi.get_affine_after_crop(affine),
+            self.device, crop(image), crop(cavity), self.roi.affine_after_crop,
             crop(lca), crop(rca)
         )
 
@@ -355,6 +356,9 @@ class VolumeDVFReader(DataReader):
         )
     
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+        return self.get_data(CardiacPhase(0.0), coronary_type)
+    
+    def get_original_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
         
         if self.recover_cropped_data:
@@ -457,8 +461,8 @@ class CoronaryBoundLVEnhancer(MovementEnhancer):
             raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
     
         with cp.cuda.Device(self.device.index):
-            lv = (cavity_label.to(torch.uint8) == LV_LABEL).squeeze()
-            myo = (cavity_label.to(torch.uint8) == LV_MYO_LABEL).squeeze()
+            lv = (cavity_label.to(torch.uint8) == CavityLabel.LV).squeeze()
+            myo = (cavity_label.to(torch.uint8) == CavityLabel.LV_MYO).squeeze()
             
             lv_cp = tensor2cp(lv, self.device, cp.bool_)
             myo_cp = tensor2cp(myo, self.device, cp.bool_)
@@ -515,7 +519,7 @@ class CoronaryBoundLVLinearEnhancer(MovementEnhancer):
             raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
         
         with cp.cuda.Device(self.device.index):
-            lv = (cavity_label.to(torch.uint8) == LV_LABEL).squeeze()
+            lv = (cavity_label.to(torch.uint8) == CavityLabel.LV).squeeze()
             lv_cp = tensor2cp(lv, self.device, cp.bool_)
             
             coronary_cp = tensor2cp(coronary_label.squeeze(), self.device, cp.uint8)
@@ -580,8 +584,8 @@ class CoronarySeprateEnhancer(MovementEnhancer):
         cavity_label = read_data.cavity.to(torch.uint8)
 
         with cp.cuda.Device(self.device.index):
-            self.lca_data = self._inner_setup(read_data.lca, cavity_label==LV_LABEL, self.w_0_lca, self.w_1_lca)
-            self.rca_data = self._inner_setup(read_data.rca, cavity_label==LV_LABEL, self.w_0_rca, self.w_1_rca)
+            self.lca_data = self._inner_setup(read_data.lca, cavity_label==CavityLabel.LV, self.w_0_lca, self.w_1_lca)
+            self.rca_data = self._inner_setup(read_data.rca, cavity_label==CavityLabel.LV, self.w_0_rca, self.w_1_rca)
     
     def _inner_setup(self, target_label: torch.Tensor, ref_label: torch.Tensor, w_0: float, w_1: float):
         """

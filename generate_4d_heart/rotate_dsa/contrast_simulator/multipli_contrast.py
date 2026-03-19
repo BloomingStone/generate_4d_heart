@@ -1,7 +1,7 @@
 import torch
 
 from .contrast_simulator import ContrastSimulator
-from ... import LA_LABEL, MU_WATER, MU_IDODINE
+from generate_4d_heart import CavityLabel, MU_WATER, MU_IDODINE
 
 class MultipliContrast(ContrastSimulator):
     def __init__(
@@ -28,7 +28,7 @@ class MultipliContrast(ContrastSimulator):
         assert coronary_label.dtype == torch.bool
         
         # HU 值在 v_min-v_max 之间的部分, 为心腔及被对比剂增强过的, 现在恢复为水衰减系数
-        masked_volume = ori_volume[cavity_label == LA_LABEL]  # 使用左房，因此此区域肌肉结构占比少，大部分是造影血流
+        masked_volume = ori_volume[cavity_label == CavityLabel.LA]  # 使用左房，因此此区域肌肉结构占比少，大部分是造影血流
         v_min = torch.quantile(masked_volume, 0.1 / 100)
         v_max = torch.quantile(masked_volume, 99.9 / 100)
         threshold_mask = (ori_volume > v_min) & (ori_volume < v_max)

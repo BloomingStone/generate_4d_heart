@@ -5,60 +5,54 @@ from nibabel.nifti1 import Nifti1Image
 from pathlib import Path
 from typing import overload
 
-from . import SSM_SHAPE, ALL_CAVITY_LABEL
+from . import SSM_SHAPE, CavityLabel
 
-def load_array(
-    array: tuple | list | np.ndarray | None, 
-    default_array: np.ndarray, 
-    target_shape: tuple[int, ...]
-) -> np.ndarray:
-    if array is None:
-        res = default_array
-    elif isinstance(array, np.ndarray):
-        res = array
-    elif isinstance(array, list) or isinstance(array, tuple):
-        res = np.array(array)
-    else:
-        raise ValueError("The array must be a tuple, list or numpy.ndarray")
-    
-    if res.shape != target_shape:
-        raise ValueError("The array must be a 144x144x128 numpy.ndarray")
-    
-    return res
+
 
 # TODO 考虑增加对ScalarImage的支持
 class ROI:
     """
-    The cropped area and scaling ratio were calculated through the cardiac cavity label, with the aim of obtaining a cardiac cavity CTA of 144x144x128 for the subsequent 4D ddf generation
+    Crop and zoom the original image to a smaller size for the subsequent 
+    4D ddf generation. The cropping and zooming are based on the cavity label
+    and a given target shape (ref: ROI.get_from_cavity). 
+    
+    The cropping and zooming will then be applied to both the image and the
+    label, and the affine will be updated accordingly.
     """
     def __init__(
             self,
-            cropped_box: tuple | list | np.ndarray | None = None,
-            zoom_rate: tuple | list | np.ndarray | None = None,
-            original_affine: tuple | list | np.ndarray | None = None,
-            original_shape: tuple[int, int, int] | None = None
+            cropped_box: tuple | list | np.ndarray,
+            zoom_rate: tuple | list | np.ndarray,
+            original_affine: tuple | list | np.ndarray,
+            original_shape: tuple[int, int, int] | tuple[int, ...]
         ):
-        self.crop_box = load_array(cropped_box, np.array(((0, 144), (0, 144), (0, 128))), (3, 2))
-        self.zoom_rate = load_array(zoom_rate, np.array([1., 1., 1.]), (3,))
-        self.original_affine = load_array(original_affine, np.eye(4), (4, 4))
-        self.original_shape = original_shape if original_shape is not None else SSM_SHAPE
+        def load_array(
+            array: tuple | list | np.ndarray,
+            target_shape: tuple[int, ...]
+        ) -> np.ndarray:
+            res = np.array(array)
+            if res.shape != target_shape:
+                raise ValueError(f"The array must be a {target_shape} numpy.ndarray")
+            return res
+
+        self.crop_box = load_array(cropped_box, (3, 2))
+        self.zoom_rate = load_array(zoom_rate, (3,))
+        self.original_affine = load_array(original_affine, (4, 4))
+        assert len(original_shape) == 3, "The original shape must be a tuple of 3 integers"
+        self.original_shape = original_shape
     
     @staticmethod
-    def get_from_cavity( 
-            cavity: Nifti1Image, 
-            padding: int = 10
+    def get_from_cavity_np(
+        data: np.ndarray,
+        affine: np.ndarray,
+        padding: int = 10, 
+        target_shape: tuple[int, int, int] = SSM_SHAPE
     ) -> "ROI":
-        """
-        Args:
-            cavity: Path to the cavity label
-            padding: the padding size around the cavity, the padding will be added to the both sides of the cavity as passible.
-        """
-        cavity_data = cavity.get_fdata()
-        mask = np.zeros_like(cavity_data, dtype=bool)
-        for label in ALL_CAVITY_LABEL:
-            mask[cavity_data == label] = True
+        mask = np.zeros_like(data, dtype=bool)
+        for label in CavityLabel:
+            mask[data == label] = True
         if not mask.any():
-            raise ValueError("The cavity label is empty")
+            raise ValueError("data has no cavity label")
         
         coords = np.where(mask)
         x0, x1 = coords[0].min(), coords[0].max()
@@ -114,19 +108,31 @@ class ROI:
             (x1 - x0), (y1 - y0), (z1 - z0)
         )
         
-        roi = ROI()
-        roi.crop_box = np.array([
-            [x0, x1],
-            [y0, y1],
-            [z0, z1]
-        ])
-        roi.zoom_rate = np.array([
-            SSM_SHAPE[i] / cropped_shape[i]
-            for i in range(3)
-        ])
-        roi.original_affine = cavity.affine if cavity.affine is not None else np.eye(4)
-        roi.original_shape = cavity.shape
+        roi = ROI(
+            cropped_box=((x0, x1), (y0, y1), (z0, z1)),
+            zoom_rate=np.array(target_shape) / np.array(cropped_shape),
+            original_affine=affine,
+            original_shape=data.shape
+        )
         return roi
+    
+    @staticmethod
+    def get_from_cavity( 
+            cavity: Nifti1Image, 
+            padding: int = 10,
+            target_shape: tuple[int, int, int] = SSM_SHAPE
+    ) -> "ROI":
+        """
+        Args:
+            cavity: Path to the cavity label
+            padding: the padding size around the cavity, the padding will be added to the both sides of the cavity as passible.
+        """
+        return ROI.get_from_cavity_np(
+            data=cavity.get_fdata().astype(np.uint8),
+            affine=cavity.affine if cavity.affine is not None else np.eye(4),
+            padding=padding,
+            target_shape=target_shape
+        )
 
     def crop(self, image: Nifti1Image) -> Nifti1Image:
         """
@@ -135,27 +141,9 @@ class ROI:
         Returns:
             np.ndarray: the cropped image
         """
-        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
-        image_data = image.get_fdata().copy()
-        image_data = image_data[x0:x1, y0:y1, z0:z1]
-        affine = image.affine
-        assert affine is not None
-        affine = affine.copy()
-        T = np.eye(4)
-        T[:3, 3] = np.array([x0, y0, z0])
-        affine = affine @ T
-        return Nifti1Image(image_data, affine)
-    
-    def get_affine_after_crop(self, affine: np.ndarray) -> np.ndarray:
-        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
-        res = affine.copy()
-        T = np.eye(4)
-        T[:3, 3] = np.array([x0, y0, z0])
-        res = res @ T
-        return res
-    
-    def get_affine_after_crop_and_zoom(self, affine: np.ndarray) -> np.ndarray:
-        raise NotImplementedError() # need to clearify the order of R and T
+        assert image.affine is not None
+        assert np.allclose(image.affine, self.original_affine), "The affine of the input image must be the same as the original affine of the ROI"
+        return Nifti1Image(self.crop_on_data(image.get_fdata()), self.affine_after_crop)
     
     @overload
     def crop_on_data(self, image: np.ndarray) -> np.ndarray: ...
@@ -170,6 +158,7 @@ class ROI:
         Returns:
             np.ndarray: the cropped image data
         """
+        assert image.shape[-3:] == self.original_shape, "The shape of the input image must be the same as the original shape of the ROI"
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
         return image[..., x0:x1, y0:y1, z0:z1]
 
@@ -193,16 +182,10 @@ class ROI:
         Returns:
             np.ndarray: the cropped and then zoomed image
         """
-        cropped_image = self.crop(image)
-        image_data = cropped_image.get_fdata()
-        image_data = self._zoom_np(image_data, is_label)
-        
-        assert cropped_image.affine is not None
-        new_affine = cropped_image.affine.copy()
-        R = np.eye(4)
-        R[:3, :3] = np.diag(1/self.zoom_rate)
-        new_affine = new_affine @ R
-        return Nifti1Image(image_data, new_affine)
+        return Nifti1Image(
+            self.crop_zoom_on_data(image.get_fdata(), is_label), 
+            self.affine_after_crop_and_zoom
+        )
     
     @overload
     def crop_zoom_on_data(self, image: np.ndarray, is_label: bool) -> np.ndarray: ...
@@ -223,9 +206,9 @@ class ROI:
             res = self._zoom_np(res, is_label)
         elif isinstance(res, torch.Tensor):
             if is_label:
-                res = torch.nn.functional.interpolate(res, scale_factor=self.zoom_rate, mode='nearest')
+                res = torch.nn.functional.interpolate(res, scale_factor=self.zoom_rate.tolist(), mode='nearest')
             else:
-                res = torch.nn.functional.interpolate(res, scale_factor=self.zoom_rate, mode='trilinear')
+                res = torch.nn.functional.interpolate(res, scale_factor=self.zoom_rate.tolist(), mode='trilinear')
             assert isinstance(res, torch.Tensor)
         else:
             raise TypeError(f"Unsupported image type: {type(image)}")
@@ -315,7 +298,29 @@ class ROI:
         with open(json_path, "r") as f:
             roi_dict = json.load(f)
         return ROI.from_dict(roi_dict)
-
-
-if __name__ == "__main__":
-    ROI()
+    
+    @property
+    def shape_after_crop(self) -> tuple[int, int, int]:
+        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
+        return (x1 - x0, y1 - y0, z1 - z0)
+    
+    @property
+    def shape_after_crop_and_zoom(self) -> tuple[int, int, int]:
+        return tuple((np.array(self.shape_after_crop) * self.zoom_rate).astype(int))
+    
+    @property
+    def affine_after_crop(self) -> np.ndarray:
+        (x0, x1), (y0, y1), (z0, z1) = self.crop_box
+        res = self.original_affine.copy()
+        T = np.eye(4)
+        T[:3, 3] = np.array([x0, y0, z0])
+        res = res @ T
+        return res
+    
+    @property
+    def affine_after_crop_and_zoom(self) -> np.ndarray:
+        res = self.affine_after_crop
+        R = np.eye(4)
+        R[:3, :3] = np.diag(1/self.zoom_rate)
+        res = res @ R
+        return res
