@@ -27,7 +27,7 @@ def _get_largest_connected_component(data):
     labeled_data, num_features = ndimage.label(data_cp)  # type: ignore
     if num_features == 1:
         return data_cp
-    sizes = ndimage.sum(data_cp, labeled_data)
+    sizes = ndimage.sum(data_cp, labeled_data, cp.arange(num_features + 1))  # type: ignore
     largest_component = sizes.argmax()
     return (labeled_data == largest_component).astype(cp.uint8)
 
