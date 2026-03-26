@@ -390,7 +390,7 @@ class VolumeDVFReader(DataReader):
         import json
         json_data = self.roi.to_dict()
         with open(output_dir / "roi.json", "w") as f:
-            json.dump(json_data, f)
+            json.dump(json_data, f, indent=2)
     
     def save_all_warped_images(self, output_dir: Path):
         # TODO

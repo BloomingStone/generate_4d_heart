@@ -14,7 +14,7 @@ from generate_4d_heart.saver import save_nii
 
 logging.basicConfig(
     filename='processing_errors.log',
-    level=logging.WARNING,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - [%(levelname)s] %(filename)s:%(lineno)d -- %(message)s',
     encoding='utf-8'
 )
@@ -28,7 +28,7 @@ class BatchDVFToDSA:
         output_root: Path,
         dataset_name: str,
         run_random: bool = True,
-        only_output_label = False
+        run_type: Literal["drr", "only-label", "only-info"] = "drr",
     ): 
         self.image_dir = image_dir
         self.coronary_dir = coronary_dir
@@ -37,7 +37,7 @@ class BatchDVFToDSA:
         
         self.dataset_name = dataset_name
         self.run_random = run_random
-        self.only_output_label = only_output_label
+        self.run_type = run_type
         
         dirs = (image_dir, coronary_dir, cavity_dir)
         for d in dirs:
@@ -92,10 +92,14 @@ class BatchDVFToDSA:
             TorchDRR(rotate_cfg=self._get_rotate_param())
         )
         
-        if self.only_output_label:
-            dsa.run_and_save_no_drr(output_case_dir, coronary_type)
-        else:
-            dsa.run_and_save(output_case_dir, coronary_type)
+        match self.run_type:
+            case "drr":
+                dsa.run_and_save(output_case_dir, coronary_type)
+            case "only-label":
+                dsa.run_and_save_no_drr(output_case_dir, coronary_type)
+            case "only-info":
+                dsa.save_no_run(output_case_dir, coronary_type)
+            
 
     def run(self):
         for index, p in enumerate(self.paths_list):
@@ -126,19 +130,16 @@ def main(
     dataset_names: list[str],
     output_root: Path,
     random_seed: int = 42,
-    no_random: bool = False,
-    output_only_label: bool=False
+    use_random_seed: bool = True,
+    run_type: Literal["drr", "only-label", "only-info"] = "drr",
 ):
     for d in dataset_names:
         d = d.lower()
         
-        if no_random:
-            run_random = False
-        else:
+        if use_random_seed:
             name_hash = int(hashlib.sha256(d.lower().encode()).hexdigest(), 16)
             combined_seed = (name_hash + random_seed) % (2**32)  # numpy seed 必须 < 2**32
             np.random.seed(combined_seed)
-            run_random = True
     
         match d:
             case "asoca-normal":
@@ -150,8 +151,20 @@ def main(
                     cavity_dir=origin_dir/"cavity",
                     output_root=output_root,
                     dataset_name=d,
-                    run_random=run_random,
-                    only_output_label=output_only_label
+                    run_random=use_random_seed,
+                    run_type=run_type
+                )
+            case "asoca-diseased":
+                print(f"{d} -- {output_root} -- seed:{random_seed}")
+                origin_dir = Path("/media/E/sj/Data/ASOCA/Diseased_partial")
+                dsa = BatchDVFToDSA(
+                    image_dir=origin_dir/"CTCA_nii",
+                    coronary_dir=origin_dir/"coronary",
+                    cavity_dir=origin_dir/"cavity",
+                    output_root=output_root,
+                    dataset_name=d,
+                    run_random=use_random_seed,
+                    run_type=run_type
                 )
             case _:
                 print(f"{d} not supported")

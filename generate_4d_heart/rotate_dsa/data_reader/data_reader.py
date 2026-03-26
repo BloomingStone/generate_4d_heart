@@ -277,7 +277,7 @@ class DataReaderResult:
         
         if output_central_line:
             lca_central_line = self.get_coronary_central_line(central_line_coordinate_type)
-            np.save(output_case_dir / f"{self.coronary.type}_central_line_{central_line_coordinate_type}.npy", lca_central_line)
+            np.savez_compressed(output_case_dir / f"{self.coronary.type}_central_line_{central_line_coordinate_type}.npz", lca_central_line)
 
 
 class DataReader(Protocol):

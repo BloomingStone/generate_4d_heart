@@ -84,7 +84,7 @@ The generated images will be stored as
         # calculate and save roi
         roi = ROI.get_from_cavity(cavity=cavity, padding=10)
         with open(roi_info_dir / f'{case_name}.json', 'w') as f:
-            json.dump(roi.to_dict(), f)
+            json.dump(roi.to_dict(), f, indent=2)
         
         # cut roi and zoom cavity
         cavity_zoomed = roi.crop_zoom(cavity, is_label=True)

@@ -224,11 +224,11 @@ class RBFReader(DataReader):
     
     @property
     def lca_centering_affine(self) -> np.ndarray:
-        return self.cropped_data.lca_centering_affine
+        return self.origin_data.lca_centering_affine
     
     @property
     def rca_centering_affine(self) -> np.ndarray:
-        return self.cropped_data.rca_centering_affine
+        return self.origin_data.rca_centering_affine
     
     @property
     def volume_size(self) -> tuple[int, int, int]:
