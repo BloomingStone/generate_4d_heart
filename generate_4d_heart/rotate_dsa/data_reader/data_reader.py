@@ -98,11 +98,11 @@ def separate_coronary(coronary: Tensor, device: torch.device) -> tuple[Tensor, T
         region_0 = (labeled_array == largest_indices[0]).astype(cp.bool_)
         region_1 = (labeled_array == largest_indices[1]).astype(cp.bool_)
         
-        center_0 = center_of_mass(region_0)
-        center_1 = center_of_mass(region_1)
+        center_0 = center_of_mass(region_0.astype(cp.float16))  # use float16 for fast computation
+        center_1 = center_of_mass(region_1.astype(cp.float16))
         
-        region_0 = dlpack2tensor(region_0.toDlpack()).reshape(shape).to(torch.bool)
-        region_1 = dlpack2tensor(region_1.toDlpack()).reshape(shape).to(torch.bool)
+        region_0 = dlpack2tensor(region_0).reshape(shape).to(torch.bool)
+        region_1 = dlpack2tensor(region_1).reshape(shape).to(torch.bool)
     
         if center_0[0] > center_1[0]:
             return region_0, region_1

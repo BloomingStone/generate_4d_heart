@@ -9,6 +9,7 @@ from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
 from generate_4d_heart.rotate_dsa.data_reader import RBFReader
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa import RotateDSA
+from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_nii
 
 
@@ -28,7 +29,9 @@ class BatchDVFToDSA:
         output_root: Path,
         dataset_name: str,
         run_random: bool = True,
-        run_type: Literal["drr", "only-label", "only-info"] = "drr",
+        output_mode_2d: Literal["drr", "only-label", "only-info", "null"] = "drr",
+        output_mode_3d: Literal["all", "mesh", "label", "null"] = "all",
+        output_phase_3d: float = 0.0
     ): 
         self.image_dir = image_dir
         self.coronary_dir = coronary_dir
@@ -37,8 +40,11 @@ class BatchDVFToDSA:
         
         self.dataset_name = dataset_name
         self.run_random = run_random
-        self.run_type = run_type
-        
+        self.output_mode_2d = output_mode_2d
+        self.output_mode_3d = output_mode_3d
+        self.output_phase_3d = CardiacPhase(output_phase_3d)
+        self.otuput_phase_3d_str = self.output_phase_3d.to_str(precision=2, has_decimal_point=False)
+
         dirs = (image_dir, coronary_dir, cavity_dir)
         for d in dirs:
             assert d.exists(), f"{d} not exists"
@@ -56,6 +62,9 @@ class BatchDVFToDSA:
                 "cavity_nii": cavity_nii
             })
         
+        self.torch_drr = TorchDRR(rotate_cfg=self._get_rotate_param())
+        self.constrast_simulator = MultipliContrast()
+        
     
     def _get_rotate_param(self):
         if self.run_random:
@@ -69,6 +78,38 @@ class BatchDVFToDSA:
         
         return rot_params
 
+    def _output_3d(self, reader: RBFReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
+        if self.output_mode_3d == "null":
+            return
+        
+        data_3d = reader.get_data(self.output_phase_3d, coronary_type)
+        
+        if self.output_mode_3d in ("all", "label"):
+            save_nii(
+                output_case_dir / f"{coronary_type}_{self.otuput_phase_3d_str}_label.nii.gz",
+                data_3d.coronary.label,
+                affine=data_3d.coronary.centering_affine,
+                is_label=True
+            )
+        if self.output_mode_3d in ("all", "mesh"):
+            data_3d.coronary.mesh_in_world.save(output_case_dir / f"{coronary_type}_{self.otuput_phase_3d_str}_mesh.vtk")
+    
+    def _output_2d(self, reader: RBFReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
+        if self.output_mode_2d == "null":
+            return
+        
+        dsa = RotateDSA( reader, self.constrast_simulator, self.torch_drr )
+        
+        match self.output_mode_2d:
+            case "drr":
+                dsa.run_and_save(output_case_dir, coronary_type)
+            case "only-label":
+                dsa.run_and_save_no_drr(output_case_dir, coronary_type)
+            case "only-info":
+                dsa.save_no_run(output_case_dir, coronary_type)
+            case _:
+                raise ValueError(f"out_type_2d {self.output_mode_2d} not supported")
+
     def _gen_dsa_inner(
         self,
         reader: RBFReader,
@@ -78,27 +119,8 @@ class BatchDVFToDSA:
         case_name = f"{self.dataset_name}__{case_name}__{coronary_type}"
         output_case_dir = self.output_root / case_name
         output_case_dir.mkdir(parents=True, exist_ok=True)
-        phase_0_data = reader.get_phase_0_data(coronary_type)
-        save_nii(
-            output_case_dir / f"{coronary_type}_label.nii.gz",
-            phase_0_data.coronary.label,
-            affine=phase_0_data.coronary.centering_affine,
-            is_label=True
-        )
-        phase_0_data.coronary.mesh_in_world.save(output_case_dir / f"{coronary_type}_mesh.vtk")
-
-        dsa = RotateDSA(
-            reader, MultipliContrast(), 
-            TorchDRR(rotate_cfg=self._get_rotate_param())
-        )
-        
-        match self.run_type:
-            case "drr":
-                dsa.run_and_save(output_case_dir, coronary_type)
-            case "only-label":
-                dsa.run_and_save_no_drr(output_case_dir, coronary_type)
-            case "only-info":
-                dsa.save_no_run(output_case_dir, coronary_type)
+        self._output_3d(reader, case_name, coronary_type, output_case_dir)
+        self._output_2d(reader, case_name, coronary_type, output_case_dir)
             
 
     def run(self):
@@ -131,7 +153,9 @@ def main(
     output_root: Path,
     random_seed: int = 42,
     use_random_seed: bool = True,
-    run_type: Literal["drr", "only-label", "only-info"] = "drr",
+    output_mode_2d: Literal["drr", "only-label", "only-info", "null"] = "drr",
+    output_mode_3d: Literal["all", "mesh", "label", "null"] = "all",
+    output_phase_3d: float = 0.0
 ):
     for d in dataset_names:
         d = d.lower()
@@ -152,7 +176,9 @@ def main(
                     output_root=output_root,
                     dataset_name=d,
                     run_random=use_random_seed,
-                    run_type=run_type
+                    output_mode_2d=output_mode_2d,
+                    output_mode_3d=output_mode_3d,
+                    output_phase_3d=output_phase_3d
                 )
             case "asoca-diseased":
                 print(f"{d} -- {output_root} -- seed:{random_seed}")
@@ -164,7 +190,9 @@ def main(
                     output_root=output_root,
                     dataset_name=d,
                     run_random=use_random_seed,
-                    run_type=run_type
+                    output_mode_2d=output_mode_2d,
+                    output_mode_3d=output_mode_3d,
+                    output_phase_3d=output_phase_3d
                 )
             case _:
                 print(f"{d} not supported")

@@ -23,11 +23,11 @@ def _get_largest_connected_component(data):
     Returns:
         np.ndarray: the largest connected region in the binary image
     """
-    data_cp = cp.asarray(data)
+    data_cp = cp.asarray(data).astype(cp.uint8)
     labeled_data, num_features = ndimage.label(data_cp)  # type: ignore
     if num_features == 1:
         return data_cp
-    sizes = ndimage.sum(data_cp, labeled_data, cp.arange(num_features + 1))  # type: ignore
+    sizes = ndimage.sum(data_cp.astype(cp.float16), labeled_data, cp.arange(num_features + 1))  # type: ignore # use float16 for fast computation
     largest_component = sizes.argmax()
     return (labeled_data == largest_component).astype(cp.uint8)
 

@@ -64,9 +64,10 @@ class RBFReader(DataReader):
 
     def __post_init__(self):
         print(f"\nInitializing RBFReader with \n\t- image_nii={self.image_nii} \n\t- cavity_nii={self.cavity_nii} \n\t- coronary_nii={self.coronary_nii}")
+        logger.info(f"Loading data from {self.image_nii}, {self.cavity_nii}, {self.coronary_nii}")
         self.n_phases = self.ssm_reader.n_phases
         
-        logger.info(f"Loading data from {self.image_nii}, {self.cavity_nii}, {self.coronary_nii}")
+        print("Loading NIfTI files...")
         image, affine = load_nifti(self.image_nii)
         assert affine is not None
         cavity, cavity_affine = load_nifti(self.cavity_nii, is_label=True)
@@ -85,7 +86,7 @@ class RBFReader(DataReader):
         self._origin_volume_size = image.shape[2:]   #type: ignore
         self._origin_volume_affine = affine
         
-        logger.info("ROI initialized from cavity")
+        print("Initializing ROI from cavity...")
         self.roi = ROI.get_from_cavity_np(cavity_np, affine, padding=30)
         def crop(x: Tensor) -> Tensor:
             return self.roi.crop_on_data(x.clone())
@@ -95,7 +96,7 @@ class RBFReader(DataReader):
             crop(lca), crop(rca)
         )
         
-        logger.info("Extracting coronary meshes in world coordinate")
+        print("Extracting coronary meshes in world coordinate...")
         self.coronary_mesh_world = {
             CoronaryType.LCA: get_mesh_in_world(lca, affine, self.device),
             CoronaryType.RCA: get_mesh_in_world(rca, affine, self.device)
@@ -132,6 +133,10 @@ class RBFReader(DataReader):
         self.affine_crop = torch.from_numpy(self.roi.affine_after_crop).to(self.device, torch.float32)
         self.affine_crop_inv: torch.Tensor = torch.linalg.inv(self.affine_crop)
         
+        # ignore warning form monai about grid_sample, using defult pytorch grid_sample rather than monai's 
+        # cuda implementation, which not included in conda source
+        import warnings
+        warnings.filterwarnings("ignore", category=UserWarning, module="monai.networks.blocks.warp")
         self.warp_label = Warp(mode="nearest", padding_mode="border").to(self.device).eval()
         self.warp_image = Warp(mode="bilinear", padding_mode="border").to(self.device).eval()
         

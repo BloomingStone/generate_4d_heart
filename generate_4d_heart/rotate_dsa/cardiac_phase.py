@@ -62,6 +62,15 @@ class CardiacPhase:
     def __repr__(self):
         return f"CardiacPhase({self.phase:.4f})"
     
+    def __str__(self):
+        return f"{self.phase:.4f}"
+    
+    def to_str(self, precision: int = 4, has_decimal_point: bool = True) -> str:
+        if has_decimal_point:
+            return f"{self.phase:.{precision}f}"
+        else:
+            return f"{self.phase:.{precision}f}".replace('.', '_')
+    
     def __eq__(self, other):
         if isinstance(other, CardiacPhase):
             return abs(self.phase - other.phase) < 1e-5
