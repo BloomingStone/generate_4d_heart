@@ -49,9 +49,9 @@ class StaticVolumeReader(DataReader):
         if not torch.cuda.is_available() and torch.cuda.device_count() < 2:
             raise RuntimeError("No CUDA device available for VolumeDVFReader")
         self.device = device
-        self._load_3d_data()
         # default contrast simulator: identity (no change)
         self.contrast_simulator = IdentityContrast()
+        self._load_3d_data()
         
         self.n_phases: int = 1
         
@@ -70,6 +70,11 @@ class StaticVolumeReader(DataReader):
         assert np.allclose(affine, coronary_affine)
         
         lca, rca = separate_coronary(coronary, self.device)        
+        # Preprocess baseline image and optionally simulate coronary for static simulators
+        image = self.contrast_simulator.preprocess(image, cavity)
+        if not self.contrast_simulator.contrast_change_over_time:
+            image = self.contrast_simulator.simulate(image, cavity, coronary)
+
         self.origin_data = _Data(
             self.device, image, cavity, affine, 
             lca, rca

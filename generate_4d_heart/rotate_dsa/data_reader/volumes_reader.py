@@ -100,6 +100,11 @@ class VolumesReader(DataReader):
                 self._lca_centering_affine = get_coronary_centering_affine(lca_label, self._origin_volume_affine, self.device)
                 self._rca_centering_affine = get_coronary_centering_affine(rca_label, self._origin_volume_affine, self.device)
 
+            # Preprocess baseline volume and optionally simulate coronary for static simulators
+            volume = self.contrast_simulator.preprocess(volume, cavity_label)
+            if not self.contrast_simulator.contrast_change_over_time:
+                volume = self.contrast_simulator.simulate(volume, cavity_label, coronary_label)
+
             self.data.append(_Data(
                 phase=phase,
                 volume=volume.cpu(),
@@ -233,6 +238,13 @@ class VolumesReader(DataReader):
             assert d0.rca_mesh_in_world is not None and d1.rca_mesh_in_world is not None
             new_mesh = d0.rca_mesh_in_world.copy() if w < 0.5 else d1.rca_mesh_in_world.copy()
             # new_mesh.points = (1 - w) * d0.rca_mesh_in_world.points + w * d1.rca_mesh_in_world.points
+        
+        # If simulator is dynamic, apply simulate_with_time to coronary region now
+        if self.contrast_simulator.contrast_change_over_time:
+            vol_interp = self.contrast_simulator.simulate_with_time(
+                vol_interp, cav_interp, coronary_label, float(global_time)
+            )
+
         
         return DataReaderResult(
             phase=phase,

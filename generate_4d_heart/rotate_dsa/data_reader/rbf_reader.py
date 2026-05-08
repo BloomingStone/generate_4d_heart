@@ -45,7 +45,8 @@ class _Data:
     def __post_init__(self):
         self.lca_centering_affine = get_coronary_centering_affine(self.lca, self.affine, self.device)
         self.rca_centering_affine = get_coronary_centering_affine(self.rca, self.affine, self.device)
-    
+        
+        
     @property
     def all_coronary_label(self) -> Tensor:
         res = self.lca.clone().to(torch.uint8)
@@ -83,8 +84,12 @@ class RBFReader(DataReader):
         assert np.allclose(affine, coronary_affine)
         
         lca, rca = separate_coronary(coronary, self.device)
+        
+        print("Preprocessing baseline volume with contrast simulator...")
+        volume = self.contrast_simulator.preprocess(volume, cavity)
         if not self.contrast_simulator.contrast_change_over_time:
             print("Applying STATIC contrast simulator to original volume...")
+            # simulate focuses on coronary-only modification
             volume = self.contrast_simulator.simulate(volume, cavity, coronary)
         lca_volume = volume.clone()
         rca_volume = volume.clone()
@@ -114,13 +119,14 @@ class RBFReader(DataReader):
             CoronaryType.RCA: get_mesh_in_world(rca, affine, self.device)
         }
         
+        print("Generating pericardium mask and attenuation mask...")
         pericardium_mask = self.roi.crop_on_data(pericardium_mask)
         with cp.cuda.Device(self.device.index):
             external_dist = ndimage.distance_transform_edt(1 - cp.asarray(pericardium_mask))
             attenuation_mask = cp.asnumpy(cp.exp(-external_dist / self.attenuation_transition))  # 从心包外部开始，距离越远运动衰减越强，距离为transition时衰减为1/e #type: ignore
         self.attenuation_mask = torch.from_numpy(attenuation_mask).to(self.device, torch.float32)[None, None]  # (1, 1, *shape_after_crop)
         
-        logger.info("Loading SSM result and initializing RBF")
+        print("Loading SSM result and initializing RBF...")
         ssm_result = self.ssm_reader.load(
             cavity=cavity_np,
             affine=cavity_affine,
@@ -129,7 +135,7 @@ class RBFReader(DataReader):
         )
         self.rbf = KDTreeRBF(ssm_result.landmark).to(self.device).eval()
         
-        logger.info("Caching grid points for RBF-based warping")
+        print("Caching grid points for RBF-based warping...")
         shape_zoomed = self.roi.shape_after_crop_and_zoom
         affine_zoomed = self.roi.affine_after_crop_and_zoom
         grid_zoomed = np.meshgrid(
@@ -155,7 +161,12 @@ class RBFReader(DataReader):
         print("RBFReader initialized successfully.")
 
     @torch.no_grad()
-    def _warp_and_recover_for_phase(self, phase: CardiacPhase, cor_type: CoronaryType) -> tuple[Tensor, Tensor, Tensor]:
+    def _warp_and_recover_for_phase(
+        self, 
+        cor_type: CoronaryType, 
+        phase: CardiacPhase, 
+        global_time: float
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """Return warped (volume, cavity_label, coronary_label) recovered to original space for given phase"""
         dx: torch.Tensor = self.rbf(phase, self.coords_zoomed)  # (*shape_zoomed, 3) in world coordinate
         dx = rearrange(dx, "x y z c -> 1 c x y z")
@@ -169,10 +180,14 @@ class RBFReader(DataReader):
         R_world_to_voxel = self.affine_crop_inv[:3, :3]        
         dx = einsum(dx, R_world_to_voxel, "b c x y z, c i -> b i x y z")  # in voxel coordinate
 
-        dx = dx * self.attenuation_mask  # Attenuate the movement away from the pericardium
+        # Attenuate the movement away from the pericardium to avoid unrealistic deformation in the far field
+        dx = dx * self.attenuation_mask  
 
-        dx = invert_displacement_field(dx)  # forward deformation field -> inverse deformation field, still in voxel coordinate
+        # forward deformation field -> inverse deformation field, still in voxel coordinate
+        dx = invert_displacement_field(dx)  
 
+        # extract label and volume for the given coronary type, and apply contrast simulation if needed
+        cavity_label = self.cropped_data.cavity
         if cor_type in ("LCA", CoronaryType.LCA):
             cor_label = self.cropped_data.lca
             ori_volume = self.origin_data.lca_volume
@@ -181,7 +196,16 @@ class RBFReader(DataReader):
             cor_label = self.cropped_data.rca
             ori_volume = self.origin_data.rca_volume
             cropped_volume = self.cropped_data.rca_volume
+          
+        if self.contrast_simulator.contrast_change_over_time:
+            cropped_volume = self.contrast_simulator.simulate_with_time(
+                cropped_volume, 
+                cavity_label, 
+                cor_label, 
+                global_time
+            )
 
+        # apply warping and recover to original space, for both volume and labels
         def warp_and_recover(tensor: Tensor, mode: Literal["volume", "cavity", "coronary"]) -> Tensor:
             if mode == "volume":
                 warper = self.image_warper
@@ -201,6 +225,7 @@ class RBFReader(DataReader):
         cavity_label = warp_and_recover(self.cropped_data.cavity, mode="cavity")
         volume = warp_and_recover(cropped_volume, mode="volume")
         cor_label = warp_and_recover(cor_label, mode="coronary")
+        
         return volume, cavity_label, cor_label
 
     @torch.no_grad()
@@ -223,11 +248,7 @@ class RBFReader(DataReader):
         new_T = cor_centering_affine[:3, 3]
         cor_mesh.points += (new_T - ori_T)
         
-        volume, cavity_label, cor_label = self._warp_and_recover_for_phase(phase, cor_type)
-        
-        if self.contrast_simulator.contrast_change_over_time:
-            assert global_time is not None, "global_time should be provided when contrast_simulator.contrast_change_over_time is True"
-            volume = self.contrast_simulator.simulate_with_time(volume, cavity_label, cor_label, float(global_time))
+        volume, cavity_label, cor_label = self._warp_and_recover_for_phase(cor_type, phase, global_time)
         
         return DataReaderResult(
             phase=phase,

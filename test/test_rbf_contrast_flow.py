@@ -20,7 +20,7 @@ def test_rbf_contrast_flow_integration(
     """测试完整的 RotateDSA 集成流程"""
     # 配置 DRR 参数为测试模式（减少帧数和图像大小以加快测试速度）
     rotate_cfg = RotatedParameters(
-        total_frame=15,  # 减少帧数
+        total_frame=20,  # 减少帧数
         fps=5,           # 降低帧率
         angular_velocity = 20,  # 降低旋转速度
     )

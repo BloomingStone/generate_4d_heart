@@ -9,16 +9,16 @@ class ContrastSimulator(Protocol):
     """
     Simulate the affect of DSA contrast of coronary artery (LCA/RCA) based on given image and label
     """
-    # def preprocess(
-    #     self, 
-    #     ori_volume: torch.Tensor, 
-    #     cavity_label: torch.Tensor,
-    # ) -> None:
-    #     """
-    #     Preprocess the input volume, e.g. remove contrast in CTA volume, reset invalid values, map raw HU values to attenuation coefficients, etc. 
-    #     This will be called before `simulate` or `simulate_with_time`.
-    #     """
-    #     ...
+    def preprocess(
+        self, 
+        ori_volume: torch.Tensor, 
+        cavity_label: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Preprocess the input volume, e.g. remove contrast in CTA volume, reset invalid values, map raw HU values to attenuation coefficients, etc. 
+        This will be called before `simulate` or `simulate_with_time`.
+        """
+        ...
     
     def simulate(
         self, 
@@ -26,6 +26,7 @@ class ContrastSimulator(Protocol):
         cavity_label: torch.Tensor,
         coronary_label: torch.Tensor
     ) -> torch.Tensor:
+        """Simulate the contrast effect on the original volume. This will be called after `preprocess` and should return the simulated volume."""
         ...
     
     def simulate_with_time(
@@ -35,9 +36,21 @@ class ContrastSimulator(Protocol):
         coronary_label: torch.Tensor,
         time: float
     ) -> torch.Tensor:
+        """
+        Simulate the contrast effect on the original volume with time information. This will be called after `preprocess` and should return the simulated volume. 
+        Usually, this should only be implemented when `contrast_change_over_time` is True.
+        """
         ...
 
 class IdentityContrast(ContrastSimulator):
+    """A simple contrast simulator that does not change the input volume, used for ablation study to verify the effect of contrast simulation."""
+    def preprocess(
+        self, 
+        ori_volume: torch.Tensor, 
+        cavity_label: torch.Tensor,
+    ) -> torch.Tensor:
+        return ori_volume
+    
     def simulate(
         self, 
         ori_volume: torch.Tensor, 

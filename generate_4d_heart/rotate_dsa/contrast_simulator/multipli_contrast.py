@@ -14,38 +14,50 @@ class MultipliContrast(ContrastSimulator):
         """
         self.mu_idodine = mu_idodine
         self.mu_water_dsa = mu_water_dsa
+
+    def preprocess(
+        self,
+        ori_volume: torch.Tensor,
+        cavity_label: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Convert HU image to baseline attenuation map and normalize cavity/threshold regions to water baseline.
+        """
+        res = ori_volume.clone()
+        res = res / 1000.0 * self.mu_water_dsa + self.mu_water_dsa  # HU -> attenuation
+
+        assert cavity_label.dtype == torch.uint8
+
+        # Use left atrium region to estimate typical enhanced range
+        masked_volume = ori_volume.squeeze()[cavity_label.squeeze() == CavityLabel.LA]
+        if masked_volume.numel() > 0:
+            v_min = torch.quantile(masked_volume, 0.1 / 100)
+            v_max = torch.quantile(masked_volume, 99.9 / 100)
+            threshold_mask = (ori_volume > v_min) & (ori_volume < v_max)
+            res[(cavity_label > 0) | threshold_mask] = self.mu_water_dsa
+
+        # Invalid HU values -> zero attenuation
+        res[ori_volume < -2000] = 0.0
+        return res
     
     def simulate(
         self, 
-        ori_volume: torch.Tensor,   # in HU
+        ori_volume: torch.Tensor,   # assumed preprocessed baseline (attenuation-like)
         cavity_label: torch.Tensor,
         coronary_label: torch.Tensor
     ) -> torch.Tensor:
+        # MultipliContrast is static by design
         assert self.contrast_change_over_time == False, "MultipliContrast does not support contrast change over time"
+        # `ori_volume` is expected to be a preprocessed attenuation-like baseline
         res = ori_volume.clone()
-        res = res / 1000.0 * self.mu_water_dsa + self.mu_water_dsa  # 将 HU 转换为衰减系数
-        
         assert cavity_label.dtype == torch.uint8
         assert coronary_label.dtype == torch.bool
-        
-        # HU 值在 v_min-v_max 之间的部分, 为心腔及被对比剂增强过的, 现在恢复为水衰减系数
-        masked_volume = ori_volume[cavity_label == CavityLabel.LA]  # 使用左房，因此此区域肌肉结构占比少，大部分是造影血流
-        v_min = torch.quantile(masked_volume, 0.1 / 100)
-        v_max = torch.quantile(masked_volume, 99.9 / 100)
-        threshold_mask = (ori_volume > v_min) & (ori_volume < v_max)
-        
-        res[
-            (cavity_label>0) 
-            | threshold_mask
-        ] = self.mu_water_dsa
-        
-        # 对冠状动脉部分, 设为碘化钠对比剂的衰减系数
+
+        # Coronary voxels should be set to iodine attenuation
         res[coronary_label] = self.mu_idodine
-        
-        # 一些图像中会将 无效值标记为 -3096, 将这部分的衰减系数设置为 0
-        res[ori_volume < -2000] = 0
-        
         return res
+
+
     
     def simulate_with_time(
         self, 

@@ -257,6 +257,11 @@ class VolumeDVFReader(DataReader):
         assert np.allclose(affine, coronary_affine)
         
         lca, rca = separate_coronary(coronary, self.device)        
+        # Preprocess baseline image and optionally simulate coronary for static simulators
+        image = self.contrast_simulator.preprocess(image, cavity)
+        if not self.contrast_simulator.contrast_change_over_time:
+            image = self.contrast_simulator.simulate(image, cavity, coronary)
+
         self.origin_data = _Data(
             self.device, image, cavity, affine, 
             lca, rca
