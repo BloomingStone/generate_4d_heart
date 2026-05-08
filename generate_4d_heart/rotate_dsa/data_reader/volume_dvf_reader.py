@@ -18,6 +18,7 @@ from torch.utils.dlpack import to_dlpack as tensor2dlpack   #type: ignore
 from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
 from ... import NUM_TOTAL_PHASE, CavityLabel
+from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast, ContrastSimulator
 from ...roi import ROI
 from ..types import CoronaryType
 from ..cardiac_phase import CardiacPhase
@@ -231,6 +232,7 @@ class VolumeDVFReader(DataReader):
     roi_json: Path
     dvf_dir: Path
     movement_enhancer: "None | MovementEnhancer" = None
+    contrast_simulator: ContrastSimulator = field(default_factory=lambda: IdentityContrast())
     recover_cropped_data: bool = True
     precompute_ddf: bool = True
     device: torch.device = field(default_factory= lambda: torch.device("cuda:0"))
@@ -326,7 +328,12 @@ class VolumeDVFReader(DataReader):
             ).to(self.device)
     
     
-    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+    def get_data(
+        self,
+        phase: CardiacPhase,
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+        global_time: float = 0.0,
+    ) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
         
         image, cavity, coronary_label, coronary_mesh = self.warpper(phase, coronary_type)
@@ -344,11 +351,11 @@ class VolumeDVFReader(DataReader):
         
         return DataReaderResult(
             phase=phase,
-            volume=image.cpu().to(torch.float32),
             cavity_label=cavity.cpu().to(torch.uint8),
             affine=affine,
             coronary = Coronary(
                 type=coronary_type,
+                volume=image.cpu().to(torch.float32),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=coronary_mesh
@@ -375,11 +382,11 @@ class VolumeDVFReader(DataReader):
         
         return DataReaderResult(
             phase=CardiacPhase(0),
-            volume=data.image.cpu().to(torch.float32),
             cavity_label=data.cavity.cpu().to(torch.uint8),
             affine=data.affine,
             coronary=Coronary(
                 type=coronary_type,
+                volume=data.image.cpu().to(torch.float32),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=get_mesh_in_world(coronary_label, coronary_centering_affine, self.device)

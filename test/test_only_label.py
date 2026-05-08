@@ -20,7 +20,6 @@ def test_only_static_label():
     
     dsa = RotateDSA(
         reader=reader,
-        constrast_sim=IdentityContrast(),
         drr=TorchDRR(
             rotate_cfg=RotatedParameters(
                 total_frame=10,

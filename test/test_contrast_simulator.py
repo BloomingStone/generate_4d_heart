@@ -8,6 +8,7 @@ from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.saver import save_png
 from generate_4d_heart.rotate_dsa.postprocess import postprocess_drr
+from generate_4d_heart.rotate_dsa.contrast_simulator import FlowContrast
 
 from utils import output_root_dir, get_reader, get_simulator
 
@@ -38,7 +39,7 @@ def test_contrast_simulators(
     drr = TorchDRR(rotate_cfg=RotatedParameters(total_frame=1))
     simulator = get_simulator(sim_name)
     volume = simulator.simulate(
-        ori_volume=data.volume,
+        ori_volume=data.coronary.volume,
         cavity_label=data.cavity_label,
         coronary_label=coronary
     )
@@ -62,6 +63,35 @@ def test_contrast_simulators(
         )
         
     # data.save(output_dir)
+
+
+def test_flow_contrast_time_delay_and_pulse_shape():
+    ori_volume = torch.zeros((1, 1, 8, 8, 8), dtype=torch.float32)
+    cavity_label = torch.zeros((1, 1, 8, 8, 8), dtype=torch.uint8)
+    coronary_label = torch.zeros((1, 1, 8, 8, 8), dtype=torch.bool)
+
+    cavity_label[0, 0, 1, 4, 4] = 7  # aorta label seed near the inlet
+    for x in range(1, 7):
+        coronary_label[0, 0, x, 4, 4] = True
+
+    simulator = FlowContrast(
+        velocity=1.0,
+        t_in=0.1,
+        t_out=0.4,
+        alpha=50.0,
+    )
+
+    early = simulator.simulate_with_time(ori_volume, cavity_label, coronary_label, time=0.05)
+    mid = simulator.simulate_with_time(ori_volume, cavity_label, coronary_label, time=0.2)
+    late = simulator.simulate_with_time(ori_volume, cavity_label, coronary_label, time=4.3)
+
+    near = (0, 0, 1, 4, 4)
+    far = (0, 0, 5, 4, 4)
+
+    assert early[near] < 0.2
+    assert mid[near] > 0.5
+    assert mid[far] < 0.2
+    assert late[far] > 0.5
 
 # TODO need to be test
 # air = torch.where(volume <= -800)

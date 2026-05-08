@@ -7,6 +7,7 @@ from torch import Tensor
 import numpy as np
 
 from .data_reader import DataReader, DataReaderResult, Coronary, separate_coronary, load_nifti, get_coronary_centering_affine, get_mesh_in_world
+from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 from generate_4d_heart import NUM_TOTAL_PHASE
 from ..cardiac_phase import CardiacPhase
 from ..types import CoronaryType
@@ -49,6 +50,8 @@ class StaticVolumeReader(DataReader):
             raise RuntimeError("No CUDA device available for VolumeDVFReader")
         self.device = device
         self._load_3d_data()
+        # default contrast simulator: identity (no change)
+        self.contrast_simulator = IdentityContrast()
         
         self.n_phases: int = 1
         
@@ -76,7 +79,12 @@ class StaticVolumeReader(DataReader):
         self._origin_volume_affine = affine
 
     
-    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+    def get_data(
+        self,
+        phase: CardiacPhase,
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+        global_time: float = 0.0,
+    ) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
             
         if coronary_type == CoronaryType.LCA:
@@ -88,11 +96,11 @@ class StaticVolumeReader(DataReader):
         
         return DataReaderResult(
             phase=phase,
-            volume=self.origin_data.image.cpu(),
             cavity_label=self.origin_data.cavity.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
+                volume=self.origin_data.image.cpu(),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=self.meshes[coronary_type]
@@ -119,6 +127,8 @@ class StaticLabelReader(DataReader):
     ):
         self.device = device
         self.n_phases: int = NUM_TOTAL_PHASE
+        # default contrast simulator: identity (no change)
+        self.contrast_simulator = IdentityContrast()
         self.cavity, _ = load_nifti(cavity_path, is_label=True)
         coronary, self._origin_volume_affine = load_nifti(coronary_path, is_label=True)
         self.lca_label, self.rca_label = separate_coronary(coronary, self.device)
@@ -131,7 +141,12 @@ class StaticLabelReader(DataReader):
         }
     
     
-    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+    def get_data(
+        self,
+        phase: CardiacPhase,
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+        global_time: float = 0.0,
+    ) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
         
         if coronary_type == CoronaryType.LCA:
@@ -143,11 +158,11 @@ class StaticLabelReader(DataReader):
         
         return DataReaderResult(
             phase=phase,
-            volume=coronary_label.cpu(),
             cavity_label=self.cavity.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
+                volume=coronary_label.cpu(),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=self.meshes[coronary_type]

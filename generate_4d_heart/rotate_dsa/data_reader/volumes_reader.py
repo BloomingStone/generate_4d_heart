@@ -12,6 +12,7 @@ import torchcpd
 from tqdm import tqdm
 
 from .data_reader import DataReader, DataReaderResult, Coronary, separate_coronary, load_nifti, get_coronary_centering_affine, get_mesh_in_world
+from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 from ... import NUM_TOTAL_PHASE
 from ..cardiac_phase import CardiacPhase
 from ..types import CoronaryType
@@ -61,6 +62,8 @@ class VolumesReader(DataReader):
         | - ...
         """
         self.device = device
+        # default contrast simulator: identity
+        self.contrast_simulator = IdentityContrast()
         image_file_list = sorted(image_dir.glob("*.nii*"))
         cavity_file_list = sorted(cavity_dir.glob("*.nii*"))
         coronary_file_list = sorted(coronary_dir.glob("*.nii*"))
@@ -173,18 +176,23 @@ class VolumesReader(DataReader):
         assert mesh is not None
         return DataReaderResult(
             phase=data.phase,
-            volume=data.volume.cpu(),
             cavity_label=data.cavity_label.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
+                volume=data.volume.cpu(),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=mesh
             )
         )
 
-    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+    def get_data(
+        self,
+        phase: CardiacPhase,
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+        global_time: float = 0.0,
+    ) -> DataReaderResult:
         """
         Returns interpolated data for the given phase in [0,1).
         If phase matches an existing frame index exactly, returns cached result.
@@ -228,11 +236,11 @@ class VolumesReader(DataReader):
         
         return DataReaderResult(
             phase=phase,
-            volume=vol_interp.cpu(),
             cavity_label=cav_interp.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
+                volume=vol_interp.cpu(),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=new_mesh

@@ -19,6 +19,7 @@ import pyvista as pv
 from ...roi import ROI
 from ..cardiac_phase import CardiacPhase
 from ..types import CoronaryType
+from ..contrast_simulator import ContrastSimulator
 
 
 def pre_load(file: Path) -> tuple[Nifti1Image, ndarray]:
@@ -184,27 +185,28 @@ def apply_affine(points: Tensor | ndarray, affine: ndarray) -> ndarray:
 @dataclass
 class Coronary:
     type: CoronaryType
+    volume: Tensor
     label: Tensor
     centering_affine: ndarray
     
     mesh_in_world: pv.PolyData
+    
     
 
 @dataclass
 class DataReaderResult:
     """ Holds the result of reading data for a specific phase. Labels are int8 tensors. tensors are in shape (B=1, C=1, D, H, W)."""
     phase: CardiacPhase
-    
-    volume: Tensor
     cavity_label: Tensor
     affine: ndarray
     
     coronary: Coronary
     
     def __post_init__(self):
-        assert self.volume.ndim == 5 and self.volume.shape[0] == 1 and self.volume.shape[1] == 1, "Volume tensor must be in shape (1, 1, D, H, W)"
-        assert self.cavity_label.shape == self.volume.shape, "Cavity label shape must match volume shape"
-        assert self.coronary.label.shape == self.volume.shape, "Coronary label shape must match volume shape"
+        # coronary.volume is the canonical volume; validate shapes against it
+        assert self.coronary.volume.ndim == 5 and self.coronary.volume.shape[0] == 1 and self.coronary.volume.shape[1] == 1, "Coronary.volume tensor must be in shape (1, 1, D, H, W)"
+        assert self.cavity_label.shape == self.coronary.volume.shape, "Cavity label shape must match coronary.volume shape"
+        assert self.coronary.label.shape == self.coronary.volume.shape, "Coronary label shape must match coronary.volume shape"
         assert self.cavity_label.dtype == torch.uint8, "Cavity label must be of type int8"
         assert self.coronary.label.dtype == torch.bool, "LCA label must be of type bool"
     
@@ -212,11 +214,11 @@ class DataReaderResult:
         """Move all tensors to the specified device"""
         return DataReaderResult(
             self.phase,
-            self.volume.to(device),
             self.cavity_label.to(device),
             self.affine, 
             Coronary(
                 type=self.coronary.type,
+                volume=self.coronary.volume.to(device),
                 label=self.coronary.label.to(device),
                 centering_affine=self.coronary.centering_affine,
                 mesh_in_world=self.coronary.mesh_in_world,
@@ -268,8 +270,8 @@ class DataReaderResult:
         output_case_dir.mkdir(exist_ok=True, parents=True)
         
         if output_nii:
-            save_nii(output_case_dir / "volume.nii.gz", self.volume, self.affine)
             save_nii(output_case_dir / "cavity_label.nii.gz", self.cavity_label, self.affine, is_label=True)
+            save_nii(output_case_dir / f"{self.coronary.type}_volume.nii.gz", self.coronary.volume, self.affine)
             save_nii(output_case_dir / f"{self.coronary.type}_label.nii.gz", self.coronary.label, self.affine, is_label=True)
         
         if output_mesh:
@@ -282,10 +284,22 @@ class DataReaderResult:
 
 class DataReader(Protocol):
     n_phases: int
+    
+    # if contrast_simulator.contrast_change_over_time == True, the contrast simulator should be called in `self.get_data` with `global_time` input, 
+    # otherwise, the contrast simulator should be called in initialization and the `global_time` in `self.get_data` should be None and ignored.
+    # All readers expose a contrast_simulator attribute. Readers that don't simulate
+    # contrast should set it to `IdentityContrast()` by default.
+    contrast_simulator: ContrastSimulator
+
     _origin_volume_size: tuple[int, int, int]
     _origin_volume_affine: ndarray
 
-    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+    def get_data(
+        self, 
+        phase: CardiacPhase, 
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+        global_time: float=0.0
+    ) -> DataReaderResult:
         ...
 
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
@@ -306,3 +320,4 @@ class DataReader(Protocol):
     @property
     def volume_affine(self) -> ndarray:
         return self._origin_volume_affine
+    

@@ -14,7 +14,18 @@ from generate_4d_heart.rotate_dsa.data_reader import (
 )
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_gif
+from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from utils import output_root_dir, test_data_root_dir
+
+
+class AddOneContrast(ContrastSimulator):
+    contrast_change_over_time = False
+
+    def simulate(self, ori_volume, cavity_label, coronary_label):
+        return ori_volume + 1.0
+
+    def simulate_with_time(self, ori_volume, cavity_label, coronary_label, time: float):
+        return ori_volume + 1.0
 
 
 def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal["LCA", "RCA"] = "LCA") -> None:
@@ -42,7 +53,7 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         phase = CardiacPhase.from_index(phase_idx, F)
 
         data = reader.get_data(phase, coronary_type)
-        volume = data.volume[0, 0]
+        volume = data.coronary.volume[0, 0]
         
         frames_w[phase_idx] = volume[W//2]
         frames_h[phase_idx] = volume[:, H//2]
@@ -127,10 +138,16 @@ def test_rbf_reader():
     output_dir.mkdir(exist_ok=True, parents=True)
     
     reader = RBFReader(
-        image_nii=data_dir / "image.nii.gz",
+        volume_nii=data_dir / "image.nii.gz",
         cavity_nii=data_dir / "cavity.nii.gz",
-        coronary_nii=data_dir / "coronary.nii.gz"
+        coronary_nii=data_dir / "coronary.nii.gz",
+        contrast_simulator=AddOneContrast()
     )
+
+    sample = reader.get_phase_0_data("RCA")
+    # get warped volume at phase 0 (was previously returned as top-level volume)
+    warped, cav_lbl, cor_lbl = reader._warp_and_recover_for_phase(CardiacPhase(0.0), "RCA")
+    assert torch.allclose(sample.coronary.volume, warped + 1.0, atol=1e-2)
     
     _read_and_save(reader, output_dir, coronary_type="RCA")
 

@@ -19,8 +19,9 @@ class MultipliContrast(ContrastSimulator):
         self, 
         ori_volume: torch.Tensor,   # in HU
         cavity_label: torch.Tensor,
-        coronary_label: torch.Tensor,
+        coronary_label: torch.Tensor
     ) -> torch.Tensor:
+        assert self.contrast_change_over_time == False, "MultipliContrast does not support contrast change over time"
         res = ori_volume.clone()
         res = res / 1000.0 * self.mu_water_dsa + self.mu_water_dsa  # 将 HU 转换为衰减系数
         
@@ -45,3 +46,14 @@ class MultipliContrast(ContrastSimulator):
         res[ori_volume < -2000] = 0
         
         return res
+    
+    def simulate_with_time(
+        self, 
+        ori_volume: torch.Tensor,
+        cavity_label: torch.Tensor,
+        coronary_label: torch.Tensor,
+        time: float
+    ) -> torch.Tensor:
+        import warnings
+        warnings.warn("MultipliContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
+        return self.simulate(ori_volume, cavity_label, coronary_label)

@@ -31,8 +31,9 @@ class ThresholdMultipliContrast(ContrastSimulator):
         self, 
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
-        coronary_label: torch.Tensor,
+        coronary_label: torch.Tensor
     ) -> torch.Tensor:
+        assert self.contrast_change_over_time == False, "ThresholdMultipliContrast does not support contrast change over time"
         density = ori_volume.clone()
         density = density/ 1000.0 * self.mu_water + self.mu_water  # 将 HU 转换为衰减系数
         
@@ -55,3 +56,14 @@ class ThresholdMultipliContrast(ContrastSimulator):
         density[ori_volume < -2000] = 0
         
         return density
+    
+    def simulate_with_time(
+        self, 
+        ori_volume: torch.Tensor,
+        cavity_label: torch.Tensor,
+        coronary_label: torch.Tensor,
+        time: float
+    ) -> torch.Tensor:
+        import warnings
+        warnings.warn("ThresholdMultipliContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
+        return self.simulate(ori_volume, cavity_label, coronary_label)
