@@ -42,16 +42,14 @@ class FlowContrast(ContrastSimulator):
     mu_idodine: float = MU_IDODINE
 
     # Time model parameters for rho(d, t)
-    velocity: float = 200   # TODO
+    velocity: float = 500   # TODO 统一单位到mm/s
     t_in: float = 0.15
-    t_out: float = 2.5
+    t_out: float = 2.7
     alpha: float = 5.0
 
     _cached_start_voxel: tuple[int, int, int] | None = field(default=None, init=False, repr=False)
     _cached_distance_map: torch.Tensor | None = field(default=None, init=False, repr=False)
     _cached_cor_hash: str | None = field(default=None, init=False, repr=False)   # if coronary label changes, cached skeleton and distance map should be invalidated
-    
-    device: torch.device|None = field(default=None, init=False, repr=False)
 
 
     def simulate(
@@ -68,7 +66,6 @@ class FlowContrast(ContrastSimulator):
         cavity_label: torch.Tensor,
     ) -> torch.Tensor:
         """Return baseline attenuation map (no coronary iodine applied)."""
-        self.device = ori_volume.device
         return self._baseline_map(ori_volume, cavity_label)
 
     def _baseline_map(self, ori_volume: torch.Tensor, cavity_label: torch.Tensor) -> torch.Tensor:
@@ -134,7 +131,6 @@ class FlowContrast(ContrastSimulator):
         
         coronary_density = self._density_from_distance(distance_map, float(time))
         density = ori_volume.squeeze().clone()
-        coronary_label = coronary_label.to(self.device)
         density[coronary_label] = coronary_density[coronary_label]
         return density.to(device=ori_volume.device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
 
@@ -224,7 +220,7 @@ class FlowContrast(ContrastSimulator):
         projected = skel_dist[nearest_indices[0], nearest_indices[1], nearest_indices[2]]
 
         # cache and return
-        self._cached_distance_map = torch.from_numpy(projected).to(device=self.device, dtype=torch.float32)
+        self._cached_distance_map = torch.from_numpy(projected).to(dtype=torch.float32)
         return self._cached_distance_map
 
     def _density_from_distance(self, distance_map: torch.Tensor, time: float) -> torch.Tensor:
