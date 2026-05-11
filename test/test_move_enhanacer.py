@@ -24,7 +24,6 @@ def test_coronary_bound_lv():
     
     dsa = RotateDSA(
         reader=reader,
-        constrast_sim=MultipliContrast(),
         drr=drr
     )
     

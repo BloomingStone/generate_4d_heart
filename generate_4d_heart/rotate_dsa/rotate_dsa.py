@@ -79,7 +79,6 @@ class PhysicalConfig:
 @dataclass
 class RotateDSA:
     reader: DataReader
-    constrast_sim: ContrastSimulator
     drr: RotateDRR
     physical_config: PhysicalConfig = field(default_factory=PhysicalConfig)
     label_plotter: Torch3DLabelRenderer = field(init=False)
@@ -106,27 +105,22 @@ class RotateDSA:
         depth_maps = np.zeros((total_frame, w, h), dtype=np.float32)
         for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
             phase = self._get_phase_at_frame(f)
-            read_res = self.reader.get_data(phase, coronary_type).to_device(self.drr.device)
-            coronary_label = read_res.coronary.label
-            affine = read_res.coronary.centering_affine
+            time = f / self.drr.rotate_cfg.fps
+            read_res = self.reader.get_data(phase, coronary_type, time).to_device(self.drr.device)
+            coronary = read_res.coronary
             
-            volume = self.constrast_sim.simulate(
-                ori_volume=read_res.volume,
-                cavity_label=read_res.cavity_label,
-                coronary_label=coronary_label
-            )
             drr_res = self.drr.get_projection_at_frame(
                 frame=f,
-                volume=volume,
-                coronary=coronary_label,
-                affine=affine
+                volume=coronary.volume,
+                coronary=coronary.label,
+                affine=coronary.centering_affine
             )
             if frames.device != drr_res.device:
                 frames = frames.to(drr_res.device)
             frames[f] = drr_res
             
             label, depth_map = self.label_plotter.render(
-                read_res.coronary.mesh_in_world,
+                coronary.mesh_in_world,
                 *self.drr.get_R_T_at_frame(f)
             )
             labels[f] = label

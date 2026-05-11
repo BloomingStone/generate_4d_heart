@@ -33,7 +33,6 @@ def test_rotate_dsa_integration(
     # 创建 RotateDSA 实例
     dsa = RotateDSA(
         reader=get_reader(reader_name),
-        constrast_sim=get_simulator("multipli_contrast"),
         drr=drr
     )
     
@@ -95,7 +94,6 @@ def test_rotate_dsa_integration_full(
     
     dsa = RotateDSA(
         reader=get_reader(reader_name),
-        constrast_sim=simulator,
         drr=drr
     )
     
@@ -123,7 +121,6 @@ def test_static_rotate_dsa_integration_full(
     
     dsa = RotateDSA(
         reader=get_reader(reader_name),
-        constrast_sim=simulator,
         drr=drr
     )
     

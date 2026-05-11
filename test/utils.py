@@ -2,7 +2,7 @@ from pathlib import Path
 from functools import lru_cache
 
 from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader, StaticVolumeReader, CoronarySeprateEnhancer, RBFReader
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
+from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast, IdentityContrast
 
 test_root_dir = Path(__file__).parent
 test_data_root_dir = test_root_dir / "test_data"
@@ -40,9 +40,10 @@ def get_static_volume_reader():
 def get_rbf_reader():
     data_dir = test_data_root_dir / "volume_with_dvf"
     return RBFReader(
-        image_nii=data_dir / "image.nii.gz",
+        volume_nii=data_dir / "image.nii.gz",
         cavity_nii=data_dir / "cavity.nii.gz",
-        coronary_nii=data_dir / "coronary.nii.gz"
+        coronary_nii=data_dir / "coronary.nii.gz",
+        contrast_simulator=IdentityContrast()
     )
 
 @lru_cache(maxsize=None)

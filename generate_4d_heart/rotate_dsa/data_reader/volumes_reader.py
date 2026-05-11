@@ -12,6 +12,7 @@ import torchcpd
 from tqdm import tqdm
 
 from .data_reader import DataReader, DataReaderResult, Coronary, separate_coronary, load_nifti, get_coronary_centering_affine, get_mesh_in_world
+from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 from ... import NUM_TOTAL_PHASE
 from ..cardiac_phase import CardiacPhase
 from ..types import CoronaryType
@@ -61,6 +62,8 @@ class VolumesReader(DataReader):
         | - ...
         """
         self.device = device
+        # default contrast simulator: identity
+        self.contrast_simulator = IdentityContrast()
         image_file_list = sorted(image_dir.glob("*.nii*"))
         cavity_file_list = sorted(cavity_dir.glob("*.nii*"))
         coronary_file_list = sorted(coronary_dir.glob("*.nii*"))
@@ -96,6 +99,11 @@ class VolumesReader(DataReader):
             if index == 0:
                 self._lca_centering_affine = get_coronary_centering_affine(lca_label, self._origin_volume_affine, self.device)
                 self._rca_centering_affine = get_coronary_centering_affine(rca_label, self._origin_volume_affine, self.device)
+
+            # Preprocess baseline volume and optionally simulate coronary for static simulators
+            volume = self.contrast_simulator.preprocess(volume, cavity_label)
+            if not self.contrast_simulator.contrast_change_over_time:
+                volume = self.contrast_simulator.simulate(volume, cavity_label, coronary_label)
 
             self.data.append(_Data(
                 phase=phase,
@@ -173,18 +181,23 @@ class VolumesReader(DataReader):
         assert mesh is not None
         return DataReaderResult(
             phase=data.phase,
-            volume=data.volume.cpu(),
             cavity_label=data.cavity_label.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
+                volume=data.volume.cpu(),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=mesh
             )
         )
 
-    def get_data(self, phase: CardiacPhase, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
+    def get_data(
+        self,
+        phase: CardiacPhase,
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+        global_time: float = 0.0,
+    ) -> DataReaderResult:
         """
         Returns interpolated data for the given phase in [0,1).
         If phase matches an existing frame index exactly, returns cached result.
@@ -226,13 +239,20 @@ class VolumesReader(DataReader):
             new_mesh = d0.rca_mesh_in_world.copy() if w < 0.5 else d1.rca_mesh_in_world.copy()
             # new_mesh.points = (1 - w) * d0.rca_mesh_in_world.points + w * d1.rca_mesh_in_world.points
         
+        # If simulator is dynamic, apply simulate_with_time to coronary region now
+        if self.contrast_simulator.contrast_change_over_time:
+            vol_interp = self.contrast_simulator.simulate_with_time(
+                vol_interp, cav_interp, coronary_label, float(global_time)
+            )
+
+        
         return DataReaderResult(
             phase=phase,
-            volume=vol_interp.cpu(),
             cavity_label=cav_interp.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
+                volume=vol_interp.cpu(),
                 label=coronary_label.cpu().to(torch.bool),
                 centering_affine=coronary_centering_affine,
                 mesh_in_world=new_mesh
