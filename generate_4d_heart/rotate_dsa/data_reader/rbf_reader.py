@@ -17,42 +17,17 @@ import cupy as cp
 
 from generate_4d_heart.roi import ROI
 from generate_4d_heart.rotate_dsa.data_reader.data_reader import (
-    DataReader, DataReaderResult, Coronary, separate_coronary, get_coronary_centering_affine,
-    load_nifti, get_mesh_in_voxel, apply_affine, get_mesh_in_world
+    DataReader, DataReaderResult, Coronary,
+    load_nifti, apply_affine
 )
 from generate_4d_heart.ssm import SSMReader, polydata_io, Landmark
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.types import CoronaryType
 from generate_4d_heart import CavityLabel
-from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator, IdentityContrast
+from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 
 
 logger = logging.getLogger(__name__)
-
-@dataclass
-class _Data:
-    device: torch.device
-    cavity: Tensor
-    affine: np.ndarray
-    lca: Tensor
-    rca: Tensor
-    lca_volume: Tensor
-    rca_volume: Tensor
-    
-    lca_centering_affine: np.ndarray = field(init=False)
-    rca_centering_affine: np.ndarray = field(init=False)
-    
-    def __post_init__(self):
-        self.lca_centering_affine = get_coronary_centering_affine(self.lca, self.affine, self.device)
-        self.rca_centering_affine = get_coronary_centering_affine(self.rca, self.affine, self.device)
-        
-        
-    @property
-    def all_coronary_label(self) -> Tensor:
-        res = self.lca.clone().to(torch.uint8)
-        res += self.rca
-        return res
-
 
 @dataclass
 class RBFReader(DataReader):
@@ -81,45 +56,21 @@ class RBFReader(DataReader):
         cavity_np = cavity.squeeze().cpu().numpy()
         coronary, coronary_affine = load_nifti(self.coronary_nii, is_label=True)
         assert np.allclose(affine, cavity_affine)
-        assert np.allclose(affine, coronary_affine)
-        
-        lca, rca = separate_coronary(coronary, self.device)
-        
-        print("Preprocessing baseline volume with contrast simulator...")
-        volume = self.contrast_simulator.preprocess(volume, cavity)
-        if not self.contrast_simulator.contrast_change_over_time:
-            print("Applying STATIC contrast simulator to original volume...")
-            # simulate focuses on coronary-only modification
-            volume = self.contrast_simulator.simulate(volume, cavity, coronary)
-        lca_volume = volume.clone()
-        rca_volume = volume.clone()
-        
-        self.origin_data = _Data(
-            self.device, cavity, affine, 
-            lca, rca, lca_volume, rca_volume
-        )
-        _, pericardium_mask = generate_pericardium(cavity_np, coronary.squeeze().cpu().numpy())
-
+        assert np.allclose(affine, coronary_affine)        
         self._origin_volume_size = volume.shape[2:]   #type: ignore
         self._origin_volume_affine = affine
         
-        print("Initializing ROI from cavity...")
-        self.roi = ROI.get_from_cavity_np(cavity_np, affine, padding=30)
-        def crop(x: Tensor) -> Tensor:
-            return self.roi.crop_on_data(x.clone())
-        
-        self.cropped_data = _Data(
-            self.device, crop(cavity), self.roi.affine_after_crop,
-            crop(lca), crop(rca), crop(lca_volume), crop(rca_volume)
+        print("Initializing origin data...")
+        self.origin_data = self._Data.init_from_volume(
+            volume, cavity, coronary, affine, self.device, self.contrast_simulator
         )
         
-        print("Extracting coronary meshes in world coordinate...")
-        self.coronary_mesh_world = {
-            CoronaryType.LCA: get_mesh_in_world(lca, affine, self.device),
-            CoronaryType.RCA: get_mesh_in_world(rca, affine, self.device)
-        }
+        print("Initializing ROI from cavity and cropping data...")
+        self.roi = ROI.get_from_cavity_np(cavity_np, affine, padding=30)
+        self.cropped_data = self.origin_data.crop_by_roi(self.roi)
         
         print("Generating pericardium mask and attenuation mask...")
+        _, pericardium_mask = generate_pericardium(cavity_np, coronary.squeeze().cpu().numpy())
         pericardium_mask = self.roi.crop_on_data(pericardium_mask)
         with cp.cuda.Device(self.device.index):
             external_dist = ndimage.distance_transform_edt(1 - cp.asarray(pericardium_mask))
@@ -167,7 +118,11 @@ class RBFReader(DataReader):
         phase: CardiacPhase, 
         global_time: float
     ) -> tuple[Tensor, Tensor, Tensor]:
-        """Return warped (volume, cavity_label, coronary_label) recovered to original space for given phase"""
+        """
+        Return warped (volume, cavity_label, coronary_label) recovered to original space for given phase
+        形变都在世界坐标下得到，然后再还原回 ROI 裁剪缩放后的体素坐标得到形变场，并同样在此坐标下进行体积和标签的 warping（为了减少
+        计算量），最后再还原回原始空间。
+        """
         dx: torch.Tensor = self.rbf(phase, self.coords_zoomed)  # (*shape_zoomed, 3) in world coordinate
         dx = rearrange(dx, "x y z c -> 1 c x y z")
         dx = F.interpolate(
@@ -187,21 +142,17 @@ class RBFReader(DataReader):
         dx = invert_displacement_field(dx)  
 
         # extract label and volume for the given coronary type, and apply contrast simulation if needed
-        cavity_label = self.cropped_data.cavity
-        if cor_type in ("LCA", CoronaryType.LCA):
-            cor_label = self.cropped_data.lca
-            ori_volume = self.origin_data.lca_volume
-            cropped_volume = self.cropped_data.lca_volume
-        else:
-            cor_label = self.cropped_data.rca
-            ori_volume = self.origin_data.rca_volume
-            cropped_volume = self.cropped_data.rca_volume
+        cropped_cavity = self.cropped_data.cavity
+        cropped_cor_label = self.cropped_data.coronary[cor_type].label
+        
+        ori_volume = self.origin_data.coronary[cor_type].volume
+        cropped_volume = self.cropped_data.coronary[cor_type].volume
           
         if self.contrast_simulator.contrast_change_over_time:
             cropped_volume = self.contrast_simulator.simulate_with_time(
                 cropped_volume, 
-                cavity_label, 
-                cor_label, 
+                cropped_cavity, 
+                cropped_cor_label, 
                 global_time
             )
 
@@ -222,11 +173,11 @@ class RBFReader(DataReader):
                     raise ValueError(f"Unsupported mode: {mode}")
             return recover(warper(tensor.to(self.device, torch.float32), dx)).cpu().to(final_dtype)
 
-        cavity_label = warp_and_recover(self.cropped_data.cavity, mode="cavity")
+        cropped_cavity = warp_and_recover(self.cropped_data.cavity, mode="cavity")
         volume = warp_and_recover(cropped_volume, mode="volume")
-        cor_label = warp_and_recover(cor_label, mode="coronary")
+        cropped_cor_label = warp_and_recover(cropped_cor_label, mode="coronary")
         
-        return volume, cavity_label, cor_label
+        return volume, cropped_cavity, cropped_cor_label
 
     @torch.no_grad()
     def get_data(
@@ -237,17 +188,13 @@ class RBFReader(DataReader):
     ) -> DataReaderResult:
         cor_type = CoronaryType(coronary_type)
         
-        # here use the affine from origin_data as we will recover the cropped and zoomed data back to original space, 
-        # so the coronary centering affine should also be match with the original shape
-        cor_centering_affine = self.origin_data.lca_centering_affine if cor_type in ("LCA", CoronaryType.LCA) else self.origin_data.rca_centering_affine
-        cor_mesh = self.coronary_mesh_world[cor_type].copy()
+        # 冠脉mesh的同样形变先在原始世界坐标下进行，然后再平移到 centering affine 定义的坐标下，这样可以保证冠脉mesh和体积数据最终在投影坐标下能够正确对齐
+        cor_centering_affine = self.origin_data[cor_type].centering_affine
+        cor_mesh = self.origin_data[cor_type].mesh_original.copy()
         mesh_points = torch.from_numpy(cor_mesh.points).to(self.device, torch.float32)
         mesh_points += self.rbf(phase, mesh_points)     # moving in world coordinate
         cor_mesh.points = mesh_points.cpu().numpy()
-        ori_T = self._origin_volume_affine[:3, 3]       # ori_T and new_T are also in world coordinate, we use them to adjust the coronary mesh position
-        new_T = cor_centering_affine[:3, 3]
-        cor_mesh.points += (new_T - ori_T)
-        
+
         volume, cavity_label, cor_label = self._warp_and_recover_for_phase(cor_type, phase, global_time)
         
         return DataReaderResult(
@@ -258,22 +205,23 @@ class RBFReader(DataReader):
                 type=cor_type,
                 volume=volume,
                 label=cor_label,
+                original_affine=self.origin_data[cor_type].original_affine,
                 centering_affine=cor_centering_affine,
-                mesh_in_world=cor_mesh
+                mesh_original=cor_mesh
             )
         )
     
     @torch.no_grad()
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        return self.get_data(CardiacPhase(0.0), coronary_type)
+        return self.get_data(CardiacPhase(0), coronary_type)
 
     @property
     def lca_centering_affine(self) -> np.ndarray:
-        return self.origin_data.lca_centering_affine
+        return self.origin_data.lca.centering_affine
     
     @property
     def rca_centering_affine(self) -> np.ndarray:
-        return self.origin_data.rca_centering_affine
+        return self.origin_data.rca.centering_affine
     
     @property
     def volume_size(self) -> tuple[int, int, int]:
@@ -421,8 +369,8 @@ class KDTreeRBF(nn.Module):
         points: np.ndarray|torch.Tensor|None = None,    # (..., 3)
     ) -> torch.Tensor:
         """Calculate the motion for the given phase and points. Return motion tensor on module's device"""
-        idx0 = phase.closest_index_floor(self.n_phases)
-        idx1 = phase.closest_index_ceil(self.n_phases)
+        idx0 = phase.lower_index(self.n_phases)
+        idx1 = phase.upper_index(self.n_phases)
         w = float(phase) * self.n_phases - idx0
         disp = w * self.ctrl_disps[idx1] + (1 - w) * self.ctrl_disps[idx0]
         

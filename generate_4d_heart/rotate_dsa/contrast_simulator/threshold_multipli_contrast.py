@@ -61,10 +61,10 @@ class ThresholdMultipliContrast(ContrastSimulator):
         assert self.contrast_change_over_time == False, "ThresholdMultipliContrast does not support contrast change over time"
         density = ori_volume.clone()
         assert density.dtype == torch.float32 or density.dtype == torch.float16
-        assert coronary_label.dtype == torch.bool
+        assert coronary_label.dtype == torch.bool or coronary_label.dtype == torch.uint8
 
         # For simulate, scale coronary voxels from baseline
-        coronary_idx = torch.where(coronary_label)
+        coronary_idx = torch.where(coronary_label>0)
         if coronary_idx[0].numel() > 0:
             density[coronary_idx] = density[coronary_idx] * self.coronary_alpha
         return density

@@ -158,7 +158,7 @@ class ROI:
         Returns:
             np.ndarray: the cropped image data
         """
-        assert image.shape[-3:] == self.original_shape, "The shape of the input image must be the same as the original shape of the ROI"
+        assert np.array_equal(np.array(image.shape[-3:]), np.array(self.original_shape)), "The shape of the input image must be the same as the original shape of the ROI"
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
         return image[..., x0:x1, y0:y1, z0:z1]
 

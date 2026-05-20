@@ -1,6 +1,7 @@
 from typing import Protocol
 
 import torch
+from generate_4d_heart import CavityLabel, MU_WATER, MU_IDODINE
 
 class ContrastSimulator(Protocol):
         
@@ -70,4 +71,59 @@ class IdentityContrast(ContrastSimulator):
         import warnings
         warnings.warn("IdentityContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
         return self.simulate(ori_volume, cavity_label, coronary_label)
-        
+
+
+class SimplePreprocessContrast(ContrastSimulator):
+    """
+    A simple contrast simulator that only preprocesses the input volume by mapping HU values to attenuation coefficients, 
+    without adding any contrast effect. 
+    This can be used to verify the effect of preprocessing alone.
+    """
+    def __init__(
+        self, 
+        mu_water_dsa: float = MU_WATER,    # 水衰减系数 (mm^-1)
+        mu_idodine: float = MU_IDODINE,    # 碘化钠对比剂衰减系数 (mm^-1)
+    ):
+        """
+        adjust the contrast of coronary and cavity by simple multiplication
+        """
+        self.mu_idodine = mu_idodine
+        self.mu_water_dsa = mu_water_dsa
+
+    def preprocess(
+        self,
+        ori_volume: torch.Tensor,
+        cavity_label: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Convert HU image to baseline attenuation map and normalize cavity/threshold regions to water baseline.
+        """
+        res = ori_volume.clone()
+        res = res / 1000.0 * self.mu_water_dsa + self.mu_water_dsa  # HU -> attenuation
+        # Invalid HU values -> zero attenuation
+        res[ori_volume < -2000] = 0.0
+        return res
+    
+    def simulate(
+        self, 
+        ori_volume: torch.Tensor,   # assumed preprocessed baseline (attenuation-like)
+        cavity_label: torch.Tensor,
+        coronary_label: torch.Tensor
+    ) -> torch.Tensor:
+        # MultipliContrast is static by design
+        assert self.contrast_change_over_time == False, "MultipliContrast does not support contrast change over time"
+        # `ori_volume` is expected to be a preprocessed attenuation-like baseline
+        return ori_volume
+
+
+    
+    def simulate_with_time(
+        self, 
+        ori_volume: torch.Tensor,
+        cavity_label: torch.Tensor,
+        coronary_label: torch.Tensor,
+        time: float
+    ) -> torch.Tensor:
+        import warnings
+        warnings.warn("MultipliContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
+        return self.simulate(ori_volume, cavity_label, coronary_label)

@@ -1,74 +1,131 @@
 from pathlib import Path
+from enum import StrEnum
 from functools import lru_cache
+import warnings
 
-from generate_4d_heart.rotate_dsa.data_reader import VolumesReader, VolumeDVFReader, StaticVolumeReader, CoronarySeprateEnhancer, RBFReader
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast, IdentityContrast
 
-test_root_dir = Path(__file__).parent
-test_data_root_dir = test_root_dir / "test_data"
-output_root_dir = test_root_dir / "output"
+from generate_4d_heart.rotate_dsa.data_reader import (
+    VolumesReader, VolumeDVFReader, StaticVolumeReader, RBFReader,
+    CoronaryBoundLVLinearEnhancer, CoronaryBoundLVEnhancer, StaticLabelReader, DataReader, IdentityMovementEnhancer
+)
+from generate_4d_heart.rotate_dsa.contrast_simulator import (
+    MultipliContrast, ThresholdMultipliContrast, IdentityContrast, 
+    SimplePreprocessContrast, ContrastSimulator, FlowContrast
+)
 
-def get_volumes_reader():
-    volumes_dir = test_data_root_dir / "volumes"
-    assert test_data_root_dir.exists()
+
+TEST_ROOT_DIR = Path(__file__).parent
+TEST_DATA_ROOT_DIR = TEST_ROOT_DIR / "test_data"
+OUTPUT_ROOT_DIR = TEST_ROOT_DIR / "output"
+
+
+
+# --- Dynamic reader functory
+
+class ReaderName(StrEnum):
+    VOLUMES_READER = "volumes_reader"
+    VOLUME_DVF_READER = "volume_dvf_reader"
+    RBF_READER = "rbf_reader"
+    STATIC_VOLUME_READER = "static_volume_reader"
+    STATIC_LABEL_READER = "static_label_reader"
     
-    return VolumesReader(
-        image_dir=volumes_dir / "image",
-        cavity_dir=volumes_dir / "cavity",
-        coronary_dir=volumes_dir / "coronary"
-    )
-
-def get_volume_dvf_reader():
-    data_dir = test_data_root_dir / "volume_with_dvf"
-    return VolumeDVFReader(
-        image_nii=data_dir / "image.nii.gz",
-        cavity_nii=data_dir / "cavity.nii.gz",
-        coronary_nii=data_dir / "coronary.nii.gz",
-        dvf_dir=data_dir / "dvf",
-        roi_json=data_dir / "Normal_01.json",
-        movement_enhancer=CoronarySeprateEnhancer()
-    )
-
-def get_static_volume_reader():
-    data_dir = test_data_root_dir / "volume_with_dvf"
-    return StaticVolumeReader(
-        image_path=data_dir / "image.nii.gz",
-        cavity_path=data_dir / "cavity.nii.gz",
-        coronary_path=data_dir / "coronary.nii.gz",
-    )
-
-def get_rbf_reader():
-    data_dir = test_data_root_dir / "volume_with_dvf"
-    return RBFReader(
-        volume_nii=data_dir / "image.nii.gz",
-        cavity_nii=data_dir / "cavity.nii.gz",
-        coronary_nii=data_dir / "coronary.nii.gz",
-        contrast_simulator=IdentityContrast()
-    )
-
-@lru_cache(maxsize=None)
-def get_reader(reader_name: str):
-    print("Creating readers...")  # 可用于验证只执行一次
-    match reader_name:
-        case "volumes_reader":
-            return get_volumes_reader()
-        case "volume_dvf_reader":
-            return get_volume_dvf_reader()
-        case "static_volume_reader":
-            return get_static_volume_reader()
-        case "rbf_reader":
-            return get_rbf_reader()
-        case _:
-            raise ValueError(f"Unknown reader name: {reader_name}")
-
-@lru_cache(maxsize=None)
-def get_simulator(simulator_name: str):
-    print("Creating simulators...")  # 可用于验证只执行一次
+    @classmethod
+    def to_list(cls) -> list[str]:
+        return [reader.value for reader in ReaderName]
     
+    @classmethod
+    def to_tuple(cls) -> tuple[str, ...]:
+        return tuple(cls.to_list())
+
+
+class SimulatorName(StrEnum):
+    MULTIPLI_CONTRAST = "multipli_contrast"
+    THRESHOLD_MULTIPLI_CONTRAST = "threshold_multipli_contrast"
+    IDENTITY_CONTRAST = "identity_contrast"
+    SIMPLE_PREPROCESS_CONTRAST = "simple_preprocess_contrast"
+    FLOW_CONTRAST = "flow_contrast"
+    
+    @classmethod
+    def to_list(cls) -> list[str]:
+        return [sim.value for sim in SimulatorName]
+    
+    @classmethod
+    def to_tuple(cls) -> tuple[str, ...]:
+        return tuple(cls.to_list())
+
+
+
+@lru_cache(maxsize=5)
+def simulator_factory(
+    simulator_name: SimulatorName
+) -> ContrastSimulator:
     match simulator_name:
-        case "multipli_contrast":
+        case SimulatorName.MULTIPLI_CONTRAST:
             return MultipliContrast()
-        case "threshold_multipli_contrast":
+        case SimulatorName.THRESHOLD_MULTIPLI_CONTRAST:
             return ThresholdMultipliContrast()
+        case SimulatorName.IDENTITY_CONTRAST:
+            return IdentityContrast()
+        case SimulatorName.SIMPLE_PREPROCESS_CONTRAST:
+            return SimplePreprocessContrast()
+        case SimulatorName.FLOW_CONTRAST:
+            return FlowContrast()
         case _:
-            raise ValueError(f"Unknown simulator name: {simulator_name}")
+            raise ValueError(f"Unsupported simulator name: {simulator_name}")
+
+
+def reader_factory(
+    simulator_name: SimulatorName,
+    reader_name: ReaderName,
+    data_root_dir: Path = TEST_DATA_ROOT_DIR
+) -> tuple[ContrastSimulator, DataReader]:
+    volumes_dir = data_root_dir / "volumes"
+    volume_dvf_dir = data_root_dir / "volume_with_dvf"
+    
+    simulator = simulator_factory(simulator_name)
+    
+    match reader_name:
+        case ReaderName.VOLUMES_READER:
+            reader = VolumesReader(
+                image_dir=volumes_dir / "image",
+                cavity_dir=volumes_dir / "cavity",
+                coronary_dir=volumes_dir / "coronary",
+                contrast_simulator=simulator
+            )
+        case ReaderName.VOLUME_DVF_READER:
+            reader = VolumeDVFReader(
+                volume_nii=volume_dvf_dir / "image.nii.gz",
+                cavity_nii=volume_dvf_dir / "cavity.nii.gz",
+                coronary_nii=volume_dvf_dir / "coronary.nii.gz",
+                dvf_dir=volume_dvf_dir / "dvf",
+                roi_json=volume_dvf_dir / "Normal_01.json",
+                movement_enhancer=CoronaryBoundLVLinearEnhancer(),
+                contrast_simulator=simulator
+            )
+        case ReaderName.RBF_READER:
+            reader = RBFReader(
+                volume_nii=volume_dvf_dir / "image.nii.gz",
+                cavity_nii=volume_dvf_dir / "cavity.nii.gz",
+                coronary_nii=volume_dvf_dir / "coronary.nii.gz",
+                contrast_simulator=simulator
+            )
+        case ReaderName.STATIC_VOLUME_READER:
+            reader = StaticVolumeReader(
+                volume_path=volume_dvf_dir / "image.nii.gz",
+                cavity_path=volume_dvf_dir / "cavity.nii.gz",
+                coronary_path=volume_dvf_dir / "coronary.nii.gz",
+                contrast_simulator=simulator
+            )
+        case ReaderName.STATIC_LABEL_READER:
+            reader = StaticLabelReader(
+                cavity_path=volume_dvf_dir / "cavity.nii.gz",
+                coronary_path=volume_dvf_dir / "coronary.nii.gz",
+                contrast_simulator=simulator
+            )
+        case _:
+            raise ValueError(f"Unsupported reader name: {reader_name}")
+        
+    return simulator, reader
+
+
+# --- DRRs

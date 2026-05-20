@@ -120,7 +120,7 @@ class RotateDSA:
             frames[f] = drr_res
             
             label, depth_map = self.label_plotter.render(
-                coronary.mesh_in_world,
+                coronary.mesh_centering,
                 *self.drr.get_R_T_at_frame(f)
             )
             labels[f] = label
@@ -151,7 +151,7 @@ class RotateDSA:
             read_res = self.reader.get_data(phase, coronary_type).to_device(self.drr.device)
             
             label, depth_map = label, depth_map = self.label_plotter.render(
-                read_res.coronary.mesh_in_world,
+                read_res.coronary.mesh_centering,
                 *self.drr.get_R_T_at_frame(f)
             )
             labels[f] = label
@@ -185,7 +185,7 @@ class RotateDSA:
         
         np.savez_compressed(
             output_dir / "central_line.npz", 
-            self.reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
+            self.reader.get_phase_0_data(coronary_type).coronary.get_coronary_central_line("coronary_centering")
         )
         
         return frames, labels, depth_maps
@@ -213,7 +213,7 @@ class RotateDSA:
         
         np.savez_compressed(
             output_dir / "central_line.npz", 
-            self.reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
+            self.reader.get_phase_0_data(coronary_type).coronary.get_coronary_central_line("coronary_centering")
         )
         
         return labels, depth_maps
@@ -228,7 +228,7 @@ class RotateDSA:
         
         np.savez_compressed(
             output_dir / "central_line.npz", 
-            self.reader.get_phase_0_data(coronary_type).get_coronary_central_line("coroanry_centering")
+            self.reader.get_phase_0_data(coronary_type).coronary.get_coronary_central_line("coronary_centering")
         )
     
     

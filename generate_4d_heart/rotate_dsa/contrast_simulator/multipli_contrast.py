@@ -51,10 +51,10 @@ class MultipliContrast(ContrastSimulator):
         # `ori_volume` is expected to be a preprocessed attenuation-like baseline
         res = ori_volume.clone()
         assert cavity_label.dtype == torch.uint8
-        assert coronary_label.dtype == torch.bool
+        assert coronary_label.dtype == torch.bool or coronary_label.dtype == torch.uint8
 
         # Coronary voxels should be set to iodine attenuation
-        res[coronary_label] = self.mu_idodine
+        res[coronary_label > 0] = self.mu_idodine
         return res
 
 

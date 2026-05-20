@@ -8,7 +8,7 @@ import numpy as np
 from monai.networks.blocks.warp import DVF2DDF, Warp
 import numpy as np
 
-from . import NUM_TOTAL_PHASE, LV_LABEL
+from . import NUM_TOTAL_PHASE
 from .roi import ROI
 from .saver import save_nii
 from .rotate_dsa.data_reader.data_reader import load_and_zoom_dvf

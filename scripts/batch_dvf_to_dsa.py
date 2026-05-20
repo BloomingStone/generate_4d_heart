@@ -100,11 +100,11 @@ class BatchDVFToDSA:
             affine=phase_0_data.coronary.centering_affine,
             is_label=True
         )
-        phase_0_data.coronary.mesh_in_world.save(output_case_dir / f"{coronary_type}_mesh.vtk")
+        phase_0_data.coronary.mesh_original.save(output_case_dir / f"{coronary_type}_mesh.vtk")
 
         dsa = RotateDSA(
-            reader, MultipliContrast(), 
-            TorchDRR(rotate_cfg=self._get_rotate_param())
+            reader=reader,
+            drr=TorchDRR(rotate_cfg=self._get_rotate_param())
         )
         
         if self.only_output_label:
@@ -128,8 +128,13 @@ class BatchDVFToDSA:
             
             try:
                 reader = VolumeDVFReader(
-                    p["image_nii"], p["cavity_nii"], p["coronary_nii"], 
-                    p["roi_json"], p["sub_dvf_dir"], enhancer,
+                    volume_nii=p["image_nii"],
+                    cavity_nii=p["cavity_nii"],
+                    coronary_nii=p["coronary_nii"],
+                    roi_json=p["roi_json"],
+                    dvf_dir=p["sub_dvf_dir"],
+                    contrast_simulator=MultipliContrast(),
+                    movement_enhancer=enhancer,
                     recover_cropped_data=self.recover_cropped_data
                 )
             except Exception as e:

@@ -64,10 +64,10 @@ class BatchDVFToDSA:
         self.output_mode_2d = OutputMode2D(output_mode_2d)
         output_model_3d = set(OutputMode3D(m) for m in output_mode_3d)
         self.output_mode_3d = output_model_3d
-        self.output_phase_3d = CardiacPhase(output_phase_3d)
+        self.output_phase_3d = CardiacPhase.from_time(output_phase_3d, 1.0)
         self.otuput_phase_3d_str = self.output_phase_3d.to_str(precision=2, has_decimal_point=False)
-        assert self.output_phase_3d_num >= 1, "output_phase_3d_num should be greater than or equal to 1"
         self.output_phase_3d_num = output_phase_3d_num
+        assert self.output_phase_3d_num >= 1, "output_phase_3d_num should be greater than or equal to 1"
 
         dirs = (image_dir, coronary_dir, cavity_dir)
         for d in dirs:
@@ -112,7 +112,7 @@ class BatchDVFToDSA:
                 case OutputMode3D.VOLUME:
                     save_nii(
                         output_case_dir / f"{self.otuput_phase_3d_str}_image.nii.gz",
-                        data_3d.volume,
+                        data_3d.coronary.volume,        # 注意这里是已经经过了contrast simulator的处理, 冠脉区域强度增强的volume
                         affine=data_3d.affine,
                         is_label=False
                     )
@@ -131,7 +131,7 @@ class BatchDVFToDSA:
                         is_label=True
                     )
                 case OutputMode3D.COR_MESH:
-                    data_3d.coronary.mesh_in_world.save(output_case_dir / f"{coronary_type}_{self.otuput_phase_3d_str}_mesh.vtk")
+                    data_3d.coronary.mesh_centering.save(output_case_dir / f"{coronary_type}_{self.otuput_phase_3d_str}_mesh.vtk")
                 case _:
                     raise ValueError(f"output_mode_3d {mode} not supported")
 
@@ -140,7 +140,7 @@ class BatchDVFToDSA:
         if self.output_mode_2d == "null":
             return
         
-        dsa = RotateDSA( reader, self.constrast_simulator, self.torch_drr )
+        dsa = RotateDSA(reader=reader, drr=self.torch_drr)
         
         match self.output_mode_2d:
             case OutputMode2D.DRR:
@@ -182,7 +182,10 @@ class BatchDVFToDSA:
             
             try:
                 reader = RBFReader(
-                    p["image_nii"], p["cavity_nii"], p["coronary_nii"],
+                    volume_nii=p["image_nii"],
+                    cavity_nii=p["cavity_nii"],
+                    coronary_nii=p["coronary_nii"],
+                    contrast_simulator=self.constrast_simulator,
                 )
             except Exception as e:
                 logging.exception(f"{image_nii} failed due to error: {e}")

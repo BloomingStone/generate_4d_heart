@@ -1,17 +1,20 @@
 import math
+from typing import ClassVar
 from dataclasses import dataclass
 
-@dataclass
+DEFAULT_BINS = 1_000_000
+
+@dataclass(frozen=True)
 class CardiacPhase:
     """
     Cardiac phase class, representing the phase value range in the cardiac cycle: [0, 1), 
     where 0 indicates the beginning of the cycle and close to 1 indicates the end of the cycle
     """
-    phase: float
+    tick: int           # tick \in [0, bins-1], the index of the phase in the cardiac cycle
+    bins: ClassVar[int] = DEFAULT_BINS   # the total number of bins to discretize the cardiac cycle, default is 10000 for high precision
     
     def __post_init__(self):
-        if not isinstance(self.phase, (int, float)) or self.phase < 0 or self.phase >= 1:
-            raise ValueError("phase must be a number in the range of [0, 1)")
+        assert isinstance(self.tick, int) and 0 <= self.tick < self.bins, "tick must be an integer in the range of [0, bins)"
     
     @staticmethod
     def from_index(index: int, total_phases: int) -> "CardiacPhase":
@@ -20,7 +23,9 @@ class CardiacPhase:
         """
         assert isinstance(total_phases, int) and total_phases > 0, "total_phases must be a positive integer"
         assert isinstance(index, int) and index >= 0 and index < total_phases, "index must be a non-negative integer less than total_phases"
-        return CardiacPhase(index / total_phases)
+        
+        tick = index * CardiacPhase.bins // total_phases
+        return CardiacPhase(tick=tick)
     
     
     @staticmethod
@@ -31,71 +36,56 @@ class CardiacPhase:
         """
         assert isinstance(cardiac_cycle_time, (int, float)) and cardiac_cycle_time > 0, "cardiac_cycle_time must be a positive number"
         assert isinstance(t, (int, float)) and t >= 0, "t must be a positive number"
-        return CardiacPhase((t % cardiac_cycle_time) / cardiac_cycle_time)
-    
-    
-    def closest_index_floor(self, total_phases: int) -> int:
-        """
-        Return the closest index to the phase value, rounding down to the nearest integer
-        """
-        assert isinstance(total_phases, int) and total_phases > 0, "total_phases must be a positive integer"
-        
-        return math.floor(self.phase * total_phases)
-    
-    def closest_index_ceil(self, total_phases: int) -> int:
-        """
-        Return the closest index to the phase value, rounding down to the nearest integer,
-        the index in [0, total_phases) ^ N
-        """
-        assert isinstance(total_phases, int) and total_phases > 0, "total_phases must be a positive integer"
-        
-        res = math.ceil(self.phase * total_phases)
-        if res == total_phases:
-            res = 0
-        
-        return res
+        phase = (t % cardiac_cycle_time) / cardiac_cycle_time
+        tick = round(phase * CardiacPhase.bins) % CardiacPhase.bins
+        if tick == CardiacPhase.bins:
+            tick = 0
+        return CardiacPhase(tick=tick)
 
+    def lower_index(self, total_phases: int) -> int:
+        assert total_phases > 0
+        return (self.tick * total_phases) // self.bins
+    
+    def upper_index(self, total_phases: int, overflow_to_loop: bool = True) -> int:
+        assert total_phases > 0
+        floor = self.lower_index(total_phases)
+        ceil = floor + 1
+        if overflow_to_loop:
+            ceil = ceil % total_phases
+        else:
+            ceil = min(ceil, total_phases - 1)
+        return ceil
 
     def __float__(self):
-        return self.phase
+        return self.tick / self.bins
+    
+    def __format__(self, format_spec):
+        return format(float(self), format_spec)
     
     def __repr__(self):
-        return f"CardiacPhase({self.phase:.4f})"
+        return f"CardiacPhase({float(self):.4f})"
     
     def __str__(self):
-        return f"{self.phase:.4f}"
+        return f"{float(self):.4f}"
     
     def to_str(self, precision: int = 4, has_decimal_point: bool = True) -> str:
         if has_decimal_point:
-            return f"{self.phase:.{precision}f}"
+            return f"{self:.{precision}f}"
         else:
-            return f"{self.phase:.{precision}f}".replace('.', '_')
+            return f"{float(self):.{precision}f}".replace('.', '_')
     
-    def __eq__(self, other):
+    def __add__(self, other: "CardiacPhase"):
         if isinstance(other, CardiacPhase):
-            return abs(self.phase - other.phase) < 1e-5
-        elif isinstance(other, (int, float)):
-            return abs(self.phase - other) < 1e-5
-        return False
-    
-    def __add__(self, other):
-        if isinstance(other, CardiacPhase):
-            new_phase = self.phase + other.phase
-        elif isinstance(other, (int, float)):
-            new_phase = self.phase + other
+            tick = (self.tick + other.tick) % self.bins
         else:
             return NotImplemented
         
-        new_phase = new_phase % 1.0  # make sure it's in the range of [0, 1)
-        return CardiacPhase(new_phase)
+        return CardiacPhase(tick=tick)
     
-    def __sub__(self, other):
+    def __sub__(self, other: "CardiacPhase"):
         if isinstance(other, CardiacPhase):
-            diff = self.phase - other.phase
-        elif isinstance(other, (int, float)):
-            diff = self.phase - other
+            tick = (self.tick - other.tick) % self.bins
         else:
             return NotImplemented
         
-        diff = diff % 1.0   # # make sure it's in the range of [0, 1)
-        return CardiacPhase(diff)
+        return CardiacPhase(tick=tick)

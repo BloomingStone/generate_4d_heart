@@ -8,10 +8,8 @@ from threading import Thread, Lock
 from tqdm import tqdm
 import numpy as np
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
-from generate_4d_heart.rotate_dsa.data_reader import RBFReader
-from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
-from generate_4d_heart.rotate_dsa import RotateDSA
+from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
+from generate_4d_heart.rotate_dsa.data_reader import RBFReader, DataReaderResult
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_nii
 
@@ -115,19 +113,19 @@ class BatchDVFToDSA:
             else:
                 save_nii(output_path, volume, affine)
 
-        def save_phase_data(phase_str: str, data, affine):
+        def save_phase_data(phase_str: str, data: DataReaderResult, affine):
             if OutputMode3D.COR_LABEL in self.output_mode_3d:
                 output_path = output_case_dir / f"{case_name}_cor-label_{coronary_type}" / f"phase_{phase_str}.nii.gz"
                 save_cor_label(output_path, data.coronary.label, data.coronary.centering_affine)
             if OutputMode3D.COR_MESH in self.output_mode_3d:
                 output_path = output_case_dir / f"{case_name}_cor-mesh_{coronary_type}" / f"phase_{phase_str}.vtk"
-                save_cor_mesh(output_path, data.coronary.mesh_in_world)
+                save_cor_mesh(output_path, data.coronary.mesh_centering)
             if OutputMode3D.CAVITY_LABEL in self.output_mode_3d:
                 output_path = output_case_dir / f"{case_name}_cavity-label" / f"phase_{phase_str}.nii.gz"
                 save_cavity_label(output_path, data.cavity_label, affine)
             if OutputMode3D.VOLUME in self.output_mode_3d:
                 output_path = output_case_dir / f"{case_name}_volume" / f"phase_{phase_str}.nii.gz"
-                save_volume(output_path, data.volume, affine)
+                save_volume(output_path, data.coronary.volume, affine)
 
         save_buffer: Queue = Queue(maxsize=self.save_buffer_size)
 
@@ -152,8 +150,8 @@ class BatchDVFToDSA:
             worker.start()
 
         try:
-            for phase in tqdm(np.linspace(0, 1, self.output_3d_num, endpoint=False), desc=f"Generating 4D data - {case_name} - {coronary_type}"):
-                cardiac_phase = CardiacPhase(phase)
+            for phase_index in tqdm(range(self.output_3d_num), desc=f"Generating 4D data - {case_name} - {coronary_type}"):
+                cardiac_phase = CardiacPhase.from_index(phase_index, self.output_3d_num)
                 phase_str = cardiac_phase.to_str(precision=2, has_decimal_point=False)
                 data = reader.get_data(cardiac_phase, coronary_type)
                 affine = reader.volume_affine
@@ -182,7 +180,10 @@ class BatchDVFToDSA:
             
             try:
                 reader = RBFReader(
-                    p["image_nii"], p["cavity_nii"], p["coronary_nii"],
+                    volume_nii=p["image_nii"],
+                    cavity_nii=p["cavity_nii"],
+                    coronary_nii=p["coronary_nii"],
+                    contrast_simulator=IdentityContrast()   # No contrast change for RBFReader in 4D generation
                 )
             except Exception as e:
                 logging.exception(f"{image_nii} failed due to error: {e}")
@@ -198,9 +199,9 @@ class BatchDVFToDSA:
 
 @app.default()
 def main(
-    dataset_names: list[Literal["asoca-normal", "asoca-diseased"]],
+    dataset_name: Literal["asoca-normal", "asoca-diseased"],
     output_root: Path,
-    output_mode_3d: list[OutputMode3D] = [OutputMode3D.COR_LABEL, OutputMode3D.COR_MESH, OutputMode3D.CAVITY_LABEL, OutputMode3D.VOLUME],
+    output_mode_3d: list[OutputMode3D] = [OutputMode3D.COR_LABEL, OutputMode3D.COR_MESH],
     output_3d_num: int = 20
 ):
     """
@@ -212,39 +213,38 @@ def main(
     output_mode_3d: list of output modes for 3D data, can be "cor-label", "cor-mesh", "cavity-label" or "volume", default is ["cor-label", "cor-mesh"]
     output_3d_num: number of 3D phases to output in one phase, default is 20
     """
-    for d in dataset_names:
-        d = d.lower()
-    
-        match d:
-            case "asoca-normal":
-                print(f"{d} -- {output_root}")
-                origin_dir = Path("/media/E/sj/Data/ASOCA/Normal/normal_gen_4d")
-                dsa = BatchDVFToDSA(
-                    image_dir=origin_dir/"CTCA_nii",
-                    coronary_dir=origin_dir/"coronary",
-                    cavity_dir=origin_dir/"cavity",
-                    output_root=output_root,
-                    dataset_name=d,
-                    output_mode_3d=output_mode_3d,
-                    output_3d_num=output_3d_num
-                )
-            case "asoca-diseased":
-                print(f"{d} -- {output_root}")
-                origin_dir = Path("/media/E/sj/Data/ASOCA/Diseased_partial")
-                dsa = BatchDVFToDSA(
-                    image_dir=origin_dir/"CTCA_nii",
-                    coronary_dir=origin_dir/"coronary",
-                    cavity_dir=origin_dir/"cavity",
-                    output_root=output_root,
-                    dataset_name=d,
-                    output_mode_3d=output_mode_3d,
-                    output_3d_num=output_3d_num
-                )
-            case _:
-                print(f"{d} not supported")
-                raise ValueError(f"{d} not supported")
-    
-        dsa.run()
+    d = dataset_name.lower()
+
+    match d:
+        case "asoca-normal":
+            print(f"{d} -- {output_root}")
+            origin_dir = Path("/media/E/sj/Data/ASOCA/Normal/normal_gen_4d")
+            dsa = BatchDVFToDSA(
+                image_dir=origin_dir/"CTCA_nii",
+                coronary_dir=origin_dir/"coronary",
+                cavity_dir=origin_dir/"cavity",
+                output_root=output_root,
+                dataset_name=d,
+                output_mode_3d=output_mode_3d,
+                output_3d_num=output_3d_num
+            )
+        case "asoca-diseased":
+            print(f"{d} -- {output_root}")
+            origin_dir = Path("/media/E/sj/Data/ASOCA/Diseased_partial")
+            dsa = BatchDVFToDSA(
+                image_dir=origin_dir/"CTCA_nii",
+                coronary_dir=origin_dir/"coronary",
+                cavity_dir=origin_dir/"cavity",
+                output_root=output_root,
+                dataset_name=d,
+                output_mode_3d=output_mode_3d,
+                output_3d_num=output_3d_num
+            )
+        case _:
+            print(f"{d} not supported")
+            raise ValueError(f"{d} not supported")
+
+    dsa.run()
 
 if __name__ == "__main__":
     app()

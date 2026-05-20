@@ -1,87 +1,53 @@
 from pathlib import Path
 from typing import Literal
-from dataclasses import dataclass, field
 
 import torch
-from torch import Tensor
 import numpy as np
 
-from .data_reader import DataReader, DataReaderResult, Coronary, separate_coronary, load_nifti, get_coronary_centering_affine, get_mesh_in_world
-from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
-from generate_4d_heart import NUM_TOTAL_PHASE
+from .data_reader import DataReader, DataReaderResult, Coronary, load_nifti
+from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator, IdentityContrast
 from ..cardiac_phase import CardiacPhase
 from ..types import CoronaryType
-
-
-@dataclass
-class _Data:
-    device: torch.device
-    image: Tensor
-    cavity: Tensor
-    affine: np.ndarray
-    lca: Tensor
-    rca: Tensor
-    lca_centering_affine: np.ndarray = field(init=False)
-    rca_centering_affine: np.ndarray = field(init=False)
-    
-    def __post_init__(self):
-        self.lca_centering_affine = get_coronary_centering_affine(self.lca, self.affine, self.device)
-        self.rca_centering_affine = get_coronary_centering_affine(self.rca, self.affine, self.device)
-    
-    @property
-    def all_coronary_label(self) -> Tensor:
-        res = self.lca.clone().to(torch.uint8)
-        res += self.rca
-        return res
-
 
 class StaticVolumeReader(DataReader):
     def __init__(
         self, 
-        image_path: Path,
+        volume_path: Path,
         cavity_path: Path,
         coronary_path: Path,
+        contrast_simulator: ContrastSimulator,
         device: torch.device = torch.device("cuda:0")
     ):
-        self.image_nii = image_path
+        self.volume_nii = volume_path
         self.cavity_nii = cavity_path
         self.coronary_nii = coronary_path
         if not torch.cuda.is_available() and torch.cuda.device_count() < 2:
             raise RuntimeError("No CUDA device available for VolumeDVFReader")
         self.device = device
         # default contrast simulator: identity (no change)
-        self.contrast_simulator = IdentityContrast()
-        self._load_3d_data()
+        self.contrast_simulator = contrast_simulator
         
-        self.n_phases: int = 1
-        
-        self.meshes = {
-            CoronaryType.LCA: get_mesh_in_world(self.origin_data.lca, self.origin_data.lca_centering_affine, self.device),
-            CoronaryType.RCA: get_mesh_in_world(self.origin_data.rca, self.origin_data.rca_centering_affine, self.device)
-        }
-    
-    def _load_3d_data(self):
-        image, affine = load_nifti(self.image_nii)
+        volume, affine = load_nifti(self.volume_nii)
         assert affine is not None
         
         cavity, cavity_affine = load_nifti(self.cavity_nii, is_label=True)
         coronary, coronary_affine = load_nifti(self.coronary_nii, is_label=True)
         assert np.allclose(affine, cavity_affine)
         assert np.allclose(affine, coronary_affine)
-        
-        lca, rca = separate_coronary(coronary, self.device)        
-        # Preprocess baseline image and optionally simulate coronary for static simulators
-        image = self.contrast_simulator.preprocess(image, cavity)
-        if not self.contrast_simulator.contrast_change_over_time:
-            image = self.contrast_simulator.simulate(image, cavity, coronary)
 
-        self.origin_data = _Data(
-            self.device, image, cavity, affine, 
-            lca, rca
+        self._data = self._Data.init_from_volume(
+            volume=volume,
+            cavity=cavity,
+            coronary=coronary,
+            affine=affine,
+            running_device=self.device,
+            contrast_simulator=self.contrast_simulator
         )
 
-        self._origin_volume_size = image.shape[2:]   #type: ignore
+        self._origin_volume_size = volume.shape[2:]   #type: ignore
         self._origin_volume_affine = affine
+        
+        self.n_phases: int = 1
 
     
     def get_data(
@@ -90,25 +56,30 @@ class StaticVolumeReader(DataReader):
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
         global_time: float = 0.0,
     ) -> DataReaderResult:
-        coronary_type = CoronaryType(coronary_type)
-            
-        if coronary_type == CoronaryType.LCA:
-            coronary_label = self.origin_data.lca
-            coronary_centering_affine = self.origin_data.lca_centering_affine
-        else:
-            coronary_label = self.origin_data.rca
-            coronary_centering_affine = self.origin_data.lca_centering_affine
+        cor_type = CoronaryType(coronary_type)
+        cor = self._data[cor_type]
+        volume = cor.volume 
+        
+        if self.contrast_simulator.contrast_change_over_time:
+            # For dynamic contrast simulators, simulate with time information
+            volume = self.contrast_simulator.simulate_with_time(
+                volume, 
+                self._data.cavity, 
+                cor.label, 
+                global_time
+            )
         
         return DataReaderResult(
             phase=phase,
-            cavity_label=self.origin_data.cavity.cpu().to(torch.uint8),
+            cavity_label=self._data.cavity.cpu().to(torch.uint8),
             affine=self._origin_volume_affine,
             coronary=Coronary(
-                type=coronary_type,
-                volume=self.origin_data.image.cpu(),
-                label=coronary_label.cpu().to(torch.bool),
-                centering_affine=coronary_centering_affine,
-                mesh_in_world=self.meshes[coronary_type]
+                type=cor_type,
+                volume=volume.cpu(),
+                label=cor.label.cpu().to(torch.bool),
+                original_affine=cor.original_affine,
+                centering_affine=cor.centering_affine,
+                mesh_original=cor.mesh_original
             )
         )
 
@@ -117,70 +88,59 @@ class StaticVolumeReader(DataReader):
 
     @property
     def lca_centering_affine(self) -> np.ndarray:
-        return self.origin_data.lca_centering_affine
+        return self._data.lca.centering_affine
     
     @property
     def rca_centering_affine(self) -> np.ndarray:
-        return self.origin_data.rca_centering_affine
+        return self._data.rca.centering_affine
 
-class StaticLabelReader(DataReader):
+
+class StaticLabelReader(StaticVolumeReader):
     def __init__(
         self, 
         cavity_path: Path,
         coronary_path: Path,
+        contrast_simulator: ContrastSimulator,
         device: torch.device = torch.device("cuda:0")
     ):
+        self.cavity_nii = cavity_path
+        self.coronary_nii = coronary_path
+        if not torch.cuda.is_available() and torch.cuda.device_count() < 2:
+            raise RuntimeError("No CUDA device available for VolumeDVFReader")
         self.device = device
-        self.n_phases: int = NUM_TOTAL_PHASE
         # default contrast simulator: identity (no change)
-        self.contrast_simulator = IdentityContrast()
-        self.cavity, _ = load_nifti(cavity_path, is_label=True)
-        coronary, self._origin_volume_affine = load_nifti(coronary_path, is_label=True)
-        self.lca_label, self.rca_label = separate_coronary(coronary, self.device)
-        self._origin_volume_size = self.cavity.shape[-3:]   #type: ignore
-        self._lca_centering_affine = get_coronary_centering_affine(self.lca_label, self._origin_volume_affine, self.device)
-        self._rca_centering_affine = get_coronary_centering_affine(self.rca_label, self._origin_volume_affine, self.device)
-        self.meshes = {
-            CoronaryType.LCA: get_mesh_in_world(self.lca_label, self._lca_centering_affine, self.device),
-            CoronaryType.RCA: get_mesh_in_world(self.rca_label, self._rca_centering_affine, self.device)
-        }
-    
-    
-    def get_data(
-        self,
-        phase: CardiacPhase,
-        coronary_type: CoronaryType | Literal["LCA", "RCA"],
-        global_time: float = 0.0,
-    ) -> DataReaderResult:
-        coronary_type = CoronaryType(coronary_type)
+        self.contrast_simulator = contrast_simulator
         
-        if coronary_type == CoronaryType.LCA:
-            coronary_label = self.lca_label
-            coronary_centering_affine = self._lca_centering_affine
-        else:
-            coronary_label = self.rca_label
-            coronary_centering_affine = self._rca_centering_affine
+        self.volume_nii = None  # StaticLabelReader does not use volume data
+
         
-        return DataReaderResult(
-            phase=phase,
-            cavity_label=self.cavity.cpu().to(torch.uint8),
-            affine=self._origin_volume_affine,
-            coronary=Coronary(
-                type=coronary_type,
-                volume=coronary_label.cpu(),
-                label=coronary_label.cpu().to(torch.bool),
-                centering_affine=coronary_centering_affine,
-                mesh_in_world=self.meshes[coronary_type]
-            )
+        cavity, cavity_affine = load_nifti(self.cavity_nii, is_label=True)
+        coronary, coronary_affine = load_nifti(self.coronary_nii, is_label=True)
+        assert np.allclose(coronary_affine, cavity_affine)
+
+        self._data = self._Data.init_from_volume(
+            volume=torch.zeros_like(cavity, dtype=torch.float32),  # StaticLabelReader does not use volume data, but we need to provide a dummy volume for contrast simulation
+            cavity=cavity,
+            coronary=coronary,
+            affine=cavity_affine,
+            running_device=self.device,
+            contrast_simulator=None
         )
+        if not self.contrast_simulator.contrast_change_over_time:
+            print("Applying STATIC contrast simulation to original volume for StaticLabelReader...")
+            self._data.lca.volume = self.contrast_simulator.simulate(
+                self._data.lca.volume, 
+                self._data.cavity, 
+                self._data.lca.label
+            )
+            self._data.rca.volume = self.contrast_simulator.simulate(
+                self._data.rca.volume, 
+                self._data.cavity, 
+                self._data.rca.label
+            )
 
-    def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        return self.get_data(CardiacPhase(0), coronary_type)
-
-    @property
-    def lca_centering_affine(self) -> np.ndarray:
-        return self._lca_centering_affine
-    
-    @property
-    def rca_centering_affine(self) -> np.ndarray:
-        return self._rca_centering_affine
+        self._origin_volume_size = cavity.shape[2:]   #type: ignore
+        self._origin_volume_affine = cavity_affine
+        
+        self.n_phases: int = 1
+        

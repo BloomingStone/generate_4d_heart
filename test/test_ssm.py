@@ -4,31 +4,29 @@ import pyvista as pv
 import nibabel as nib
 from pathlib import Path
 from generate_4d_heart.ssm.ssm import SSMReader
-import logging
 import pyvista as pv
 from pyvista import CameraPosition
 
 @pytest.fixture(scope="module")
-def test_data_dir():
-    # 假设测试数据路径
-    return Path(__file__).parent.parent / "test" / "test_data" / "volume_with_dvf"
+def output_dir(output_root_dir: Path) -> Path   :
+    return output_root_dir / "ssm_test"
 
 @pytest.fixture(scope="module")
-def output_dir():
-    return Path(__file__).parent.parent / "test" / "output" / "ssm_test"
+def cavity_img(volume_dvf_dir: Path) -> nib.Nifti1Image:
+    return nib.load(volume_dvf_dir / "cavity.nii.gz")   # type: ignore
 
 @pytest.fixture(scope="module")
-def cavity_img(test_data_dir):
-    return nib.load(test_data_dir / "cavity.nii.gz")
-
-@pytest.fixture(scope="module")
-def ssm_reader():
+def ssm_reader() -> SSMReader:
     return SSMReader()
 
-def test_ssm_load_and_deform(cavity_img, ssm_reader, output_dir):
+def test_ssm_load_and_deform(
+    cavity_img: nib.Nifti1Image, 
+    ssm_reader: SSMReader, 
+    output_dir: Path
+):
     # 测试SSM加载和形变
     result = ssm_reader.load(cavity_img)
-    assert hasattr(result, "landmark_with_motion")
+    assert hasattr(result, "landmark")
     assert hasattr(result, "deformed_cavities")
     assert len(result.deformed_cavities) == ssm_reader.n_phases
 

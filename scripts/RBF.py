@@ -409,8 +409,8 @@ class KDTreeRBF(nn.Module):
         points: np.ndarray|torch.Tensor|None = None,
     ) -> torch.Tensor:
         """Calculate the motion for the given phase and points. Return motion tensor on module's device"""
-        idx0 = phase.closest_index_floor(self.n_phases)
-        idx1 = phase.closest_index_ceil(self.n_phases)
+        idx0 = phase.lower_index(self.n_phases)
+        idx1 = phase.upper_index(self.n_phases)
         w = float(phase) * self.n_phases - idx0
         disp = w * self.ctrl_disps[idx1] + (1 - w) * self.ctrl_disps[idx0]
         

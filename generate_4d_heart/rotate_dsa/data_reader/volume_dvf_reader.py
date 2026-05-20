@@ -18,7 +18,7 @@ from torch.utils.dlpack import to_dlpack as tensor2dlpack   #type: ignore
 from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
 from ... import NUM_TOTAL_PHASE, CavityLabel
-from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast, ContrastSimulator
+from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from ...roi import ROI
 from ..types import CoronaryType
 from ..cardiac_phase import CardiacPhase
@@ -27,41 +27,19 @@ from .data_reader import (
     load_nifti, get_mesh_in_voxel, apply_affine, get_mesh_in_world
 )
 
-
-@dataclass
-class _Data:
-    device: torch.device
-    image: Tensor
-    cavity: Tensor
-    affine: np.ndarray
-    lca: Tensor
-    rca: Tensor
-    lca_centering_affine: np.ndarray = field(init=False)
-    rca_centering_affine: np.ndarray = field(init=False)
-    
-    def __post_init__(self):
-        self.lca_centering_affine = get_coronary_centering_affine(self.lca, self.affine, self.device)
-        self.rca_centering_affine = get_coronary_centering_affine(self.rca, self.affine, self.device)
-    
-    @property
-    def all_coronary_label(self) -> Tensor:
-        res = self.lca.clone().to(torch.uint8)
-        res += self.rca
-        return res
-
-
 class LazyCardiacDVFWarpModule(nn.Module):
     """
-    Compute warped image/labels from DVFs stored on CPU.
+    Compute warped volume/labels from DVFs stored on CPU.
     Uses async transfer and small GPU cache for efficiency.
     """
 
     def __init__(
         self,
-        data: _Data,
+        data: DataReader._Data,
         device: torch.device,
         *,
         precomputed_ddf: bool,
+        contrast_simulator: ContrastSimulator,
         dvf_list: list[Tensor] | None = None,   #shape=(1, 3, D, H, W)
         ddf_list: list[Tensor] | None = None    #shape=(2, 3, D, H, W)
     ):
@@ -71,12 +49,13 @@ class LazyCardiacDVFWarpModule(nn.Module):
         self.data = data
         self.device = device
         self.dvf2ddf = DVF2DDF(num_steps=5, mode="bilinear", padding_mode="zeros").to(device).half()
-        self.warp_image = Warp(mode="bilinear", padding_mode="zeros").to(device).half()
-        self.warp_label = Warp(mode="nearest", padding_mode="zeros").to(device).half()
+        self.volume_warper = Warp(mode="bilinear", padding_mode="zeros").to(device).half()
+        self.label_warper = Warp(mode="nearest", padding_mode="zeros").to(device).half()
         self.n_phases = NUM_TOTAL_PHASE     # TODO for now, we only supported total 20 phases
+        self.contrast_simulator = contrast_simulator
 
         spatial_dims = 3
-        self.spatial_size = torch.tensor(self.data.image.shape[-spatial_dims:]).to(device, non_blocking=True)   # (D H W)
+        self.spatial_size = torch.tensor(self.data.cavity.shape[-spatial_dims:]).to(device, non_blocking=True)   # (D H W)
 
         self._gpu_cache_max = 2
         self.gpu_cache = OrderedDict[int, Tensor]()
@@ -86,23 +65,28 @@ class LazyCardiacDVFWarpModule(nn.Module):
         self.ddf_list_cpu = ddf_list
         self.dvf_list_cpu = dvf_list
 
-        self.image = data.image.half().to(device, non_blocking=True)
+        self.lca_volume = data.lca.volume.half().to(device, non_blocking=True)
+        self.rca_volume = data.rca.volume.half().to(device, non_blocking=True)
         self.cavity = data.cavity.half().to(device, non_blocking=True)
         
         # shape = (1, C=2, D H W), c=0: lca, c=1: rca
-        self.coronary = torch.concat((data.lca, data.rca), dim=1).half().to(device, non_blocking=True)
+        lca = data.lca.label
+        rca = data.rca.label
+        self.coronary = torch.concat((lca, rca), dim=1).half().to(device, non_blocking=True)
         
-        def init_branch(branch: Tensor) -> tuple[pv.PolyData, Tensor, Tensor]:
-            mesh_voxel = get_mesh_in_voxel(branch, self.device)
-            points = torch.from_numpy(mesh_voxel.points).half().to(device, non_blocking=True)
+        def init_mesh_points(mesh: pv.PolyData) -> tuple[Tensor, Tensor]:
+            points = torch.from_numpy(mesh.points).half().to(device, non_blocking=True)
             points_norm = points / (self.spatial_size - 1) * 2 - 1   # Norm to [-1, 1]
             points_norm = einops.rearrange(points_norm, "n d -> 1 n 1 1 d")
             index_ordering: list[int] = list(range(spatial_dims - 1, -1, -1))
             points_norm = points_norm[..., index_ordering]  # z, y, x -> x, y, z
-            return mesh_voxel, points, points_norm
+            return points, points_norm
 
-        self.lca_mesh_voxel, self.lca_mesh_points, self.lca_mesh_points_norm = init_branch(data.lca)
-        self.rca_mesh_voxel, self.rca_mesh_points, self.rca_mesh_points_norm = init_branch(data.rca)
+        self.lca_mesh_voxel = self.data.lca.mesh_in_voxel
+        self.rca_mesh_voxel = self.data.rca.mesh_in_voxel
+        
+        self.lca_mesh_points, self.lca_mesh_points_norm = init_mesh_points(self.lca_mesh_voxel)
+        self.rca_mesh_points, self.rca_mesh_points_norm = init_mesh_points(self.rca_mesh_voxel)
 
 
     def _get_maybe_cached_x(self, idx: int) -> Tensor:
@@ -137,12 +121,12 @@ class LazyCardiacDVFWarpModule(nn.Module):
             points = self.lca_mesh_points
             points_norm = self.lca_mesh_points_norm
             mesh: pv.PolyData = self.lca_mesh_voxel.copy()
-            centering_affine = self.data.lca_centering_affine
         else:
             points = self.rca_mesh_points
             points_norm = self.rca_mesh_points_norm
             mesh: pv.PolyData = self.rca_mesh_voxel.copy()
-            centering_affine = self.data.rca_centering_affine
+        
+        original_affine = self.data[coronary_type].original_affine
         
         delta = F.grid_sample(
             ddf_inverse,    # (1, 3, h, w, d)
@@ -154,20 +138,25 @@ class LazyCardiacDVFWarpModule(nn.Module):
         # times centering affine to match label: tansform coronary to the origin of world coordiantes
         new_points = apply_affine(
             points + delta.squeeze().T,   # (n, 3)
-            centering_affine
+            original_affine
         )
         mesh.points = new_points.astype(np.float32)
         return mesh
 
     @torch.inference_mode()
-    def forward(self, phase: CardiacPhase, coronary_type: CoronaryType) -> tuple[
+    def forward(
+        self, 
+        phase: CardiacPhase, 
+        coronary_type: CoronaryType,
+        global_time: float,
+    ) -> tuple[
         Tensor, Tensor, Tensor, pv.PolyData
     ]:
         """
         Compute warped tensors for the given phase ∈ [0,1)
         """
-        idx0 = phase.closest_index_floor(self.n_phases)
-        idx1 = phase.closest_index_ceil(self.n_phases)
+        idx0 = phase.lower_index(self.n_phases)
+        idx1 = phase.upper_index(self.n_phases)
         w = float(phase) * self.n_phases - idx0
 
         # --- async copy from CPU ---
@@ -182,18 +171,27 @@ class LazyCardiacDVFWarpModule(nn.Module):
                 x: Tensor = self.dvf2ddf(torch.cat((x, -x), dim=0))
         ddf = x[0:1]
         ddf_inv = x[1:2]
+        
+        volume = self.lca_volume if coronary_type == CoronaryType.LCA else self.rca_volume
+        if self.contrast_simulator.contrast_change_over_time:
+            volume = self.contrast_simulator.simulate_with_time(
+                volume, 
+                self.data.cavity, 
+                self.data.all_coronary_label, 
+                global_time
+            )
 
-        img_warped: Tensor = self.warp_image(self.image, ddf)
+        volume_warped: Tensor = self.volume_warper(volume, ddf)
         coronary = self.coronary[:, 0:1] if coronary_type == CoronaryType.LCA else self.coronary[:, 1:2]
         label_tensor = torch.cat([self.cavity, coronary], dim=0)
         # use expand when possible to avoid a physical repeat copy (ddf has batch dim == 1)
         label_grid = ddf.expand(2, -1, -1, -1, -1)
-        label_warped = self.warp_label(label_tensor, label_grid)
+        label_warped = self.label_warper(label_tensor, label_grid)
         
         cav_warped: Tensor = label_warped[0].unsqueeze(0)
         cor_warped: Tensor = label_warped[1].unsqueeze(0)
 
-        return img_warped.half(), cav_warped.byte(), cor_warped.byte(), self._points_warp_and_to_world(ddf_inv, coronary_type)
+        return volume_warped.half(), cav_warped.byte(), cor_warped.byte(), self._points_warp_and_to_world(ddf_inv, coronary_type)
 
 
 class DVFDataset(Dataset):
@@ -212,11 +210,11 @@ class VolumeDVFReader(DataReader):
     """Reads volume data and corresponding DVFs for 4D cardiac MRI, which usually generated from ..dvf module.
     
     the data is assumed to be in the following format:
-    - image_nii: 3D volume image of one phase
-    - cavity_nii: 3D cavity label image of one phase
-    - coronary_nii: 3D coronary label image of one phase
+    - volume_nii: 3D volume of one phase
+    - cavity_nii: 3D cavity label of one phase
+    - coronary_nii: 3D coronary label of one phase
     - roi_json: JSON file containing ROI information
-    - dvf_dir: contains 3D DVF images for all phases
+    - dvf_dir: contains 3D DVF for all phases
     | - phase_00.nii.gz   # do not use phase_0.nii which may cause ordering issues
     | - phase_01.nii.gz
     | - ...
@@ -226,13 +224,13 @@ class VolumeDVFReader(DataReader):
         recover_cropped_data: flag control whether to recover data to the size before cropped
         precompute_ddf: flag control whether compute DDF at init, and use it rather than DVF to interpolate between frames.
     """
-    image_nii: Path
+    volume_nii: Path
     cavity_nii: Path
     coronary_nii: Path
     roi_json: Path
     dvf_dir: Path
+    contrast_simulator: ContrastSimulator
     movement_enhancer: "None | MovementEnhancer" = None
-    contrast_simulator: ContrastSimulator = field(default_factory=lambda: IdentityContrast())
     recover_cropped_data: bool = True
     precompute_ddf: bool = True
     device: torch.device = field(default_factory= lambda: torch.device("cuda:0"))
@@ -248,42 +246,35 @@ class VolumeDVFReader(DataReader):
         torch.cuda.empty_cache()
     
     def _load_3d_data(self):
-        image, affine = load_nifti(self.image_nii)
+        volume, affine = load_nifti(self.volume_nii)
         assert affine is not None
         
         cavity, cavity_affine = load_nifti(self.cavity_nii, is_label=True)
         coronary, coronary_affine = load_nifti(self.coronary_nii, is_label=True)
         assert np.allclose(affine, cavity_affine)
         assert np.allclose(affine, coronary_affine)
-        
-        lca, rca = separate_coronary(coronary, self.device)        
-        # Preprocess baseline image and optionally simulate coronary for static simulators
-        image = self.contrast_simulator.preprocess(image, cavity)
-        if not self.contrast_simulator.contrast_change_over_time:
-            image = self.contrast_simulator.simulate(image, cavity, coronary)
 
-        self.origin_data = _Data(
-            self.device, image, cavity, affine, 
-            lca, rca
+
+        self.origin_data = self._Data.init_from_volume(
+            volume = volume,
+            cavity = cavity,
+            coronary = coronary,
+            affine = affine,
+            running_device = self.device,
+            contrast_simulator = self.contrast_simulator
         )
 
-        self._origin_volume_size = image.shape[2:]   #type: ignore
+        self._origin_volume_size = volume.shape[2:]   #type: ignore
         self._origin_volume_affine = affine
         
         # --- Crop Data to ROI to Match DVF ---
-        def crop(x: Tensor) -> Tensor:
-            return self.roi.crop_on_data(x.clone())
-
-        self.cropped_data = _Data(
-            self.device, crop(image), crop(cavity), self.roi.affine_after_crop,
-            crop(lca), crop(rca)
-        )
+        self.cropped_data = self.origin_data.crop_by_roi(self.roi)
 
     @torch.inference_mode()
     def _preprocess_dvf(self, dvf: Tensor, enhance: Callable[[Tensor], Tensor]) -> Tensor:
         x = dvf.to(device=self.device, non_blocking=True)  # (..., H,W,D,1,3) half()
         
-        # image saved as spacing of 1mm, so we need to zoom it back to the original spacing
+        # volume saved as spacing of 1mm, so we need to zoom it back to the original spacing
         zoom_rate = torch.from_numpy((1 / self.roi.get_zoom_rate()).flatten()).to(x, non_blocking=True)  # (3,)
         x = x.squeeze_().mul_(zoom_rate)  #(H, W, D, 3)
         
@@ -324,12 +315,14 @@ class VolumeDVFReader(DataReader):
                 self.cropped_data, self.device,
                 precomputed_ddf=True,
                 ddf_list=res_list,
+                contrast_simulator=self.contrast_simulator
             ).to(self.device)
         else:
             self.warpper = LazyCardiacDVFWarpModule(
                 self.cropped_data, self.device,
                 precomputed_ddf=False,
-                dvf_list=res_list
+                dvf_list=res_list,
+                contrast_simulator=self.contrast_simulator
             ).to(self.device)
     
     
@@ -341,18 +334,16 @@ class VolumeDVFReader(DataReader):
     ) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
         
-        image, cavity, coronary_label, coronary_mesh = self.warpper(phase, coronary_type)
+        volume, cavity, coronary_label, mesh_original = self.warpper(phase, coronary_type, global_time)
         if self.recover_cropped_data:
-            image = self.roi.recover_cropped_tensor(image, background=self.origin_data.image)
+            volume = self.roi.recover_cropped_tensor(volume, background=self.origin_data[coronary_type].volume)
             cavity = self.roi.recover_cropped_tensor(cavity)
             coronary_label = self.roi.recover_cropped_tensor(coronary_label)
             affine = self.origin_data.affine
-            coronary_centering_affine = self.origin_data.lca_centering_affine if coronary_type == CoronaryType.LCA\
-                else self.origin_data.rca_centering_affine
+            coronary_centering_affine = self.origin_data[coronary_type].centering_affine
         else:
             affine = self.cropped_data.affine
-            coronary_centering_affine = self.cropped_data.lca_centering_affine if coronary_type == CoronaryType.LCA\
-                else self.cropped_data.rca_centering_affine
+            coronary_centering_affine = self.cropped_data[coronary_type].centering_affine
         
         return DataReaderResult(
             phase=phase,
@@ -360,77 +351,47 @@ class VolumeDVFReader(DataReader):
             affine=affine,
             coronary = Coronary(
                 type=coronary_type,
-                volume=image.cpu().to(torch.float32),
+                volume=volume.cpu().to(torch.float32),
                 label=coronary_label.cpu().to(torch.bool),
+                original_affine=affine,
                 centering_affine=coronary_centering_affine,
-                mesh_in_world=coronary_mesh
+                mesh_original=mesh_original
             )
         )
     
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        return self.get_data(CardiacPhase(0.0), coronary_type)
+        return self.get_data(CardiacPhase(0), coronary_type)
     
-    def get_original_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        coronary_type = CoronaryType(coronary_type)
-        
-        if self.recover_cropped_data:
-            data = self.origin_data
-        else:
-            data = self.cropped_data
-        
-        if coronary_type == CoronaryType.LCA:
-            coronary_label = data.lca
-            coronary_centering_affine = data.lca_centering_affine
-        else:
-            coronary_label = data.rca
-            coronary_centering_affine = data.rca_centering_affine
-        
-        return DataReaderResult(
-            phase=CardiacPhase(0),
-            cavity_label=data.cavity.cpu().to(torch.uint8),
-            affine=data.affine,
-            coronary=Coronary(
-                type=coronary_type,
-                volume=data.image.cpu().to(torch.float32),
-                label=coronary_label.cpu().to(torch.bool),
-                centering_affine=coronary_centering_affine,
-                mesh_in_world=get_mesh_in_world(coronary_label, coronary_centering_affine, self.device)
-            )
-        )
-    
+     
     def save_roi(self, output_dir: Path):
         import json
         json_data = self.roi.to_dict()
         with open(output_dir / "roi.json", "w") as f:
             json.dump(json_data, f, indent=2)
     
-    def save_all_warped_images(self, output_dir: Path):
-        # TODO
-        raise NotImplementedError()
-    
     
     @property
     def lca_centering_affine(self) -> np.ndarray:
         if self.recover_cropped_data:
-            return self.origin_data.lca_centering_affine
+            return self.origin_data.lca.centering_affine
         else:
-            return self.cropped_data.lca_centering_affine
-    
+            return self.cropped_data.lca.centering_affine
+
     @property
     def rca_centering_affine(self) -> np.ndarray:
         if self.recover_cropped_data:
-            return self.origin_data.rca_centering_affine
+            return self.origin_data.rca.centering_affine
         else:
-            return self.cropped_data.rca_centering_affine
-    
-    
+            return self.cropped_data.rca.centering_affine
+
+
     @property
     @override
     def volume_size(self) -> tuple[int, int, int]:
         if self.recover_cropped_data:
             return self._origin_volume_size
         else:
-            return self.warpper.image.shape[-3:]    # type: ignore
+            return self.warpper.volume.shape[-3:]    # type: ignore
     
     @property
     @override
@@ -448,11 +409,23 @@ def tensor2cp(tensor: torch.Tensor, device: torch.device, dtype_cp=None):
         return cp.from_dlpack(tensor2dlpack(tensor.to(device))).astype(dtype_cp)
 
 class MovementEnhancer(Protocol):
+    """
+    这个类的设计目的是为了给 VolumeDVFReader 打个补丁，增强冠脉区域运动。
+    目前从DVF中得到的冠脉运动运动幅度不够明显，这可能是因为深度配准网络无法很好地学习运动标签到形变场的映射
+    可以选择使用新实现的更稳定的 RBF Reader 作为替代
+    """
     def setup(self, dvf_reader: VolumeDVFReader) -> None:
         ...
 
     def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
         ...
+
+class IdentityMovementEnhancer(MovementEnhancer):
+    def setup(self, dvf_reader: VolumeDVFReader) -> None:
+        pass
+    
+    def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
+        return dvf
 
 @dataclass
 class CoronaryBoundLVEnhancer(MovementEnhancer):
@@ -466,9 +439,9 @@ class CoronaryBoundLVEnhancer(MovementEnhancer):
         if self.enhance_coronary == "ALL":
             coronary_label = dvf_reader.cropped_data.all_coronary_label
         elif self.enhance_coronary == "LCA":
-            coronary_label = dvf_reader.cropped_data.lca
+            coronary_label = dvf_reader.cropped_data.lca.label
         elif self.enhance_coronary == "RCA":
-            coronary_label = dvf_reader.cropped_data.rca
+            coronary_label = dvf_reader.cropped_data.rca.label
         else:
             raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
     
@@ -524,9 +497,9 @@ class CoronaryBoundLVLinearEnhancer(MovementEnhancer):
         if self.enhance_coronary == "ALL":
             coronary_label = dvf_reader.cropped_data.all_coronary_label
         elif self.enhance_coronary == "LCA":
-            coronary_label = dvf_reader.cropped_data.lca
+            coronary_label = dvf_reader.cropped_data.lca.label
         elif self.enhance_coronary == "RCA":
-            coronary_label = dvf_reader.cropped_data.rca
+            coronary_label = dvf_reader.cropped_data.rca.label
         else:
             raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
         
@@ -596,8 +569,8 @@ class CoronarySeprateEnhancer(MovementEnhancer):
         cavity_label = read_data.cavity.to(torch.uint8)
 
         with cp.cuda.Device(self.device.index):
-            self.lca_data = self._inner_setup(read_data.lca, cavity_label==CavityLabel.LV, self.w_0_lca, self.w_1_lca)
-            self.rca_data = self._inner_setup(read_data.rca, cavity_label==CavityLabel.LV, self.w_0_rca, self.w_1_rca)
+            self.lca_data = self._inner_setup(read_data.lca.label, cavity_label==CavityLabel.LV, self.w_0_lca, self.w_1_lca)
+            self.rca_data = self._inner_setup(read_data.rca.label, cavity_label==CavityLabel.LV, self.w_0_rca, self.w_1_rca)
     
     def _inner_setup(self, target_label: torch.Tensor, ref_label: torch.Tensor, w_0: float, w_1: float):
         """

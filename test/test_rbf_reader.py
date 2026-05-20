@@ -66,7 +66,7 @@ def test_kdtree_rbf_supports_phase_interpolation_and_cached_points() -> None:
         ],
         dtype=np.float32,
     )
-    phase = CardiacPhase(0.25)
+    phase = CardiacPhase.from_time(0.25, cardiac_cycle_time=1.0)
 
     direct_motion = rbf(phase, points)
     rbf.cache_points(points)
@@ -90,11 +90,11 @@ def test_kdtree_rbf_requires_cache_when_points_is_none() -> None:
     rbf = KDTreeRBF(_build_landmark_for_rbf(), k=1, n_ctrl_pts=2)
 
     with pytest.raises(AssertionError, match="cache_points"):
-        rbf(CardiacPhase(0.1), None)
+        rbf(CardiacPhase.from_time(0.1, cardiac_cycle_time=1.0), None)
 
 
 def test_kdtree_rbf_rejects_unsupported_points_type() -> None:
     rbf = KDTreeRBF(_build_landmark_for_rbf(), k=1, n_ctrl_pts=2)
 
     with pytest.raises(TypeError, match="Unsupported type"):
-        rbf(CardiacPhase(0.1), points="bad points")  # type: ignore[arg-type]
+        rbf(CardiacPhase.from_time(10, cardiac_cycle_time=1.0), points="bad points")  # type: ignore[arg-type]

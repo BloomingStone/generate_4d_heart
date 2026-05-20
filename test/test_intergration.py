@@ -1,43 +1,38 @@
 from typing import Literal
+from pathlib import Path
 import shutil
 
 import pytest
-import torch
 
 from generate_4d_heart.rotate_dsa import RotateDSA
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 
-from utils import output_root_dir, get_reader, get_simulator
+from utils import reader_factory, ReaderName, SimulatorName
 
 
-@pytest.mark.parametrize("reader_name", (
-    "volumes_reader", "volume_dvf_reader", "static_volume_reader", "rbf_reader"
+@pytest.mark.parametrize("reader_name", ReaderName.to_tuple())
+@pytest.mark.parametrize("simulator_name", (
+    str(SimulatorName.MULTIPLI_CONTRAST), str(SimulatorName.FLOW_CONTRAST)
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration(
+    output_root_dir: Path,
+    simple_drr: TorchDRR,
     reader_name: str,
+    simulator_name: str,
     coronary_type: Literal["LCA", "RCA"],
-    sim_name: str = "multipli_contrast",
 ):
     """测试完整的 RotateDSA 集成流程"""
-    # 配置 DRR 参数为测试模式（减少帧数和图像大小以加快测试速度）
-    rotate_cfg = RotatedParameters(
-        total_frame=20,  # 减少帧数
-        fps=10,           # 降低帧率
-        angular_velocity = 20,  # 降低旋转速度
-    )
-    
-    drr = TorchDRR(rotate_cfg=rotate_cfg)
+    _, reader = reader_factory(SimulatorName(simulator_name), ReaderName(reader_name))
     
     # 创建 RotateDSA 实例
     dsa = RotateDSA(
-        reader=get_reader(reader_name),
-        drr=drr
+        reader=reader,
+        drr=simple_drr
     )
     
     # 测试保存功能
-    output_dir = output_root_dir / "intergration" / f"{reader_name}_{sim_name}_{coronary_type}"
+    output_dir = output_root_dir / "intergration" / f"{reader_name}_{simulator_name}_{coronary_type}"
     if output_dir.exists():
         shutil.rmtree(output_dir)
     frames, labels, depth_map = dsa.run_and_save(
@@ -52,7 +47,7 @@ def test_rotate_dsa_integration(
     assert "frames" in geometry_json
     assert "c_arm_geometry" in geometry_json
     assert "rotate_parameters" in geometry_json
-    assert len(geometry_json["frames"]) == rotate_cfg.total_frame
+    assert len(geometry_json["frames"]) == simple_drr.rotate_cfg.total_frame
     
     # 验证每帧都有角度和相位信息
     for frame_info in geometry_json["frames"]:
@@ -73,62 +68,38 @@ def test_rotate_dsa_integration(
 
 
 @pytest.mark.parametrize(
-    "reader_name, sim_name, simulator, coronary_type",
+    "reader_name, coronary_type",
     (
-        ("volumes_reader", "multipli_contrast", MultipliContrast(), "LCA"),
-        ("volume_dvf_reader", "multipli_contrast", MultipliContrast(), "LCA"),
-        ("volume_dvf_reader", "multipli_contrast", MultipliContrast(), "RCA"),
-        ("rbf_reader", "multipli_contrast", MultipliContrast(), "LCA"),
-        ("rbf_reader", "multipli_contrast", MultipliContrast(), "RCA"),
-        ("static_volume_reader", "multipli_contrast", MultipliContrast(), "LCA")
+        ("volumes_reader", "LCA"),
+        ("volume_dvf_reader", "LCA"),
+        ("static_volume_reader", "LCA"),
+        ("rbf_reader", "LCA"),
+        ("rbf_reader", "RCA"),      # RBFReader will be fully tested on both LCA and RCA
     )
 )
+@pytest.mark.parametrize("simulator_name", (
+    str(SimulatorName.MULTIPLI_CONTRAST), 
+    str(SimulatorName.FLOW_CONTRAST)
+))
 def test_rotate_dsa_integration_full(
+    output_root_dir: Path,
+    full_drr: TorchDRR,
     reader_name: str,
-    sim_name: str,
-    simulator: MultipliContrast | ThresholdMultipliContrast,
+    simulator_name: str,
     coronary_type: Literal["LCA", "RCA"],
 ):
     """测试完整的 RotateDSA 集成流程 并生成完整数据"""
-    drr = TorchDRR()
+    _, reader = reader_factory(SimulatorName(simulator_name), ReaderName(reader_name))
     
     dsa = RotateDSA(
-        reader=get_reader(reader_name),
-        drr=drr
+        reader=reader,
+        drr=full_drr
     )
     
-    output_dir = output_root_dir / "intergration_full" / f"{reader_name}_{sim_name}_{coronary_type}"
+    output_dir = output_root_dir / "intergration_full" / f"{reader_name}_{simulator_name}_{coronary_type}"
     if output_dir.exists():
         shutil.rmtree(output_dir)
     dsa.run_and_save(
         output_dir=output_dir,
         coronary_type=coronary_type
     )
-
-def test_static_rotate_dsa_integration_full(
-    coronary_type: Literal["LCA", "RCA"] = "LCA",
-    sim_name: str = "multipli_contrast",
-    simulator: MultipliContrast | ThresholdMultipliContrast = MultipliContrast(),
-    reader_name: str = "static_volume_reader",
-):
-    """测试完整的 RotateDSA 集成流程 并生成完整数据"""
-    rotate_cfg = RotatedParameters(
-        total_frame=20,  # 减少帧数
-        fps=10,           # 降低帧率
-    )
-    
-    drr = TorchDRR(rotate_cfg=rotate_cfg)
-    
-    dsa = RotateDSA(
-        reader=get_reader(reader_name),
-        drr=drr
-    )
-    
-    output_dir = output_root_dir / "static_intergration_full" / f"{reader_name}_{sim_name}_{coronary_type}"
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    dsa.run_and_save(
-        output_dir=output_dir,
-        coronary_type=coronary_type
-    )
-

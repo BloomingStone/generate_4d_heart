@@ -1,35 +1,22 @@
-from typing import Literal
+from typing import Literal, cast
 from pathlib import Path
-from functools import lru_cache
 
-import numpy as np
 import pyvista as pv
 import pytest
 import torch
+import numpy as np
 from tqdm import tqdm
 
-from generate_4d_heart.rotate_dsa.data_reader import (
-    VolumesReader, DataReader, VolumeDVFReader,
-    CoronaryBoundLVLinearEnhancer, RBFReader
-)
+from generate_4d_heart.rotate_dsa.data_reader.data_reader import DataReader, get_mesh_in_world
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_gif
-from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
-from utils import output_root_dir, test_data_root_dir
 
-
-class AddOneContrast(ContrastSimulator):
-    contrast_change_over_time = False
-
-    def simulate(self, ori_volume, cavity_label, coronary_label):
-        return ori_volume + 1.0
-
-    def simulate_with_time(self, ori_volume, cavity_label, coronary_label, time: float):
-        return ori_volume + 1.0
+from utils import reader_factory, ReaderName, SimulatorName, OUTPUT_ROOT_DIR
 
 
 def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal["LCA", "RCA"] = "LCA") -> None:
-    # delete result in output_dir first
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # delete result in output_dir if exists
     for p in output_dir.iterdir():
         if p.is_dir():
             for f in p.iterdir():
@@ -48,7 +35,16 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
     frames_h = torch.rand(F, W, D)
     frames_d = torch.rand(F, W, H)
 
-    mesh_list = []
+    volume = None
+    
+    plotter_original = pv.Plotter(off_screen=True)
+    plotter_original.open_gif(output_dir / "animation_original.gif")
+    
+    plotter_centering = pv.Plotter(off_screen=True)
+    plotter_centering.open_gif(output_dir / "animation_centering.gif")
+    
+    test_res_original = []
+    test_res_centering = []
     for phase_idx in tqdm(range(F), desc=f"Generating {F} continous frames in one cardiac cycle"):
         phase = CardiacPhase.from_index(phase_idx, F)
 
@@ -59,7 +55,29 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         frames_h[phase_idx] = volume[:, H//2]
         frames_d[phase_idx] = volume[:, :, D//2]
         
-        mesh_list.append(data.coronary.mesh_in_world)
+        mesh_original_from_label = get_mesh_in_world(data.coronary.label, data.coronary.original_affine, max_points=None)
+        test_res_original.append(np.allclose(mesh_original_from_label.bounds, data.coronary.mesh_original.bounds, atol=1, rtol=0.1))
+        
+        mesh_centering_from_label = get_mesh_in_world(data.coronary.label, data.coronary.centering_affine, max_points=None)
+        test_res_centering.append(np.allclose(mesh_centering_from_label.bounds, data.coronary.mesh_centering.bounds, atol=1, rtol=0.1))
+        
+        plotter_original.clear()
+        plotter_original.add_mesh(data.coronary.mesh_original, color="lightgray", opacity=0.5)
+        plotter_original.add_mesh(mesh_original_from_label, opacity=0.5)
+        plotter_original.show_bounds()  #type: ignore
+        plotter_original.write_frame()
+        
+        plotter_centering.clear()
+        plotter_centering.add_mesh(data.coronary.mesh_centering, color="lightgray", opacity=0.5)
+        plotter_centering.add_mesh(mesh_centering_from_label, opacity=0.5)
+        plotter_centering.show_bounds()  #type: ignore
+        plotter_centering.write_frame()
+
+    plotter_original.close()
+    plotter_centering.close()
+    
+    assert all(test_res_original), "The meshes generated from label and from coronary mesh should be close in original space. Please check the results carefully."
+    assert all(test_res_centering), "The meshes generated from label and from coronary mesh should be close in centering space. Please check the results carefully."
     
     def uniform(t: torch.Tensor) -> torch.Tensor:
         t = (t - t.min()) / (t.max() - t.min())
@@ -71,21 +89,12 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
     
     save_gif(output_dir / "frames_w.gif", frames_w, cmap='gray')
     save_gif(output_dir / "frames_h.gif", frames_h, cmap='gray')
-    save_gif(output_dir / "frames_d.gif", frames_d, cmap='gray')
-    
-    plotter = pv.Plotter(off_screen=True)
-    plotter.open_gif(output_dir / "animation.gif")
+    save_gif(output_dir / "frames_d.gif", frames_d, cmap='gray')  
 
-    for mesh in mesh_list:
-        plotter.clear()
-        plotter.add_mesh(mesh)
-        plotter.write_frame()
-
-    plotter.close()
     
     phase_0_data = reader.get_phase_0_data("LCA")
-    central_line = phase_0_data.get_coronary_central_line("coroanry_centering")
-    mesh = phase_0_data.coronary.mesh_in_world
+    central_line = phase_0_data.coronary.get_coronary_central_line("coronary_centering")
+    mesh = phase_0_data.coronary.mesh_original
     
     assert len(central_line.shape) == 2 and central_line.shape[-1] == 3
     x_max, y_max, z_max = central_line.max(axis=0)
@@ -100,59 +109,38 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         print(f"Central line max: {(x_max, y_max, z_max)}, min: {(x_min, y_min, z_min)}")
         print(f"Mesh points max: {(x_max_mesh, y_max_mesh, z_max_mesh)}, min: {(x_min_mesh, y_min_mesh, z_min_mesh)}")
 
-def test_volumes_reader():
-    volumes_dir = test_data_root_dir / "volumes"
-    assert volumes_dir.exists()
-    output_dir = output_root_dir / "readers_output" / "volumes"
-    output_dir.mkdir(exist_ok=True, parents=True)
-    
-    reader = VolumesReader(
-        image_dir=volumes_dir / "image",
-        cavity_dir=volumes_dir / "cavity",
-        coronary_dir=volumes_dir / "coronary",
-    )
+def test_volumes_reader(
+    output_root_dir: Path,
+    simulator_name: SimulatorName = SimulatorName.IDENTITY_CONTRAST,
+):
+    reader_name = ReaderName.VOLUMES_READER
+    output_dir = output_root_dir / "readers_output" / str(reader_name)
+    _, reader = reader_factory(simulator_name, reader_name)
     
     _read_and_save(reader, output_dir)
 
-def test_volume_dvf_reader():
-    data_dir = test_data_root_dir / "volume_with_dvf"
-    assert data_dir.exists()
-    output_dir = output_root_dir / "readers_output" / "dvf"
-    output_dir.mkdir(exist_ok=True, parents=True)
-    
-    reader = VolumeDVFReader(
-        image_nii=data_dir / "image.nii.gz",
-        cavity_nii=data_dir / "cavity.nii.gz",
-        coronary_nii=data_dir / "coronary.nii.gz",
-        dvf_dir=data_dir / "dvf",
-        roi_json=data_dir / "Normal_01.json",
-        movement_enhancer=CoronaryBoundLVLinearEnhancer(enhance_coronary="LCA")
-    )
+def test_volume_dvf_reader(
+    output_root_dir: Path,
+    simulator_name: SimulatorName = SimulatorName.IDENTITY_CONTRAST,
+):
+    reader_name = ReaderName.VOLUME_DVF_READER
+    output_dir = output_root_dir / "readers_output" / str(reader_name)
+    _, reader = reader_factory(simulator_name, reader_name)
     
     _read_and_save(reader, output_dir)
 
-def test_rbf_reader():
-    data_dir = test_data_root_dir / "volume_with_dvf"
-    assert data_dir.exists()
-    output_dir = output_root_dir / "readers_output" / "rbf"
-    output_dir.mkdir(exist_ok=True, parents=True)
-    
-    reader = RBFReader(
-        volume_nii=data_dir / "image.nii.gz",
-        cavity_nii=data_dir / "cavity.nii.gz",
-        coronary_nii=data_dir / "coronary.nii.gz",
-        contrast_simulator=AddOneContrast()
-    )
+def test_rbf_reader(
+    output_root_dir: Path,
+    simulator_name: SimulatorName = SimulatorName.IDENTITY_CONTRAST,
+):
+    reader_name = ReaderName.RBF_READER
+    output_dir = output_root_dir / "readers_output" / str(reader_name)
+    _, reader = reader_factory(simulator_name, reader_name)
 
-    sample = reader.get_phase_0_data("RCA")
-    # get warped volume at phase 0 (was previously returned as top-level volume)
-    warped, cav_lbl, cor_lbl = reader._warp_and_recover_for_phase(CardiacPhase(0.0), "RCA")
-    assert torch.allclose(sample.coronary.volume, warped + 1.0, atol=1e-2)
-    
-    _read_and_save(reader, output_dir, coronary_type="RCA")
+    _read_and_save(reader, output_dir)
 
 
 if __name__ == "__main__":
-    # test_volumes_reader()
-    # test_volume_dvf_reader()
-    test_rbf_reader()
+    test_volume_dvf_reader(
+        OUTPUT_ROOT_DIR
+    )

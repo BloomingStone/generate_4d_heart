@@ -9,16 +9,20 @@ import matplotlib.pyplot as plt
 
 
 @pytest.fixture(scope="module")
-def cavity_path():
-    return Path(__file__).parent / "test_data" / "volume_with_dvf" / "cavity.nii.gz"
+def cavity_path(
+    volume_dvf_dir: Path
+):
+    return volume_dvf_dir / "cavity.nii.gz"
 
 @pytest.fixture(scope="module")
 def cavity_img(cavity_path):
     return nib.load(str(cavity_path))
 
 @pytest.fixture(scope="module")
-def output_dir():
-    return Path(__file__).parent.parent / "test" / "output" / "roi_test"
+def output_dir(
+    output_root_dir: Path
+):
+    return output_root_dir / "roi_test"
 
 def test_roi_affine_and_shape_consistency(cavity_img):
     roi = ROI.get_from_cavity(cavity_img, padding=8)

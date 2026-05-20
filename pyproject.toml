@@ -9,3 +9,6 @@ include = ["generate_4d_heart*"]
 name = "generate_4d_heart"
 dynamic = ["version"]
 requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+addopts = "--capture=tee-sys"

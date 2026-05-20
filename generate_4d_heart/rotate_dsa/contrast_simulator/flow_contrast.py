@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import heapq
 import hashlib
+import warnings
 
 import numpy as np
 import torch
@@ -87,6 +88,12 @@ class FlowContrast(ContrastSimulator):
             density.squeeze()[threshold_mask] = self.mu_water_dsa
 
         density.squeeze()[ori_volume.squeeze() < -2000] = 0.0
+        
+        # reinit cached values as the preprocess step is usually called before simulate_with_time, and the coronary label may change between different calls of preprocess.
+        self._cached_start_voxel = None
+        self._cached_distance_map = None
+        self._cached_cor_hash = None
+        
         return density
 
     def simulate_with_time(
@@ -100,18 +107,20 @@ class FlowContrast(ContrastSimulator):
         assert ori_volume.ndim == 5 and ori_volume.shape[:2] == (1, 1), "ori_volume must be (1, 1, D, H, W)"
         assert cavity_label.shape == ori_volume.shape, "cavity_label must match ori_volume shape"
         assert coronary_label.shape == ori_volume.shape, "coronary_label must match ori_volume shape"
-        assert coronary_label.dtype == torch.bool, "coronary_label must be boolean"
+        assert coronary_label.dtype == torch.bool or coronary_label.dtype == torch.uint8, "coronary_label must be boolean or uint8"
+        
+        cavity_label = cavity_label.to(ori_volume.device)
+        coronary_label = coronary_label.to(ori_volume.device)
 
         if not coronary_label.any():
             raise ValueError("coronary_label is empty, cannot apply FlowContrast")
         
         coronary_label = coronary_label.squeeze()
+        coronary_label = (coronary_label > 0).contiguous()
         
         # Check if coronary label has changed since last call, if so invalidate cached skeleton and distance map
-        current_cor_hash = hashlib.md5(coronary_label.cpu().numpy()).hexdigest()
-        if self._cached_cor_hash is not None:
-            self._cached_cor_hash = current_cor_hash
-        
+        current_cor_hash = hashlib.md5(coronary_label.cpu().numpy().tobytes()).hexdigest()
+
         if current_cor_hash != self._cached_cor_hash:
             # Coronary label has changed, invalidate cached skeleton and distance map
             self._cached_distance_map = None
@@ -122,17 +131,20 @@ class FlowContrast(ContrastSimulator):
         # to get coronary density, and merge with baseline for output
         # Computed in the first time and cached for subsequent calls with the same coronary label.
         if self._cached_distance_map is not None:
-            distance_map = self._cached_distance_map
+            distance_map = self._cached_distance_map.to(device=ori_volume.device)
         else:
             print("Computing skeleton and distance map for the first time...")
             skeleton_mask = self._compute_skeleton(coronary_label.cpu().numpy())
             start_voxel = self._resolve_start_voxel(cavity_label.squeeze().cpu().numpy(), skeleton_mask)
-            distance_map = self._compute_path_distance_map(skeleton_mask, start_voxel)
+            distance_map = self._compute_path_distance_map(skeleton_mask, start_voxel).to(device=ori_volume.device)
         
-        coronary_density = self._density_from_distance(distance_map, float(time))
         density = ori_volume.squeeze().clone()
+        coronary_density = self._density_from_distance(distance_map, float(time)).to(
+            device=density.device,
+            dtype=density.dtype,
+        )
         density[coronary_label] = coronary_density[coronary_label]
-        return density.to(device=ori_volume.device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        return density.unsqueeze(0).unsqueeze(0)
 
     def _resolve_start_voxel(self, cavity: np.ndarray, skeleton_mask: np.ndarray) -> tuple[int, int, int]:
         if self._cached_start_voxel is not None:
@@ -143,12 +155,17 @@ class FlowContrast(ContrastSimulator):
         if not skeleton_mask.any():
             raise ValueError("Unable to resolve a start voxel for FlowContrast: empty skeleton")
 
-        aorta_mask = cavity == int(VesselLabel.AORTA)
+        aorta_mask = (cavity == int(VesselLabel.AORTA))
         
         if not aorta_mask.any():
-            raise ValueError("Unable to resolve a start voxel for FlowContrast: empty aorta region")
-        
-        start = self._nearest_skeleton_voxel_to_region(aorta_mask, skeleton_mask)
+            warnings.warn("There is no aorta label in the cavity, trying to find start voxel from LA/RA's center")
+            la_ra = (cavity == int(CavityLabel.LA)) | (cavity == int(CavityLabel.RA))
+            if not la_ra.any():
+                raise ValueError("Unable to resolve a start voxel for FlowContrast: no aorta or LA/RA labels found")
+            la_ra_center = np.array(np.argwhere(la_ra)).mean(axis=0).astype(int)
+            start = self._nearest_skeleton_voxel(la_ra_center, skeleton_mask)
+        else:
+            start = self._nearest_skeleton_voxel_to_region(aorta_mask, skeleton_mask)
 
         self._cached_start_voxel = start
         return start
@@ -231,7 +248,7 @@ class FlowContrast(ContrastSimulator):
         return (self.mu_water_dsa + (self.mu_idodine - self.mu_water_dsa) * pulse).to(torch.float32)
 
     def _nearest_skeleton_voxel(self, start_voxel: tuple[int, int, int], skeleton_mask: np.ndarray) -> tuple[int, int, int]:
-        if skeleton_mask[start_voxel]:
+        if skeleton_mask[start_voxel].all():
             return start_voxel
         coords = np.argwhere(skeleton_mask)
         if len(coords) == 0:
