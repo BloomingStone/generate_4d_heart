@@ -66,8 +66,8 @@ def load_and_zoom_dvf(
     
     zoom_rate = torch.from_numpy((1 / roi.get_zoom_rate()).flatten()).to(dvf_tensor, non_blocking=True)  # (3,)
     dvf_tensor.squeeze_().mul_(zoom_rate)  #(H, W, D, 3)
-    dvf_tensor = F.interpolate(dvf_tensor, size=roi.get_roi_size_before_crop(), mode='trilinear', align_corners=False)  # (H', W', D', 3)
-    dvf_tensor = dvf_tensor.squeeze().permute(3, 0, 1, 2)[None] # (1,3,H,W,D)
+    dvf_tensor = dvf_tensor.permute(3, 0, 1, 2)[None] # (1,3,H,W,D)
+    dvf_tensor = F.interpolate(dvf_tensor, size=roi.get_roi_size_before_crop(), mode='trilinear', align_corners=False)  # (1,3, H', W', D')
     return dvf_tensor
 
 
