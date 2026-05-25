@@ -141,7 +141,8 @@ cython_debug/
 .vscode/
 
 *.pth
-*.nii.gz# pixi environments
+*.nii.gz
+# pixi environments
 .pixi/*
 !.pixi/config.toml
 
