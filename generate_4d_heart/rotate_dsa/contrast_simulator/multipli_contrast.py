@@ -4,7 +4,7 @@ import numpy as np
 from .contrast_simulator import ContrastSimulator
 from generate_4d_heart import CavityLabel, MU_WATER, MU_IDODINE
 
-class MultipliContrast(ContrastSimulator):
+class StaticIodineContrast(ContrastSimulator):
     def __init__(
         self, 
         mu_water_dsa: float = MU_WATER,    # 水衰减系数 (mm^-1)
@@ -49,8 +49,8 @@ class MultipliContrast(ContrastSimulator):
         coronary_label: torch.Tensor,
         affine: np.ndarray,
     ) -> torch.Tensor:
-        # MultipliContrast is static by design
-        assert self.contrast_change_over_time == False, "MultipliContrast does not support contrast change over time"
+        # StaticIodineContrast is static by design
+        assert self.contrast_change_over_time == False, "StaticIodineContrast does not support contrast change over time"
         # `ori_volume` is expected to be a preprocessed attenuation-like baseline
         res = ori_volume.clone()
         assert cavity_label.dtype == torch.uint8
@@ -71,5 +71,6 @@ class MultipliContrast(ContrastSimulator):
         affine: np.ndarray
     ) -> torch.Tensor:
         import warnings
-        warnings.warn("MultipliContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
+        warnings.warn("StaticIodineContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
         return self.simulate(ori_volume, cavity_label, coronary_label, affine)
+    

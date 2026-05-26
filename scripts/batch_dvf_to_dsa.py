@@ -5,7 +5,7 @@ import hashlib
 
 import numpy as np
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
+from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast
 from generate_4d_heart.rotate_dsa.data_reader import VolumeDVFReader, CoronaryBoundLVLinearEnhancer
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa import RotateDSA
@@ -133,7 +133,7 @@ class BatchDVFToDSA:
                     coronary_nii=p["coronary_nii"],
                     roi_json=p["roi_json"],
                     dvf_dir=p["sub_dvf_dir"],
-                    contrast_simulator=MultipliContrast(),
+                    contrast_simulator=StaticIodineContrast(),
                     movement_enhancer=enhancer,
                     recover_cropped_data=self.recover_cropped_data
                 )

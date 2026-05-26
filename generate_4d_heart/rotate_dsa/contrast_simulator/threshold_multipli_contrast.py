@@ -4,7 +4,7 @@ import numpy as np
 from .contrast_simulator import ContrastSimulator
 
 
-class ThresholdMultipliContrast(ContrastSimulator):
+class ThresholdIodineContrast(ContrastSimulator):
     def __init__(
         self, 
         lung_threshold: int = -600,
@@ -17,7 +17,8 @@ class ThresholdMultipliContrast(ContrastSimulator):
         mu_water: float = 0.020,
     ):
         """
-        adjust the contrast of coronary and cavity by simple multiplication
+        Adjust the contrast by thresholding voxel values in the input volume and
+        applying a fixed coronary enhancement.
         """
         self.lung_threshold = lung_threshold
         self.heart_threshold = heart_threshold
@@ -61,7 +62,7 @@ class ThresholdMultipliContrast(ContrastSimulator):
         affine: np.ndarray,
     ) -> torch.Tensor:
         # Expect `ori_volume` to be preprocessed baseline attenuation map
-        assert self.contrast_change_over_time == False, "ThresholdMultipliContrast does not support contrast change over time"
+        assert self.contrast_change_over_time == False, "ThresholdIodineContrast does not support contrast change over time"
         density = ori_volume.clone()
         assert density.dtype == torch.float32 or density.dtype == torch.float16
         assert coronary_label.dtype == torch.bool or coronary_label.dtype == torch.uint8
@@ -83,5 +84,5 @@ class ThresholdMultipliContrast(ContrastSimulator):
         affine: np.ndarray
     ) -> torch.Tensor:
         import warnings
-        warnings.warn("ThresholdMultipliContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
+        warnings.warn("ThresholdIodineContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
         return self.simulate(ori_volume, cavity_label, coronary_label, affine)

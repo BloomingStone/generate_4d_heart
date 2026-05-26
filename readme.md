@@ -52,7 +52,7 @@
 - **接口约定**: 大多数模拟器提供 `preprocess(volume, cavity_label)` 返回基线衰减图；若支持时间变化则实现 `simulate_with_time(volume, cavity_label, coronary_label, time)`，否则实现 `simulate(volume, cavity_label, coronary_label)`；可通过 `contrast_change_over_time` 字段判断是否为时变模拟器。
   - TODO：给simulator重新取下名字，现在的不太准确。
   
-- **常见实现**: `FlowContrast`（基于血流时间延迟与脉冲形状的时变模型）、`MultipliContrast`（基于标签进行吸收率系数变换）、`ThresholdMultipliContrast` （基于阈值进行吸收率变换）、`IdentityContrast`（恒等模拟）等，位于该目录下的各个模块文件中。可以直接通过工厂函数或在脚本中实例化并传入 reader（例如 `RBFReader(..., contrast_simulator=MultipliContrast(),...)`）。
+- **常见实现**: `FlowContrast`（基于血流时间延迟与脉冲形状的时变模型）、`StaticIodineContrast`（基于标签进行固定吸收率变换）、`ThresholdIodineContrast` （基于阈值进行吸收率变换，主要依赖 `ori_volume` 的 voxel value 分层并结合 coronary label）、`IdentityContrast`（恒等模拟）等，位于该目录下的各个模块文件中。可以直接通过工厂函数或在脚本中实例化并传入 reader（例如 `RBFReader(..., contrast_simulator=StaticIodineContrast(),...)`）。
   
 - **调用示例**: 在测试和 reader 中常见写法：先 `preprocess`（可选），然后根据是否为时变模拟器选择 `simulate` 或 `simulate_with_time`，例如测试中使用：
 

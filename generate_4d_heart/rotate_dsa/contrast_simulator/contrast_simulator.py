@@ -119,7 +119,7 @@ class SimplePreprocessContrast(ContrastSimulator):
         coronary_label: torch.Tensor,
         affine: np.ndarray,
     ) -> torch.Tensor:
-        # MultipliContrast is static by design
+        # StaticIodineContrast is static by design
         assert self.contrast_change_over_time == False, "SimplePreprocessContrast does not support contrast change over time"
         # `ori_volume` is expected to be a preprocessed attenuation-like baseline
         return ori_volume

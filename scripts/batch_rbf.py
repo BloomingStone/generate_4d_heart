@@ -6,7 +6,7 @@ from enum import StrEnum
 
 import numpy as np
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
+from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast
 from generate_4d_heart.rotate_dsa.data_reader import RBFReader
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa import RotateDSA
@@ -87,7 +87,7 @@ class BatchDVFToDSA:
             })
         
         self.torch_drr = TorchDRR(rotate_cfg=self._get_rotate_param())
-        self.constrast_simulator = MultipliContrast()
+        self.constrast_simulator = StaticIodineContrast()
         
     
     def _get_rotate_param(self):

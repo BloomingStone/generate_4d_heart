@@ -175,10 +175,11 @@ class LazyCardiacDVFWarpModule(nn.Module):
         volume = self.lca_volume if coronary_type == CoronaryType.LCA else self.rca_volume
         if self.contrast_simulator.contrast_change_over_time:
             volume = self.contrast_simulator.simulate_with_time(
+                global_time,
                 volume, 
                 self.data.cavity, 
-                self.data.all_coronary_label, 
-                global_time
+                self.data[coronary_type].label, 
+                self.data[coronary_type].centering_affine
             )
 
         volume_warped: Tensor = self.volume_warper(volume, ddf)

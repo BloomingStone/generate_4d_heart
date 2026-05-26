@@ -9,7 +9,7 @@ from generate_4d_heart.rotate_dsa.data_reader import (
     CoronaryBoundLVLinearEnhancer, CoronaryBoundLVEnhancer, StaticLabelReader, DataReader, IdentityMovementEnhancer
 )
 from generate_4d_heart.rotate_dsa.contrast_simulator import (
-    MultipliContrast, ThresholdMultipliContrast, IdentityContrast, 
+    StaticIodineContrast, ThresholdIodineContrast, IdentityContrast, 
     SimplePreprocessContrast, ContrastSimulator, FlowContrast
 )
 
@@ -61,9 +61,9 @@ def simulator_factory(
 ) -> ContrastSimulator:
     match simulator_name:
         case SimulatorName.MULTIPLI_CONTRAST:
-            return MultipliContrast()
+            return StaticIodineContrast()
         case SimulatorName.THRESHOLD_MULTIPLI_CONTRAST:
-            return ThresholdMultipliContrast()
+            return ThresholdIodineContrast()
         case SimulatorName.IDENTITY_CONTRAST:
             return IdentityContrast()
         case SimulatorName.SIMPLE_PREPROCESS_CONTRAST:

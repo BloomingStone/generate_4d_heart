@@ -3,7 +3,7 @@ import warnings
 
 import pytest
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast, ThresholdMultipliContrast, IdentityContrast, SimplePreprocessContrast, ContrastSimulator, FlowContrast
+from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast, ThresholdIodineContrast, IdentityContrast, SimplePreprocessContrast, ContrastSimulator, FlowContrast
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from utils import TEST_ROOT_DIR, TEST_DATA_ROOT_DIR, OUTPUT_ROOT_DIR
 
@@ -56,13 +56,13 @@ def volume_dvf_dir(test_data_root_dir: Path) -> Path:
 
 @pytest.fixture(scope="session", autouse=True)
 def multipli_contrast() -> ContrastSimulator:
-    print("Setting up MultipliContrast for the entire test session...")
-    return MultipliContrast()
+    print("Setting up StaticIodineContrast for the entire test session...")
+    return StaticIodineContrast()
 
 @pytest.fixture(scope="session", autouse=True)
 def threshold_multipli_contrast() -> ContrastSimulator:
-    print("Setting up ThresholdMultipliContrast for the entire test session...")
-    return ThresholdMultipliContrast()
+    print("Setting up ThresholdIodineContrast for the entire test session...")
+    return ThresholdIodineContrast()
 
 @pytest.fixture(scope="session", autouse=True)
 def identity_contrast() -> ContrastSimulator:

@@ -1,17 +1,12 @@
 from pathlib import Path
 from typing import Literal
-from dataclasses import dataclass, field
-from multiprocessing import get_context
-import os
+import logging
 
 import torch
-from torch import Tensor
 import numpy as np
-import pyvista as pv
-import torchcpd
 from tqdm import tqdm
 
-from .data_reader import DataReader, DataReaderResult, Coronary, separate_coronary, load_nifti, get_coronary_centering_affine, get_mesh_in_world
+from .data_reader import DataReader, DataReaderResult, Coronary, load_nifti
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from ... import NUM_TOTAL_PHASE
 from ..cardiac_phase import CardiacPhase
@@ -68,7 +63,7 @@ class VolumesReader(DataReader):
         ):
             volume, affine = load_nifti(img_file)
             if volume.max() < 2.0:
-                print("Assuming image is normalized to [0,1] (from XCAT), recovering original intensity to CTA by multiplying 65536 and subtracting 1000")
+                logging.debug("Assuming image is normalized to [0,1] (from XCAT), recovering original intensity to CTA by multiplying 65536 and subtracting 1000")
                 volume *= 2**16  # recover image uses float to represent 16 bit
                 volume -= 1000
             

@@ -2,7 +2,7 @@ from pathlib import Path
 import shutil
 import warnings
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import MultipliContrast
+from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast
 from generate_4d_heart.rotate_dsa.data_reader import VolumeDVFReader, CoronaryBoundLVLinearEnhancer
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
@@ -22,7 +22,7 @@ def test_coronary_bound_lv(
         coronary_nii=data_dir / "coronary.nii.gz",
         dvf_dir=data_dir / "dvf",
         roi_json=data_dir / "Normal_01.json",
-        contrast_simulator=MultipliContrast(),
+        contrast_simulator=StaticIodineContrast(),
         movement_enhancer=CoronaryBoundLVLinearEnhancer(enhance_coronary="LCA")
     )
     
