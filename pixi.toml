@@ -16,7 +16,9 @@ index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 pytest = "pytest"
 
 [dependencies]
-pytorch-gpu = "2.9.1.*"
+# conda-forge 的 pytorch-gpu 包含了 CUDA 12.* 的支持
+# 请勿添加系统CUDA相关目录 到 CPATH 和 LD_LIBRARY_PATH 环境变量中，否则可能会导致与 conda-forge 的 CUDA 版本冲突
+pytorch-gpu = "*"
 tqdm = ">=4.67.1,<5"
 torchio = ">=0.20.22,<0.21"
 nibabel = ">=5.3.2,<6"
@@ -25,16 +27,14 @@ tifffile = ">=2025.9.20,<2026"
 cupy = ">=13.6.0,<14"
 einops = ">=0.8.2,<0.9"
 imageio = ">=2.37.0,<3"
-jsonargparse = ">=4.40.2,<5"
 pip = "*"
 notebook = "*"
 pytest = "*"
 scikit-image = ">=0.25.2,<0.26"
-typer = ">=0.20.0,<0.21"
-pytorch3d = ">=0.7.9,<0.8"
-trame = ">=3.12.0,<4"
+pytorch3d = "*"
+
 jupyter-server-proxy = ">=4.4.0,<5"
-open3d = ">=0.19.0,<0.20"
+
 cyclopts = ">=4.10.2,<5"
 
 
