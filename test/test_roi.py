@@ -95,6 +95,7 @@ def test_roi_crop_and_zoom(cavity_img, output_dir):
 
     plt.tight_layout()
     out_png = output_dir / "roi_crop_zoom_vis.png"
+    out_png.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_png)
     plt.close()
     assert out_png.exists()
