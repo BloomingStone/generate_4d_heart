@@ -75,6 +75,7 @@ def test_rotate_dsa_integration(
         ("static_volume_reader", "LCA"),
         ("rbf_reader", "LCA"),
         ("rbf_reader", "RCA"),      # RBFReader will be fully tested on both LCA and RCA
+        ("static_label_reader", "LCA"),  # StaticLabelReader only has LCA data
     )
 )
 @pytest.mark.parametrize("simulator_name", (

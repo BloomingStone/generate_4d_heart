@@ -4,10 +4,12 @@ from dataclasses import dataclass, field
 import heapq
 import hashlib
 import warnings
+import logging
 
 import numpy as np
 import torch
-from scipy.ndimage import distance_transform_edt
+from cupyx.scipy.ndimage import distance_transform_edt
+import cupy as cp
 
 from generate_4d_heart import CavityLabel, MU_IDODINE, MU_WATER, VesselLabel
 
@@ -16,15 +18,28 @@ from .contrast_simulator import ContrastSimulator
 from skimage.morphology import skeletonize
 
 
+def tensor_to_cupy(tensor: torch.Tensor) -> cp.ndarray:
+    if tensor.device.type == 'cpu':
+        return cp.asarray(tensor.numpy())
+    else:
+        return cp.from_dlpack(tensor)
+
+def cupy_to_tensor(array: cp.ndarray, device: torch.device) -> torch.Tensor:
+    if device.type == 'cpu':
+        return torch.from_numpy(cp.asnumpy(array))
+    else:
+        return torch.from_dlpack(array)
+
 @dataclass
 class FlowContrast(ContrastSimulator):
     r"""Time-varying coronary contrast simulator.
 
     The start voxel is cached once because it is assumed to be anatomically stable.
     The coronary skeleton is recomputed on every call because the vessel can deform.
-    The output density baseline follows the same HU-to-attenuation style as MultipliContrast.
+    The output density baseline follows the same HU-to-attenuation style as StaticIodineContrast.
     
     $$
+    v = v0(r / r0) ^ \beta \\
     \tau = d / v \\
     x_{in} = \alpha (t - \tau - t_{in}) \\
     x_{out} = \alpha (t - \tau - t_{out}) \\
@@ -38,20 +53,22 @@ class FlowContrast(ContrastSimulator):
 
     contrast_change_over_time: bool = True
 
-    # Baseline density parameters, mirroring MultipliContrast's attenuation scale.
+    # Baseline density parameters, mirroring StaticIodineContrast's attenuation scale.
     mu_water_dsa: float = MU_WATER
     mu_idodine: float = MU_IDODINE
 
     # Time model parameters for rho(d, t)
-    velocity: float = 200   # mm/s
+    velocity: float = 200   # mm/s  v0
     t_in: float = 0.15
     t_out: float = 2.7
     alpha: float = 5.0
+    beta: float = 1.5   # controls how velocity changes with vessel radius, v ~ (r/r0)^beta
 
     _cached_start_voxel: tuple[int, int, int] | None = field(default=None, init=False, repr=False)
     _cached_distance_map: torch.Tensor | None = field(default=None, init=False, repr=False)
     _cached_cor_hash: str | None = field(default=None, init=False, repr=False)   # if coronary label changes, cached skeleton and distance map should be invalidated
 
+    device: torch.device = field(default=torch.device("cpu"), init=False, repr=False)
 
     def simulate(
         self,
@@ -69,13 +86,6 @@ class FlowContrast(ContrastSimulator):
         affine: np.ndarray,
     ) -> torch.Tensor:
         """Return baseline attenuation map (no coronary iodine applied)."""
-        return self._baseline_map(ori_volume, cavity_label)
-
-    def _baseline_map(self, ori_volume: torch.Tensor, cavity_label: torch.Tensor) -> torch.Tensor:
-        """
-        Compute baseline attenuation from original HU and cavity labels (no coronary iodine).
-        Returns a tensor shaped (1,1,D,H,W).
-        """
         density = ori_volume.clone().to(torch.float32)
         density = density / 1000.0 * self.mu_water_dsa + self.mu_water_dsa
 
@@ -112,8 +122,9 @@ class FlowContrast(ContrastSimulator):
         assert coronary_label.shape == ori_volume.shape, "coronary_label must match ori_volume shape"
         assert coronary_label.dtype == torch.bool or coronary_label.dtype == torch.uint8, "coronary_label must be boolean or uint8"
         
-        cavity_label = cavity_label.to(ori_volume.device)
-        coronary_label = coronary_label.to(ori_volume.device)
+        self.device = ori_volume.device
+        cavity_label = cavity_label.to(self.device)
+        coronary_label = coronary_label.to(self.device)
 
         if not coronary_label.any():
             raise ValueError("coronary_label is empty, cannot apply FlowContrast")
@@ -135,16 +146,15 @@ class FlowContrast(ContrastSimulator):
         # Computed in the first time and cached for subsequent calls with the same coronary label.
         
         spacing = np.abs(np.diag(affine[:3, :3]))
-        mean_spacing = float(spacing.mean())    # mm / voxel
-        velocity_voxel = self.velocity / mean_spacing  # convert velocity from mm/s to voxel/s
+        spacing = cp.asarray(spacing, dtype=cp.float32)
         
         if self._cached_distance_map is not None:
-            distance_map = self._cached_distance_map.to(device=ori_volume.device)
+            distance_map = self._cached_distance_map.to(device=self.device)
         else:
-            print("Computing skeleton and distance map for the first time...")
-            skeleton_mask = self._compute_skeleton(coronary_label.cpu().numpy())
-            start_voxel = self._resolve_start_voxel(cavity_label.squeeze().cpu().numpy(), skeleton_mask)
-            distance_map = self._compute_path_distance_map(skeleton_mask, start_voxel, velocity_voxel).to(device=ori_volume.device)
+            logging.debug("Computing skeleton and distance map...")
+            skeleton_mask = self._compute_skeleton_with_radius(tensor_to_cupy(coronary_label), spacing)
+            start_voxel = self._resolve_start_voxel(tensor_to_cupy(cavity_label.squeeze()), skeleton_mask)
+            distance_map = self._compute_path_distance_map(skeleton_mask, start_voxel, spacing).to(device=self.device)
         
         density = ori_volume.squeeze().clone()
         coronary_density = self._density_from_distance(distance_map, float(time)).to(
@@ -154,7 +164,7 @@ class FlowContrast(ContrastSimulator):
         density[coronary_label] = coronary_density[coronary_label]
         return density.unsqueeze(0).unsqueeze(0)
 
-    def _resolve_start_voxel(self, cavity: np.ndarray, skeleton_mask: np.ndarray) -> tuple[int, int, int]:
+    def _resolve_start_voxel(self, cavity: cp.ndarray, skeleton_mask: cp.ndarray) -> tuple[int, int, int]:
         if self._cached_start_voxel is not None:
             return self._cached_start_voxel
         
@@ -170,7 +180,7 @@ class FlowContrast(ContrastSimulator):
             la_ra = (cavity == int(CavityLabel.LA)) | (cavity == int(CavityLabel.RA))
             if not la_ra.any():
                 raise ValueError("Unable to resolve a start voxel for FlowContrast: no aorta or LA/RA labels found")
-            la_ra_center = np.array(np.argwhere(la_ra)).mean(axis=0).astype(int)
+            la_ra_center = cp.array(cp.argwhere(la_ra)).mean(axis=0).astype(int)
             start = self._nearest_skeleton_voxel(la_ra_center, skeleton_mask)
         else:
             start = self._nearest_skeleton_voxel_to_region(aorta_mask, skeleton_mask)
@@ -178,37 +188,41 @@ class FlowContrast(ContrastSimulator):
         self._cached_start_voxel = start
         return start
 
-    def _compute_skeleton(self, coronary_mask: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def _compute_skeleton_with_radius(coronary_mask: cp.ndarray, spacing: cp.ndarray) -> cp.ndarray:
+        """
+        1. Compute the skeleton of the coronary mask.
+        2. Compute the distance from each skeleton voxel to the nearest coronary boundary, and assign this distance to the skeleton voxel's value.
+           This distance can be interpreted as the local vessel radius, and will be used to compute the Equivalent Flow Distance at each skeleton point.
+        """
+        
         if coronary_mask.ndim != 3:
             raise ValueError("coronary_label must be 3D after squeeze")
-        skeleton = skeletonize(coronary_mask.astype(bool), method="lee").astype(bool)
+
+        # skeleton must be computed on CPU because skimage's skeletonize does not support GPU and cupyx doesn't have a built-in skeletonize function.
+        skeleton = skeletonize(coronary_mask.get().astype(bool), method="lee").astype(bool)
+        skeleton = cp.asarray(skeleton)
         
         if not skeleton.any():
             raise ValueError("Unable to compute skeleton for coronary mask: empty skeleton")
         
-        return skeleton
+        # Add a radius to the skeleton based on the distance to the coronary boundary
+        distance_to_boundary = distance_transform_edt(coronary_mask, sampling=spacing.tolist())  # convert to mm  #type: ignore
+        res = cp.zeros_like(skeleton, dtype=float)
+        assert distance_to_boundary is not None, "distance_transform_edt should return a distance map when input is not empty"
+        res[skeleton] = distance_to_boundary[skeleton]
+        
+        return res
 
-    def _find_skeleton_endpoints(self, skeleton_mask: np.ndarray) -> list[tuple[int, int, int]]:
-        coords = np.argwhere(skeleton_mask)
-        coord_set = {self._coord_tuple(coord) for coord in coords}
-        endpoints: list[tuple[int, int, int]] = []
-        for coord in coord_set:
-            neighbor_count = 0
-            for offset in self._neighbor_offsets():
-                if (coord[0] + offset[0], coord[1] + offset[1], coord[2] + offset[2]) in coord_set:
-                    neighbor_count += 1
-            if neighbor_count <= 1:
-                endpoints.append(coord)
-        return endpoints
-
-    def _compute_path_distance_map(self, skeleton_mask: np.ndarray, start_voxel: tuple[int, int, int], velocity_voxel: float) -> torch.Tensor:
-        coords = np.argwhere(skeleton_mask)
+    def _compute_path_distance_map(self, skeleton_mask_with_radius: cp.ndarray, start_voxel: tuple[int, int, int], spacing: cp.ndarray) -> torch.Tensor:
+        coords = cp.argwhere(skeleton_mask_with_radius>0)
+        r0 = skeleton_mask_with_radius[skeleton_mask_with_radius>0].max()  # minimum radius along the skeleton, used as reference radius for flow model
         if len(coords) == 0:
             raise ValueError("Empty skeleton")
         
         # map coord tuple -> index
         coord_to_index = {self._coord_tuple(coord): idx for idx, coord in enumerate(coords)}
-        start_node = self._nearest_skeleton_voxel(start_voxel, skeleton_mask)
+        start_node = self._nearest_skeleton_voxel(start_voxel, skeleton_mask_with_radius)
         start_idx = coord_to_index.get(start_node)
         if start_idx is None:
             # fallback: pick nearest skeleton coord
@@ -216,12 +230,15 @@ class FlowContrast(ContrastSimulator):
 
         # Dijkstra on skeleton graph (26-neighborhood)
         n = len(coords)
-        distances = np.full(n, np.inf, dtype=np.float32)
-        distances[start_idx] = 0.0
-        queue: list[tuple[float, int]] = [(0.0, start_idx)]
+        distances_voxel = cp.full(n, cp.inf, dtype=cp.float32)
+        distances_voxel[start_idx] = 0.0
+        distances_world = cp.full(n, cp.inf, dtype=cp.float32)
+        distances_world[start_idx] = 0.0
+        
+        queue: list[tuple[float, float, int]] = [(0.0, 0.0, start_idx)]
         while queue:
-            dist, idx = heapq.heappop(queue)
-            if dist > distances[idx]:
+            d_voxel, d_world, idx = heapq.heappop(queue)
+            if d_voxel > distances_voxel[idx]:
                 continue
             x, y, z = self._coord_tuple(coords[idx])
             for offset in self._neighbor_offsets():
@@ -229,23 +246,33 @@ class FlowContrast(ContrastSimulator):
                 neighbor_idx = coord_to_index.get(neighbor)
                 if neighbor_idx is None:
                     continue
-                step = float(np.linalg.norm(np.asarray(offset, dtype=np.float32)))
-                new_dist = dist + step / max(velocity_voxel, 1e-6)
-                if new_dist < distances[neighbor_idx]:
-                    distances[neighbor_idx] = new_dist
-                    heapq.heappush(queue, (new_dist, neighbor_idx))
+                offset_world = cp.asarray(offset, dtype=cp.float32) * cp.asarray(spacing, dtype=cp.float32)
+                step_world = float(cp.linalg.norm(cp.asarray(offset_world, dtype=cp.float32)))
+                step_voxel = float(cp.linalg.norm(cp.asarray(offset, dtype=cp.float32)))
+                
+                radius = skeleton_mask_with_radius[x, y, z]  # the radius at current skeleton point
+                
+                # v = v0 * (r / r0)^\beta  (Poiseuille's law)
+                v = self.velocity * (radius / r0)**self.beta if radius > 0 else self.velocity
+                
+                new_d_world = d_world + step_world / max(v, 1e-6)
+                new_d_voxel = d_voxel + step_voxel
+                if new_d_voxel < distances_voxel[neighbor_idx]:
+                    distances_voxel[neighbor_idx] = new_d_voxel
+                    distances_world[neighbor_idx] = new_d_world
+                    heapq.heappush(queue, (new_d_voxel, new_d_world, neighbor_idx))
 
-        skel_dist = np.zeros(skeleton_mask.shape, dtype=np.float32)
+        skel_dist = cp.zeros(skeleton_mask_with_radius.shape, dtype=cp.float32)
         for idx, coord in enumerate(coords):
-            skel_dist[self._coord_tuple(coord)] = distances[idx]
+            skel_dist[self._coord_tuple(coord)] = distances_world[idx]
 
         # Project skeleton distances back to full volume via nearest-skeleton assignment
-        distance_result = distance_transform_edt(~skeleton_mask, return_distances=True, return_indices=True)
-        nearest_indices = distance_result[1]  # type: ignore
+        _, nearest_indices  = distance_transform_edt(~(skeleton_mask_with_radius>0), return_distances=True, return_indices=True)  # type: ignore
+        assert nearest_indices is not None, "distance_transform_edt with return_indices=True should return indices"
         projected = skel_dist[nearest_indices[0], nearest_indices[1], nearest_indices[2]]
 
         # cache and return
-        self._cached_distance_map = torch.from_numpy(projected).to(dtype=torch.float32)
+        self._cached_distance_map = cupy_to_tensor(projected, device=self.device)
         return self._cached_distance_map
 
     def _density_from_distance(self, distance_map: torch.Tensor, time: float) -> torch.Tensor:
@@ -255,31 +282,31 @@ class FlowContrast(ContrastSimulator):
         pulse = torch.sigmoid(x_in) - torch.sigmoid(x_out)
         return (self.mu_water_dsa + (self.mu_idodine - self.mu_water_dsa) * pulse).to(torch.float32)
 
-    def _nearest_skeleton_voxel(self, start_voxel: tuple[int, int, int], skeleton_mask: np.ndarray) -> tuple[int, int, int]:
+    def _nearest_skeleton_voxel(self, start_voxel: tuple[int, int, int], skeleton_mask: cp.ndarray) -> tuple[int, int, int]:
         if skeleton_mask[start_voxel].all():
             return start_voxel
-        coords = np.argwhere(skeleton_mask)
+        coords = cp.argwhere(skeleton_mask>0)
         if len(coords) == 0:
             return start_voxel
-        distances = np.linalg.norm(coords.astype(np.float32) - np.asarray(start_voxel, dtype=np.float32), axis=1)
-        nearest_coord = coords[int(np.argmin(distances))]
+        distances = cp.linalg.norm(coords.astype(cp.float32) - cp.asarray(start_voxel, dtype=cp.float32), axis=1)
+        nearest_coord = coords[int(cp.argmin(distances))]
         return self._coord_tuple(nearest_coord)
 
-    def _nearest_skeleton_voxel_to_region(self, region_mask: np.ndarray, skeleton_mask: np.ndarray) -> tuple[int, int, int]:
-        coords = np.argwhere(skeleton_mask)
+    def _nearest_skeleton_voxel_to_region(self, region_mask: cp.ndarray, skeleton_mask: cp.ndarray) -> tuple[int, int, int]:
+        coords = cp.argwhere(skeleton_mask>0)
         if len(coords) == 0:
             raise ValueError("Unable to find a skeleton voxel")
-        region_coords = np.argwhere(region_mask)
+        region_coords = cp.argwhere(region_mask)
         if len(region_coords) == 0:
             nearest = coords[0]
         else:
-            distances = np.linalg.norm(coords.astype(np.float32)[None, :, :] - region_coords.astype(np.float32)[:, None, :], axis=-1)
-            best_region_idx, best_skel_idx = np.unravel_index(int(np.argmin(distances)), distances.shape)
+            distances = cp.linalg.norm(coords.astype(cp.float32)[None, :, :] - region_coords.astype(cp.float32)[:, None, :], axis=-1)
+            best_region_idx, best_skel_idx = cp.unravel_index(cp.argmin(distances), distances.shape)
             nearest = coords[best_skel_idx]
         return self._coord_tuple(nearest)
 
     @staticmethod
-    def _coord_tuple(coord: np.ndarray) -> tuple[int, int, int]:
+    def _coord_tuple(coord: cp.ndarray) -> tuple[int, int, int]:
         return int(coord[0]), int(coord[1]), int(coord[2])
 
     @staticmethod
