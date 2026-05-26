@@ -134,5 +134,5 @@ The generated images will be stored as
 
 
 if __name__ == '__main__':
-    from jsonargparse import auto_cli
-    auto_cli(generate_4d_dvf)
+    from cyclopts import run
+    run(generate_4d_dvf)

@@ -1,5 +1,5 @@
 from generate_4d_heart import generate_4d_dvf
-from jsonargparse import auto_cli
+from cyclopts import run
 
 import logging
 
@@ -11,4 +11,4 @@ logging.basicConfig(
 )
 
 if __name__ == '__main__':
-    auto_cli(generate_4d_dvf)
+    run(generate_4d_dvf)

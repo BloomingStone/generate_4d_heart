@@ -218,5 +218,5 @@ def main(
         dsa.run()
 
 if __name__ == "__main__":
-    import typer
-    typer.run(main)
+    from cyclopts import run
+    run(main)
