@@ -102,7 +102,11 @@ class VolumesReader(DataReader):
         volume = cor.volume
         if self.contrast_simulator.contrast_change_over_time and global_time is not None:
             volume = self.contrast_simulator.simulate_with_time(
-                volume, data.cavity, cor.label, global_time
+                float(global_time),
+                volume,
+                data.cavity,
+                cor.label,
+                cor.centering_affine,
             )
 
         return DataReaderResult(
@@ -158,7 +162,11 @@ class VolumesReader(DataReader):
         # If simulator is dynamic, apply simulate_with_time to coronary region now
         if self.contrast_simulator.contrast_change_over_time:
             vol_interp = self.contrast_simulator.simulate_with_time(
-                vol_interp, cavity, coronary_label, float(global_time)
+                float(global_time),
+                vol_interp,
+                cavity,
+                coronary_label,
+                cor0.centering_affine,  # already aligned in __init__
             )
 
         return DataReaderResult(

@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 from .contrast_simulator import ContrastSimulator
 
@@ -31,6 +32,7 @@ class ThresholdMultipliContrast(ContrastSimulator):
         self,
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
+        affine: np.ndarray,
     ) -> torch.Tensor:
         # Convert HU to baseline attenutation and apply tissue-specific scalings
         density = ori_volume.clone()
@@ -55,7 +57,8 @@ class ThresholdMultipliContrast(ContrastSimulator):
         self, 
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
-        coronary_label: torch.Tensor
+        coronary_label: torch.Tensor,
+        affine: np.ndarray,
     ) -> torch.Tensor:
         # Expect `ori_volume` to be preprocessed baseline attenuation map
         assert self.contrast_change_over_time == False, "ThresholdMultipliContrast does not support contrast change over time"
@@ -73,11 +76,12 @@ class ThresholdMultipliContrast(ContrastSimulator):
     
     def simulate_with_time(
         self, 
+        time: float,
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
         coronary_label: torch.Tensor,
-        time: float
+        affine: np.ndarray
     ) -> torch.Tensor:
         import warnings
         warnings.warn("ThresholdMultipliContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
-        return self.simulate(ori_volume, cavity_label, coronary_label)
+        return self.simulate(ori_volume, cavity_label, coronary_label, affine)

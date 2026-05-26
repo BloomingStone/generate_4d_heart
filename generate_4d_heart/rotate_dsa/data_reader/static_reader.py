@@ -63,10 +63,11 @@ class StaticVolumeReader(DataReader):
         if self.contrast_simulator.contrast_change_over_time:
             # For dynamic contrast simulators, simulate with time information
             volume = self.contrast_simulator.simulate_with_time(
-                volume, 
-                self._data.cavity, 
-                cor.label, 
-                global_time
+                float(global_time),
+                volume,
+                self._data.cavity,
+                cor.label,
+                cor.centering_affine,
             )
         
         return DataReaderResult(
@@ -129,14 +130,16 @@ class StaticLabelReader(StaticVolumeReader):
         if not self.contrast_simulator.contrast_change_over_time:
             print("Applying STATIC contrast simulation to original volume for StaticLabelReader...")
             self._data.lca.volume = self.contrast_simulator.simulate(
-                self._data.lca.volume, 
-                self._data.cavity, 
-                self._data.lca.label
+                self._data.lca.volume,
+                self._data.cavity,
+                self._data.lca.label,
+                self._data.lca.centering_affine,
             )
             self._data.rca.volume = self.contrast_simulator.simulate(
-                self._data.rca.volume, 
-                self._data.cavity, 
-                self._data.rca.label
+                self._data.rca.volume,
+                self._data.cavity,
+                self._data.rca.label,
+                self._data.rca.centering_affine,
             )
 
         self._origin_volume_size = cavity.shape[2:]   #type: ignore

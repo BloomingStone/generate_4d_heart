@@ -43,7 +43,7 @@ class FlowContrast(ContrastSimulator):
     mu_idodine: float = MU_IDODINE
 
     # Time model parameters for rho(d, t)
-    velocity: float = 400   # TODO 统一单位到mm/s
+    velocity: float = 200   # mm/s
     t_in: float = 0.15
     t_out: float = 2.7
     alpha: float = 5.0
@@ -58,6 +58,7 @@ class FlowContrast(ContrastSimulator):
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
         coronary_label: torch.Tensor,
+        affine: np.ndarray,
     ) -> torch.Tensor:
         raise NotImplementedError("FlowContrast does not support simulate without time, please use `simulate_with_time` instead")
 
@@ -65,6 +66,7 @@ class FlowContrast(ContrastSimulator):
         self,
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
+        affine: np.ndarray,
     ) -> torch.Tensor:
         """Return baseline attenuation map (no coronary iodine applied)."""
         return self._baseline_map(ori_volume, cavity_label)
@@ -98,10 +100,11 @@ class FlowContrast(ContrastSimulator):
 
     def simulate_with_time(
         self,
+        time: float,
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
         coronary_label: torch.Tensor,
-        time: float,
+        affine: np.ndarray,
     ) -> torch.Tensor:
         assert self.contrast_change_over_time is True, "FlowContrast only supports contrast change over time"
         assert ori_volume.ndim == 5 and ori_volume.shape[:2] == (1, 1), "ori_volume must be (1, 1, D, H, W)"
@@ -130,13 +133,18 @@ class FlowContrast(ContrastSimulator):
         # Compute distance map from coronary voxels to start voxel along the skeleton, then apply time-density model 
         # to get coronary density, and merge with baseline for output
         # Computed in the first time and cached for subsequent calls with the same coronary label.
+        
+        spacing = np.abs(np.diag(affine[:3, :3]))
+        mean_spacing = float(spacing.mean())    # mm / voxel
+        velocity_voxel = self.velocity / mean_spacing  # convert velocity from mm/s to voxel/s
+        
         if self._cached_distance_map is not None:
             distance_map = self._cached_distance_map.to(device=ori_volume.device)
         else:
             print("Computing skeleton and distance map for the first time...")
             skeleton_mask = self._compute_skeleton(coronary_label.cpu().numpy())
             start_voxel = self._resolve_start_voxel(cavity_label.squeeze().cpu().numpy(), skeleton_mask)
-            distance_map = self._compute_path_distance_map(skeleton_mask, start_voxel).to(device=ori_volume.device)
+            distance_map = self._compute_path_distance_map(skeleton_mask, start_voxel, velocity_voxel).to(device=ori_volume.device)
         
         density = ori_volume.squeeze().clone()
         coronary_density = self._density_from_distance(distance_map, float(time)).to(
@@ -193,7 +201,7 @@ class FlowContrast(ContrastSimulator):
                 endpoints.append(coord)
         return endpoints
 
-    def _compute_path_distance_map(self, skeleton_mask: np.ndarray, start_voxel: tuple[int, int, int]) -> torch.Tensor:
+    def _compute_path_distance_map(self, skeleton_mask: np.ndarray, start_voxel: tuple[int, int, int], velocity_voxel: float) -> torch.Tensor:
         coords = np.argwhere(skeleton_mask)
         if len(coords) == 0:
             raise ValueError("Empty skeleton")
@@ -222,7 +230,7 @@ class FlowContrast(ContrastSimulator):
                 if neighbor_idx is None:
                     continue
                 step = float(np.linalg.norm(np.asarray(offset, dtype=np.float32)))
-                new_dist = dist + step / max(self.velocity, 1e-6)
+                new_dist = dist + step / max(velocity_voxel, 1e-6)
                 if new_dist < distances[neighbor_idx]:
                     distances[neighbor_idx] = new_dist
                     heapq.heappush(queue, (new_dist, neighbor_idx))

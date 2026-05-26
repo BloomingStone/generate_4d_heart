@@ -32,13 +32,13 @@ def test_contrast_simulators(
     coronary_label, _ = load_nifti(coronary_label, is_label=True)
 
     simulator = simulator_factory(SimulatorName(sim_name))
-    preprocessed_volume = simulator.preprocess(ori_volume, cavity_label)
+    preprocessed_volume = simulator.preprocess(ori_volume, cavity_label, volume_affine)
     output_preprocessed_path = output_path / f"{sim_name}_preprocessed.nii.gz"
     save_nii(output_preprocessed_path, preprocessed_volume, affine=volume_affine)
     if simulator.contrast_change_over_time:
-        simulated_volume = simulator.simulate_with_time(preprocessed_volume, cavity_label, coronary_label, time=0.5)
+        simulated_volume = simulator.simulate_with_time(0.5, preprocessed_volume, cavity_label, coronary_label, volume_affine)
     else:
-        simulated_volume = simulator.simulate(preprocessed_volume, cavity_label, coronary_label)
+        simulated_volume = simulator.simulate(preprocessed_volume, cavity_label, coronary_label, volume_affine)
     
     output_simulated_path = output_path / f"{sim_name}_simulated.nii.gz"
     save_nii(output_simulated_path, simulated_volume, affine=volume_affine)
@@ -62,9 +62,11 @@ def test_flow_contrast_time_delay_and_pulse_shape():
         mu_water_dsa=0.0
     )
 
-    early = simulator.simulate_with_time(ori_volume, cavity_label, coronary_label, time=0.05)
-    mid = simulator.simulate_with_time(ori_volume, cavity_label, coronary_label, time=0.2)
-    late = simulator.simulate_with_time(ori_volume, cavity_label, coronary_label, time=4.3)
+    import numpy as np
+
+    early = simulator.simulate_with_time(0.05, ori_volume, cavity_label, coronary_label, np.eye(4))
+    mid = simulator.simulate_with_time(0.2, ori_volume, cavity_label, coronary_label, np.eye(4))
+    late = simulator.simulate_with_time(4.3, ori_volume, cavity_label, coronary_label, np.eye(4))
 
     # start point at near = (0, 0, 1, 4, 4) should enhance at t=0.1 and wash out at t=0.4
     near = (0, 0, 1, 4, 4)

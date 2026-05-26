@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 from .contrast_simulator import ContrastSimulator
 from generate_4d_heart import CavityLabel, MU_WATER, MU_IDODINE
@@ -19,6 +20,7 @@ class MultipliContrast(ContrastSimulator):
         self,
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
+        affine: np.ndarray,
     ) -> torch.Tensor:
         """
         Convert HU image to baseline attenuation map and normalize cavity/threshold regions to water baseline.
@@ -44,7 +46,8 @@ class MultipliContrast(ContrastSimulator):
         self, 
         ori_volume: torch.Tensor,   # assumed preprocessed baseline (attenuation-like)
         cavity_label: torch.Tensor,
-        coronary_label: torch.Tensor
+        coronary_label: torch.Tensor,
+        affine: np.ndarray,
     ) -> torch.Tensor:
         # MultipliContrast is static by design
         assert self.contrast_change_over_time == False, "MultipliContrast does not support contrast change over time"
@@ -61,11 +64,12 @@ class MultipliContrast(ContrastSimulator):
     
     def simulate_with_time(
         self, 
+        time: float,
         ori_volume: torch.Tensor,
         cavity_label: torch.Tensor,
         coronary_label: torch.Tensor,
-        time: float
+        affine: np.ndarray
     ) -> torch.Tensor:
         import warnings
         warnings.warn("MultipliContrast does not support contrast change over time, `simulate_with_time` will ignore `time` input and return the same result as `simulate`")
-        return self.simulate(ori_volume, cavity_label, coronary_label)
+        return self.simulate(ori_volume, cavity_label, coronary_label, affine)

@@ -343,15 +343,15 @@ class DataReader(Protocol):
             lca, rca = separate_coronary(coronary, running_device)
             if contrast_simulator is not None:
                 print("Preprocessing baseline volume with contrast simulator...")
-                volume = contrast_simulator.preprocess(volume, cavity)
+                volume = contrast_simulator.preprocess(volume, cavity, affine)
             lca_volume = volume.clone()
             rca_volume = volume.clone()
             
             if contrast_simulator is not None and not contrast_simulator.contrast_change_over_time:
                 print("Applying STATIC contrast simulator to original volume...")
                 # simulate focuses on coronary-only modification
-                lca_volume = contrast_simulator.simulate(lca_volume, cavity, lca)
-                rca_volume = contrast_simulator.simulate(rca_volume, cavity, rca)
+                lca_volume = contrast_simulator.simulate(lca_volume, cavity, lca, affine)
+                rca_volume = contrast_simulator.simulate(rca_volume, cavity, rca, affine)
             
             return DataReader._Data(
                 affine=affine,
