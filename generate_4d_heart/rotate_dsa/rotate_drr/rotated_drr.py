@@ -11,11 +11,11 @@ from ..cardiac_phase import CardiacPhase
 
 @dataclass
 class CArmGeometry:
-    sdd: MM = 1800             # Source to detector distance
-    sod: MM = 1400             # Source to object distance
+    sdd: MM = 1200             # Source to detector distance
+    sod: MM = 760             # Source to object distance
     height: Pixel = 512           # Height of image
     _width: Pixel | None = None    # Width of image, default to height
-    delx: MMPerPixel = 0.3           # Pixel size in x direction
+    delx: MMPerPixel = 0.368           # Pixel size in x direction
     _dely: MMPerPixel | None = None   # Pixel size in y direction, default to delx
     x0: MM = 0.0             # detector principal point x-offset
     y0: MM = 0.0             # detector principal point y-offset

@@ -43,7 +43,7 @@ class FlowContrast(ContrastSimulator):
     mu_idodine: float = MU_IDODINE
 
     # Time model parameters for rho(d, t)
-    velocity: float = 500   # TODO 统一单位到mm/s
+    velocity: float = 400   # TODO 统一单位到mm/s
     t_in: float = 0.15
     t_out: float = 2.7
     alpha: float = 5.0

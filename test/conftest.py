@@ -91,5 +91,9 @@ def simple_drr() -> TorchDRR:
 
 @pytest.fixture(scope="session", autouse=True)
 def full_drr() -> TorchDRR:
-    return TorchDRR()
+    return TorchDRR(
+        rotate_cfg=RotatedParameters(
+            total_frame=120,
+        )
+    )
 
