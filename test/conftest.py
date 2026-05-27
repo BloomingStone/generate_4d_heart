@@ -82,8 +82,8 @@ def flow_contrast() -> ContrastSimulator:
 @pytest.fixture(scope="session", autouse=True)
 def simple_drr() -> TorchDRR:
     rotate_cfg = RotatedParameters(
-        total_frame=20,  # 减少帧数
-        fps=7,           # 降低帧率, 使用质数避免与total_frame有过多公约数
+        total_frame=40,  # 减少帧数
+        fps=5,           # 降低帧率
         angular_velocity = 20,  # 降低旋转速度
     )
     return TorchDRR(rotate_cfg=rotate_cfg)

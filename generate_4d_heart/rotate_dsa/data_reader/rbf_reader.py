@@ -150,10 +150,11 @@ class RBFReader(DataReader):
           
         if self.contrast_simulator.contrast_change_over_time:
             cropped_volume = self.contrast_simulator.simulate_with_time(
+                global_time,
                 cropped_volume, 
                 cropped_cavity, 
-                cropped_cor_label, 
-                global_time
+                cropped_cor_label,
+                self.cropped_data.coronary[cor_type].centering_affine
             )
 
         # apply warping and recover to original space, for both volume and labels
