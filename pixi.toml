@@ -47,4 +47,6 @@ pyacvd = ">=0.3.2, <0.4"
 pyvista = { version = "==0.47.*", extras = ["all"] }
 pytest-line-profiler = ">=0.2.1, <0.3"
 pytest-profiling = ">=1.8.1, <2"
+snakeviz = ">=2.2.2, <3"
+gprof2dot = ">=2025.4.14, <2026"
 

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Any
 import json
 import math
 
@@ -77,6 +77,14 @@ class PhysicalConfig:
 
 
 @dataclass
+class RotateDsaOutput:
+    raw_frames: np.ndarray
+    vis_frames: np.ndarray
+    labels: np.ndarray
+    depth_maps: np.ndarray
+    meta: dict[str, Any]
+
+@dataclass
 class RotateDSA:
     reader: DataReader
     drr: RotateDRR
@@ -89,13 +97,11 @@ class RotateDSA:
     def run(
         self, 
         coronary_type: Literal["LCA", "RCA"] = "LCA",
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> RotateDsaOutput:
         """
         Run whole process of rotate DRR
         Returns:
-            np.ndarray: DRR images shape = (t, w, h), t = rotate_parameters.total_frame
-            np.ndarray: coroanry labels, shape is the same as DRR images, 0: background, 1: coronary
-            np.ndarray: depth masks, shape is the same as DRR images, nan for background, depth value for coronary
+            RotateDsaOutput: Contains all generated outputs and metadata
         """
         assert coronary_type in ["LCA", "RCA"]
         total_frame = self.drr.rotate_cfg.total_frame
@@ -126,9 +132,15 @@ class RotateDSA:
             labels[f] = label
             depth_maps[f] = depth_map
         
-        frames = postprocess_drr(frames)
+        vis_frames, post_process_meta = postprocess_drr(frames)
 
-        return frames.cpu().numpy().astype(np.uint8), labels, depth_maps
+        return RotateDsaOutput(
+            raw_frames=frames.cpu().numpy().astype(np.float32),
+            vis_frames=vis_frames.cpu().numpy().astype(np.uint8),
+            labels=labels,
+            depth_maps=depth_maps,
+            meta=post_process_meta
+        )
 
 
     def run_no_drr(
@@ -165,30 +177,35 @@ class RotateDSA:
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
         gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        frames, labels, depth_maps = self.run(coronary_type)
-        save_tif(output_dir / "rotate_dsa.tif", frames)
-        save_tif(output_dir / "label.tif", labels)
+    ) -> RotateDsaOutput:
+        output = self.run(coronary_type)
+        save_tif(output_dir / "rotate_dsa_raw.tif", output.raw_frames)
         
-        save_gif(output_dir / "rotate_dsa.gif", frames, gif_fps,cmap='gray', vmin=0, vmax=255)
-        save_gif(output_dir / "label.gif", labels*255, gif_fps,cmap='gray')
-        save_deepthmap_gif(output_dir / "depth_map.gif", depth_maps, gif_fps)
+        save_gif(output_dir / "rotate_dsa.gif", output.vis_frames, gif_fps,cmap='gray', vmin=0, vmax=255)
+        save_gif(output_dir / "rotate_dsa_raw.gif", output.raw_frames, gif_fps,cmap='gray')
+        save_gif(output_dir / "label.gif", output.labels*255, gif_fps,cmap='gray')
+        save_deepthmap_gif(output_dir / "depth_map.gif", output.depth_maps, gif_fps)
         
-        save_pngs(output_dir / "rotate_dsa", frames)
-        save_pngs(output_dir / "label", labels*255)
+        save_pngs(output_dir / "rotate_dsa", output.vis_frames)
+        save_pngs(output_dir / "label", output.labels*255)
         
-        np.savez_compressed(output_dir / "label.npz", labels)
-        np.savez_compressed(output_dir / "depth_map.npz", depth_maps)
+        np.savez_compressed(output_dir / "label.npz", output.labels)
+        np.savez_compressed(output_dir / "depth_map.npz", output.depth_maps)
         
-        with open(output_dir / "rotate_dsa.json", "w") as f:
-            json.dump(self.get_geometry_json(coronary_type), f, indent=2)
-        
-        np.savez_compressed(
-            output_dir / "central_line.npz", 
-            self.reader.get_phase_0_data(coronary_type).coronary.get_coronary_central_line("coronary_centering")
+        phase_0_data = self.reader.get_phase_0_data(coronary_type)
+        meta = phase_0_data.save(
+            output_dir, 
+            save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
+            coordinate_system="coronary_centering"
         )
         
-        return frames, labels, depth_maps
+        json_data = self.get_geometry_json(coronary_type)
+        json_data["postprocess_meta"] = output.meta
+        json_data["phase_0_save_meta"] = meta
+        with open(output_dir / "rotate_dsa.json", "w") as f:
+            json.dump(json_data, f, indent=2)
+        
+        return output
     
     
     def run_and_save_no_drr(
@@ -198,7 +215,6 @@ class RotateDSA:
         gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
     ) -> tuple[np.ndarray, np.ndarray]:
         labels, depth_maps = self.run_no_drr(coronary_type)
-        save_tif(output_dir / "label.tif", labels)
         
         save_gif(output_dir / "label.gif", labels*255, gif_fps, cmap='gray')
         save_deepthmap_gif(output_dir / "depth_map.gif", depth_maps, gif_fps)
@@ -208,13 +224,17 @@ class RotateDSA:
         np.savez_compressed(output_dir / "label.npz", labels)
         np.savez_compressed(output_dir / "depth_map.npz", depth_maps)
         
-        with open(output_dir / "rotate_dsa.json", "w") as f:
-            json.dump(self.get_geometry_json(coronary_type), f, indent=2)
-        
-        np.savez_compressed(
-            output_dir / "central_line.npz", 
-            self.reader.get_phase_0_data(coronary_type).coronary.get_coronary_central_line("coronary_centering")
+        phase_0_data = self.reader.get_phase_0_data(coronary_type)
+        meta = phase_0_data.save(
+            output_dir, 
+            save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
+            coordinate_system="coronary_centering"
         )
+        
+        json_data = self.get_geometry_json(coronary_type)
+        json_data["phase_0_save_meta"] = meta
+        with open(output_dir / "rotate_dsa.json", "w") as f:
+            json.dump(json_data, f, indent=2)
         
         return labels, depth_maps
     
@@ -223,13 +243,17 @@ class RotateDSA:
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
     ) -> None:
-        with open(output_dir / "rotate_dsa.json", "w") as f:
-            json.dump(self.get_geometry_json(coronary_type), f, indent=2)
-        
-        np.savez_compressed(
-            output_dir / "central_line.npz", 
-            self.reader.get_phase_0_data(coronary_type).coronary.get_coronary_central_line("coronary_centering")
+        phase_0_data = self.reader.get_phase_0_data(coronary_type)
+        meta = phase_0_data.save(
+            output_dir, 
+            save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
+            coordinate_system="coronary_centering"
         )
+        
+        json_data = self.get_geometry_json(coronary_type)
+        json_data["phase_0_save_meta"] = meta
+        with open(output_dir / "rotate_dsa.json", "w") as f:
+            json.dump(json_data, f, indent=2)
     
     
     def _get_phase_at_frame(self, frame: int) -> CardiacPhase:

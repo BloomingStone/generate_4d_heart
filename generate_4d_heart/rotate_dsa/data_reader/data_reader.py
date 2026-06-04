@@ -1,4 +1,4 @@
-from typing import Protocol, Literal
+from typing import Protocol, Literal, Any
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -274,6 +274,9 @@ class DataReaderResult:
         assert self.coronary.label.shape == self.coronary.volume.shape, "Coronary label shape must match coronary.volume shape"
         assert self.cavity_label.dtype == torch.uint8, "Cavity label must be of type int8"
         assert self.coronary.label.dtype == torch.bool, "LCA label must be of type bool"
+        
+        assert np.allclose(self.coronary.original_affine, self.affine), "Coronary original affine must match DataReaderResult affine"
+    
     
     def to_device(self, device: torch.device) -> "DataReaderResult":
         """Move all tensors to the specified device"""
@@ -287,36 +290,72 @@ class DataReaderResult:
     def save(
         self, 
         output_dir: Path,
-        output_nii: bool = True,
-        output_mesh: bool = True,
-        output_central_line: bool = True,
+        *,
+        save_nii_type: list[Literal["cavity", "volume", "coronary"]]|None = None,
+        save_mesh: bool = False,
+        save_central_line: bool = False,
+        save_meta: bool = False,
         coordinate_system: Literal["world", "voxel", "coronary_centering"] = "coronary_centering"
-    ):
-        """Save all tensors to the specified directory"""
+    ) -> dict[str, Any]:
+        """
+        Save data to the specified directory
+        
+        Args:
+            output_dir (Path): directory to save the data
+            save_nii_type (list[Literal["cavity", "volume", "coronary"]]|None): which nifti files to save, if None, no nifti will be saved
+            save_mesh (bool): whether to save coronary mesh as .vtp file
+            save_central_line (bool): whether to save coronary central line as .npz file
+            save_meta (bool): whether to save meta information as json file
+            coordinate_system (Literal["world", "voxel", "coronary_centering"]): coordinate system for saved data
+                - "world": world coordinate, xyz = nii_volume_affine @ voxel_coordinate, affine will be the original affine of the nii volume
+                - "voxel": voxel coordinate, affine will be identity matrix
+                - "coronary_centering": coronary centering coordinate that put the coronary at the ordinate of the world coordinate, 
+                affine will be the centering affine of the coronary
+        Returns:
+            meta (dict): meta information of saving, includes phase, coronary type, and coordinate system
+        """
         from ...saver import save_nii
-        output_case_dir = output_dir / f"{self.phase}"
-        output_case_dir.mkdir(exist_ok=True, parents=True)
+        import json
         
-        if output_nii:
-            save_nii(output_case_dir / "cavity_label.nii.gz", self.cavity_label, self.affine, is_label=True)
-            save_nii(output_case_dir / f"{self.coronary.type}_volume.nii.gz", self.coronary.volume, self.affine)
-            save_nii(output_case_dir / f"{self.coronary.type}_label.nii.gz", self.coronary.label, self.affine, is_label=True)
+        meta = {
+            "phase": self.phase.to_str(precision=4),
+            "coronary_type": self.coronary.type.value,
+            "coordinate_system": coordinate_system,
+        }
         
-        if output_mesh:
-            match coordinate_system:
-                case "world":
-                    mesh = self.coronary.mesh_original
-                case "voxel":
-                    mesh = self.coronary.mesh_in_voxel
-                case "coronary_centering":
-                    mesh = self.coronary.mesh_centering
-                case _:
-                    raise ValueError(f"Invalid coordinate system: {coordinate_system}")
-            mesh.save(output_case_dir / f"{self.coronary.type}_mesh_{coordinate_system}.vtp", binary=True)
+        match coordinate_system:
+            case "world":
+                mesh = self.coronary.mesh_original
+                affine = self.coronary.original_affine
+            case "voxel":
+                mesh = self.coronary.mesh_in_voxel
+                affine = np.eye(4)
+            case "coronary_centering":
+                mesh = self.coronary.mesh_centering
+                affine = self.coronary.centering_affine
+            case _:
+                raise ValueError(f"Invalid coordinate system: {coordinate_system}")
         
-        if output_central_line:
+        if save_meta:
+            with open(output_dir / "meta.json", "w") as f:
+                json.dump(meta, f, indent=2)
+        
+        if save_nii_type:
+            if "cavity" in save_nii_type:
+                save_nii(output_dir / "cavity_label.nii.gz", self.cavity_label, affine, is_label=True)
+            if "volume" in save_nii_type:
+                save_nii(output_dir / f"volume_with_contrast.nii.gz", self.coronary.volume, affine)
+            if "coronary" in save_nii_type:
+                save_nii(output_dir / f"coronary_label.nii.gz", self.coronary.label, affine, is_label=True)
+        
+        if save_mesh:
+            mesh.save(output_dir / f"mesh.vtp", binary=True)
+        
+        if save_central_line:
             lca_central_line = self.coronary.get_coronary_central_line(coordinate_system)
-            np.savez_compressed(output_case_dir / f"{self.coronary.type}_central_line_{coordinate_system}.npz", lca_central_line)
+            np.savez_compressed(output_dir / f"central_line.npz", lca_central_line)
+
+        return meta
 
 
 class DataReader(Protocol):

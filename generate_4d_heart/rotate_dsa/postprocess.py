@@ -6,18 +6,18 @@ import numpy as np
 def postprocess_drr(
         x: torch.Tensor,
         *,
-        mu: float = 0.1,    # 经验值（可能源于DRR对投影距离的处理）
-        eps: float = 1e-8,
-        gamma: float = 1.0,
+        I0: float = 1.0,
+        gamma: float = 0.1,     # enhance dark region which usually contains coronary, the value is determined empirically by visual inspection
         noise_std: float = 0.00,
+        eps: float = 1e-8,
         output_uint8: bool = True,
-):
+) -> tuple[torch.Tensor, dict[str, float]]:
     """
     Post-process DRR image
     input -> exponentiate(line integral to intensity) -> normalize -> (gamma) -> (noise) -> (uint8) -> output
     Args:
         x: (T, H, W) DRR original line integral of density
-        mu: float, attenuation coefficient
+        I0: float, initial intensity
         gamma: float, gamma correction
         noise_std: float, noise std for differentiable noise if noise_std > 0
         eps: float, used in normalization to avoid division by zero
@@ -27,10 +27,16 @@ def postprocess_drr(
     # -------------------------------
     # 1. Beer-Lambert: line integral → intensity
     # -------------------------------
-    I = torch.exp( - mu * x)
+    I = I0 * torch.exp( - x)
 
     # -------------------------------
-    # 2. Normalize [0,1]
+    # 2. Gamma correction
+    # -------------------------------
+    if gamma != 1.0:
+        I = torch.pow(I, gamma)
+    
+    # -------------------------------
+    # 3. Normalize [0,1]
     # -------------------------------
     # Use robust percentile-based normalization across the whole sequence (offline)
     def _percentile_value(t: torch.Tensor, q: float) -> torch.Tensor:
@@ -51,12 +57,6 @@ def postprocess_drr(
     I = I.clamp(0.0, 1.0)
 
     # -------------------------------
-    # 3. Gamma correction
-    # -------------------------------
-    if gamma != 1.0:
-        I = torch.pow(I, gamma)
-
-    # -------------------------------
     # 4. Noise
     # -------------------------------
     if noise_std > 0:
@@ -65,5 +65,13 @@ def postprocess_drr(
     
     if output_uint8:
         I = (I * 255).round().to(torch.uint8)
+    
+    post_process_meta = {
+        "I0": I0,
+        "gamma": gamma,
+        "p_low": p_low.item(),
+        "p_high": p_high.item(),
+        "noise_std": noise_std,
+    }
 
-    return I
+    return I, post_process_meta

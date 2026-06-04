@@ -373,6 +373,7 @@ environments:
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/bb/84/80465e452292a219e4b72bded477cee155f9ec44b856e3a877e0f95eba54/vtk-9.6.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/c5/3c/3179b85b0e1c3659f0369940200cd6d0fa900e6cefcc7ea0bc6dd0e29ffb/nest_asyncio2-1.7.2-py3-none-any.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/c7/41/2c368f804bb9bd918da3b61324207fc4b410d0f32352c372c0680fc1f670/fastcore-1.13.2-py3-none-any.whl
+      - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/cd/f7/83b00cdf4f114f10750a18b64c27dc34636d0ac990ccac98282f5c0fbb43/snakeviz-2.2.2-py3-none-any.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/d5/80/957a3dae26c1b38a302a96bf49adc53399e5f04c0afdf750d4978216fe14/trame_common-1.2.3-py3-none-any.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/da/71/ae30dadffc90b9006d77af76b393cb9dfbfc9629f339fc1574a1c52e6806/future-1.0.0-py3-none-any.whl
       - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/e3/ac/c428c66241a144617a8af7a28e2e055e1438d23b949b62ac4b401a69fb79/pytest_profiling-1.8.1-py3-none-any.whl
@@ -5792,6 +5793,14 @@ packages:
   - plum-dispatch ; extra == 'dev'
   - toolslm ; extra == 'dev'
   requires_python: '>=3.10'
+- pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/cd/f7/83b00cdf4f114f10750a18b64c27dc34636d0ac990ccac98282f5c0fbb43/snakeviz-2.2.2-py3-none-any.whl
+  name: snakeviz
+  version: 2.2.2
+  sha256: 77e7b9c82f6152edc330040319b97612351cd9b48c706434c535c2df31d10ac5
+  index: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+  requires_dist:
+  - tornado>=2.0
+  requires_python: '>=3.9'
 - pypi: https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/d5/80/957a3dae26c1b38a302a96bf49adc53399e5f04c0afdf750d4978216fe14/trame_common-1.2.3-py3-none-any.whl
   name: trame-common
   version: 1.2.3

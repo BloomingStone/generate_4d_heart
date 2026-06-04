@@ -201,7 +201,7 @@ class RBFReader(DataReader):
         return DataReaderResult(
             phase=phase,
             cavity_label=cavity_label,
-            affine=self.cropped_data.affine,
+            affine=self.origin_data.affine,
             coronary=Coronary(
                 type=cor_type,
                 volume=volume,

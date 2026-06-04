@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 import warnings
 
 import pytest
@@ -96,4 +97,37 @@ def full_drr() -> TorchDRR:
             total_frame=120,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+#  Session finalizer: 收集所有输出目录中的 .gif 文件，统一软链接到 all_gifs/
+# ---------------------------------------------------------------------------
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """在所有测试结束后，将 output/ 下各子目录中的 .gif 软链接到 all_gifs/ 下统一查看。"""
+    gif_dir = OUTPUT_ROOT_DIR / "all_gifs"
+
+    # 清理上一次的软链接目录
+    if gif_dir.exists():
+        shutil.rmtree(gif_dir)
+    gif_dir.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    for gif_path in sorted(OUTPUT_ROOT_DIR.rglob("*.gif")):
+        # 跳过 all_gifs 自身的软链接
+        if gif_path.parent == gif_dir:
+            continue
+
+        # 用相对于 OUTPUT_ROOT_DIR 的路径构造扁平化名称，方便识别来源
+        rel = gif_path.relative_to(OUTPUT_ROOT_DIR)
+        # 将路径分隔符替换为 __，例如:
+        #   intergration_full/volumes_reader_flow_contrast_LCA/depth_map.gif
+        #   → intergration_full__volumes_reader_flow_contrast_LCA__depth_map.gif
+        link_name = "__".join(rel.parts)
+
+        link_path = gif_dir / link_name
+        link_path.symlink_to(gif_path.resolve())
+        count += 1
+
+    print(f"\n[conftest] 已收集 {count} 个 GIF 文件到 {gif_dir}")
 

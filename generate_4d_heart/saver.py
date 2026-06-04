@@ -78,6 +78,8 @@ def save_gif(
     output_path: Path,
     frames: torch.Tensor | np.ndarray,
     fps_gif: int = 30,
+    vmin: float | None = None,
+    vmax: float | None = None,
     **imshow_kwargs
 ) -> None:
     frames = frames.squeeze()
@@ -89,10 +91,15 @@ def save_gif(
     fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)
     ax = plt.axes((0, 0, 1, 1))  # 填满整个 figure
     ax.axis("off")
+    
+    if vmin is None:
+        vmin = np.min(frames_np)
+    if vmax is None:
+        vmax = np.max(frames_np)
 
     ims = []
     for i in range(frames_np.shape[0]):
-        im = ax.imshow(frames_np[i], animated=True, **imshow_kwargs)
+        im = ax.imshow(frames_np[i], animated=True, vmin=vmin, vmax=vmax, **imshow_kwargs)
         ims.append([im])
 
     ani = animation.ArtistAnimation(

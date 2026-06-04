@@ -117,7 +117,6 @@ class TorchDRR(RotateDRR):
     def _get_projection_after_setup(
         self,
         rotations: torch.Tensor,
-        add_background: bool = True
     ):
         assert self.diff_drr is not None, "diff_drr is None, call setup() first"
         drr = self.diff_drr
@@ -131,10 +130,6 @@ class TorchDRR(RotateDRR):
                 parameterization=self.rotate_cfg.parameterization, 
                 convention=self.rotate_cfg.convention,
             )
-            # TODO 可能需要移动到 multiple_contrast 中去
-            if add_background:
-                # 心脏冠脉CTA因为进行过裁剪，部分区域没有组织遮挡，需要增加背景吸收率
-                res += 100 * MU_WATER     # 组织基础厚度50mm
             return res
         
         if N == 1:

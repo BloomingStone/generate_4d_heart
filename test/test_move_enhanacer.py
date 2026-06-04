@@ -46,4 +46,4 @@ def test_coronary_bound_lv(
     test_total_phases = 2
     for phase in range(test_total_phases):
         data = reader.get_data(CardiacPhase.from_index(phase, test_total_phases), "LCA")
-        data.save(cta_output)
+        data.save(cta_output, save_nii_type=["coronary"])

@@ -35,7 +35,7 @@ def test_rotate_dsa_integration(
     output_dir = output_root_dir / "intergration" / f"{reader_name}_{simulator_name}_{coronary_type}"
     if output_dir.exists():
         shutil.rmtree(output_dir)
-    frames, labels, depth_map = dsa.run_and_save(
+    dsa.run_and_save(
         output_dir=output_dir,
         coronary_type=coronary_type,
         gif_fps=10
@@ -62,7 +62,8 @@ def test_rotate_dsa_integration(
         assert isinstance(frame_info["phase"], (int, float))
     
     # 验证输出文件
-    assert (output_dir / "rotate_dsa.tif").exists()
+    assert (output_dir / "rotate_dsa_raw.tif").exists()
+    assert (output_dir / "rotate_dsa_raw.gif").exists()
     assert (output_dir / "rotate_dsa.gif").exists()
     assert (output_dir / "rotate_dsa.json").exists()
 

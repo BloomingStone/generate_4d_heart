@@ -62,6 +62,41 @@
 
 参阅测试以获取更详细的调用样例。
 
+### RotateDSA 输出说明
+
+`RotateDSA.run_and_save(output_dir, coronary_type)` 运行完整的旋转DSA生成流程并将结果保存到指定目录，各输出文件说明如下：
+
+#### 图像/视频文件
+
+| 输出文件 | 说明 |
+|---|---|
+| `rotate_dsa_raw.tif` | 原始DRR密度投影，未经过后处理 |
+| `rotate_dsa.gif` | 后处理后的可视化 GIF（uint8，经 `postprocess_drr` 处理，含gamma变换和灰度窗裁剪，最后默认转换为 uint8，值域 0–255） |
+| `rotate_dsa_raw.gif` | 原始帧 GIF（float32 直接映射到灰度） |
+| `rotate_dsa/` | 每帧后处理后的 PNG 图像（`000.png`, `001.png`, ...） |
+
+#### 标签文件
+
+| 输出文件 | 说明 |
+|---|---|
+| `label.gif` | 标签 GIF（值×255 后显示） |
+| `label/` | 每帧标签的 PNG 图像 |
+| `label.npz` | 标签的 NumPy 压缩存档（shape: `[T, H, W]`, dtype: uint8） |
+
+#### 深度图文件
+
+| 输出文件 | 说明 |
+|---|---|
+| `depth_map.gif` | 深度图 GIF（灰度，仅冠脉区域有有效值，背景为 0） |
+| `depth_map.npz` | 深度图的 NumPy 压缩存档（shape: `[T, H, W]`, dtype: float32） |
+
+#### 几何与元数据
+
+| 输出文件 | 说明 |
+|---|---|
+| `rotate_dsa.json` | JSON 文件，包含冠脉类型、体积仿射矩阵、C 臂几何参数、旋转参数、逐帧角度/相位/时间信息、后处理元数据（`postprocess_meta`）以及 Phase 0 保存元数据（`phase_0_save_meta`） |
+| Phase 0 数据 | 通过 `reader.get_phase_0_data().save()` 保存的冠脉 NIfTI 文件、网格（`.vtp`/`.ply`）、中心线（`.vtp`）等 |
+
 ## 转化为 nerfstudio 和 instant-ngp 支持的格式
 
 使用 `scripts/dataset_to_colmap.py` 将生成的旋转DSA图像和标签转化为colmap格式，输入为旋转DSA图像和标签文件夹，输出为colmap格式的文件夹。
