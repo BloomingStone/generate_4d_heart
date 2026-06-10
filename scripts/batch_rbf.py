@@ -6,8 +6,8 @@ from enum import StrEnum
 
 import numpy as np
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast
-from generate_4d_heart.rotate_dsa.data_reader import RBFReader
+from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast, FlowContrast
+from generate_4d_heart.rotate_dsa.data_reader import RBFReader, StaticVolumeReader, DataReader
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa import RotateDSA
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
@@ -49,7 +49,9 @@ class BatchDVFToDSA:
         output_mode_2d: OutputMode2D = OutputMode2D.DRR,
         output_mode_3d: list[OutputMode3D]|None = None,
         output_phase_3d: float = 0.0,
-        output_phase_3d_num: int = 1
+        output_phase_3d_num: int = 1,
+        reader_type: Literal["rbf", "static"] = "rbf",
+        contrast_type: Literal["static", "flow"] = "static"
     ): 
         if output_mode_3d is None:
             output_mode_3d = [OutputMode3D.COR_LABEL, OutputMode3D.COR_MESH]
@@ -86,8 +88,14 @@ class BatchDVFToDSA:
                 "cavity_nii": cavity_nii
             })
         
+        self.reader_type = reader_type
         self.torch_drr = TorchDRR(rotate_cfg=self._get_rotate_param())
-        self.constrast_simulator = StaticIodineContrast()
+        if contrast_type == "static":
+            self.constrast_simulator = StaticIodineContrast()
+        elif contrast_type == "flow":
+            self.constrast_simulator = FlowContrast()
+        else:
+            raise ValueError(f"contrast_type {contrast_type} not supported")
         
     
     def _get_rotate_param(self):
@@ -101,7 +109,7 @@ class BatchDVFToDSA:
         
         return rot_params
 
-    def _output_3d_one_phase(self, reader: RBFReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
+    def _output_3d_one_phase(self, reader: DataReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
         if self.output_mode_3d == "null":
             return
         
@@ -136,7 +144,7 @@ class BatchDVFToDSA:
                     raise ValueError(f"output_mode_3d {mode} not supported")
 
     
-    def _output_2d(self, reader: RBFReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
+    def _output_2d(self, reader: DataReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
         if self.output_mode_2d == "null":
             return
         
@@ -154,7 +162,7 @@ class BatchDVFToDSA:
 
     def _gen_dsa_inner(
         self,
-        reader: RBFReader,
+        reader: DataReader,
         case_name: str,
         coronary_type: Literal["LCA", "RCA"]
     ):
@@ -181,34 +189,50 @@ class BatchDVFToDSA:
             case_name = image_nii.stem.split('.')[0]
             
             try:
-                reader = RBFReader(
-                    volume_nii=p["image_nii"],
-                    cavity_nii=p["cavity_nii"],
-                    coronary_nii=p["coronary_nii"],
-                    contrast_simulator=self.constrast_simulator,
-                )
+                logging.info(f"Generating reader:\n -volume: {p['image_nii']}\n -coronary: {p['coronary_nii']}\n -cavity: {p['cavity_nii']}")
+                if self.reader_type == "rbf":
+                    reader = RBFReader(
+                        volume_nii=p["image_nii"],
+                        cavity_nii=p["cavity_nii"],
+                        coronary_nii=p["coronary_nii"],
+                        contrast_simulator=self.constrast_simulator,
+                    )
+                elif self.reader_type == "static":
+                    reader = StaticVolumeReader(
+                        volume_path=p["image_nii"],
+                        cavity_path=p["cavity_nii"],
+                        coronary_path=p["coronary_nii"],
+                        contrast_simulator=self.constrast_simulator
+                    )
+                else:
+                    raise ValueError(f"reader_type {self.reader_type} not supported")
             except Exception as e:
+                print(f"Error processing {image_nii}: {e}")
                 logging.exception(f"{image_nii} failed due to error: {e}")
                 continue
             
             for coronary_type in ("LCA", "RCA"):
                 
                 try:
+                    logging.info(f"Processing case {case_name} coronary {coronary_type}")
                     self._gen_dsa_inner(reader, case_name, coronary_type)
                 except Exception as e:
+                    print(f"Error processing {image_nii} with {coronary_type}: {e}")
                     logging.exception(f"{image_nii} with {coronary_type} failed due to error: {e}")
                     continue
 
 @app.default()
 def main(
-    dataset_names: list[Literal["asoca-normal", "asoca-diseased"]],
+    dataset_names: list[Literal["asoca-normal", "asoca-diseased", "shanghai"]],
     output_root: Path,
     random_seed: int = 42,
     use_random_seed: bool = True,
     output_mode_2d: OutputMode2D = OutputMode2D.DRR,
-    output_mode_3d: list[OutputMode3D] = [OutputMode3D.COR_LABEL, OutputMode3D.COR_MESH],
+    output_mode_3d: list[OutputMode3D] = [],
     output_phase_3d: float = 0.0,
-    output_phase_3d_num: int = 1
+    output_phase_3d_num: int = 1,
+    reader_type: Literal["rbf", "static"] = "rbf",
+    contrast_type: Literal["static", "flow"] = "static",
 ):
     """
     
@@ -222,6 +246,7 @@ def main(
     output_mode_3d: list of output modes for 3D data, can be "cor-label", "cor-mesh", "cavity-label" or "volume", default is ["cor-label", "cor-mesh"]
     output_phase_3d: cardiac phase to output 3D data, should be between 0 and 1, default is 0.0 (end-diastole)
     output_phase_3d_num: number of 3D phases to output, default is 1. If greater than 1, it will output multiple phases evenly spaced between 0 and 1. If output_phase_3d_num > 1, the output_phase_3d parameter will be ignored. (Not Implemented yet)
+    contrast_type: type of contrast simulation to use, can be "static" or "flow", default is "static"
     """
     for d in dataset_names:
         d = d.lower()
@@ -234,37 +259,43 @@ def main(
         match d:
             case "asoca-normal":
                 print(f"{d} -- {output_root} -- seed:{random_seed}")
-                origin_dir = Path("/media/E/sj/Data/ASOCA/Normal/normal_gen_4d")
-                dsa = BatchDVFToDSA(
-                    image_dir=origin_dir/"CTCA_nii",
-                    coronary_dir=origin_dir/"coronary",
-                    cavity_dir=origin_dir/"cavity",
-                    output_root=output_root,
-                    dataset_name=d,
-                    run_random=use_random_seed,
-                    output_mode_2d=output_mode_2d,
-                    output_mode_3d=output_mode_3d,
-                    output_phase_3d=output_phase_3d,
-                    output_phase_3d_num=output_phase_3d_num
-                )
+                origin_dir = Path("/media/data3/sj/Data/ASOCA/Normal/")
+                image_dir=origin_dir / "CTCA_nii"
+                coronary_dir=origin_dir / "Annotations_nii"
+                cavity_dir=origin_dir / "cavity"
+            
             case "asoca-diseased":
                 print(f"{d} -- {output_root} -- seed:{random_seed}")
-                origin_dir = Path("/media/E/sj/Data/ASOCA/Diseased_partial")
-                dsa = BatchDVFToDSA(
-                    image_dir=origin_dir/"CTCA_nii",
-                    coronary_dir=origin_dir/"coronary",
-                    cavity_dir=origin_dir/"cavity",
-                    output_root=output_root,
-                    dataset_name=d,
-                    run_random=use_random_seed,
-                    output_mode_2d=output_mode_2d,
-                    output_mode_3d=output_mode_3d,
-                    output_phase_3d=output_phase_3d,
-                    output_phase_3d_num=output_phase_3d_num
-                )
+                origin_dir = Path("/media/data3/sj/Data/ASOCA/Diseased_partial")
+                image_dir=origin_dir / "CTCA_nii"
+                coronary_dir=origin_dir / "coronary"
+                cavity_dir=origin_dir / "cavity"
+
+            case "shanghai":
+                print(f"{d} -- {output_root} -- seed:{random_seed}")
+                origin_dir = Path("/media/data2/sj/Data/Shanghai_139_partial")
+                image_dir=origin_dir / "img"
+                coronary_dir=origin_dir / "seg"
+                cavity_dir=origin_dir / "cavity"
+            
             case _:
                 print(f"{d} not supported")
                 raise ValueError(f"{d} not supported")
+        
+        dsa = BatchDVFToDSA(
+            image_dir=image_dir,
+            coronary_dir=coronary_dir,
+            cavity_dir=cavity_dir,
+            output_root=output_root,
+            dataset_name=d,
+            run_random=use_random_seed,
+            output_mode_2d=output_mode_2d,
+            output_mode_3d=output_mode_3d,
+            output_phase_3d=output_phase_3d,
+            output_phase_3d_num=output_phase_3d_num,
+            reader_type=reader_type,
+            contrast_type=contrast_type
+        )
     
         dsa.run()
 
