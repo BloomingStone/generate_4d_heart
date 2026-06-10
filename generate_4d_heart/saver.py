@@ -22,6 +22,7 @@ def save_nii(
     affine: np.ndarray,
     is_label: bool = False
 ) -> None:
+    print(f"saving: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tensor = tensor.squeeze()
     if tensor.dim() == 4 and tensor.shape[0] == 3:
@@ -41,6 +42,7 @@ def save_tif(
     output_path: Path,
     frames: torch.Tensor | np.ndarray
 ) -> None:
+    print(f"saving: {output_path}")
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,15 +57,17 @@ def save_png(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), image_2d_np)
 
+
 def save_pngs(
     output_dir: Path,
     frames: torch.Tensor | np.ndarray
 ):
+    print(f"saving pngs to: {output_dir}")
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    for t, image in tqdm(enumerate(frames_np), desc="Saving PNGs..."):
+    for t, image in enumerate(frames_np):
         if image.ndim == 2:
             image = image[..., None].repeat(3, axis=-1)     # convert to RGB format
         iio.imwrite(
@@ -82,6 +86,7 @@ def save_gif(
     vmax: float | None = None,
     **imshow_kwargs
 ) -> None:
+    print(f"saving: {output_path}")
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
 

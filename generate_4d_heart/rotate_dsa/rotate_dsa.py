@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Literal, Any
 import json
 import math
+from concurrent.futures import ProcessPoolExecutor
 
 from tqdm import tqdm
 import pyvista as pv
@@ -181,25 +182,29 @@ class RotateDSA:
         gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
     ) -> RotateDsaOutput:
         output = self.run(coronary_type)
-        save_tif(output_dir / "rotate_dsa_raw.tif", output.raw_frames)
-        
-        save_gif(output_dir / "rotate_dsa.gif", output.vis_frames, gif_fps,cmap='gray', vmin=0, vmax=255)
-        save_gif(output_dir / "rotate_dsa_raw.gif", output.raw_frames, gif_fps,cmap='gray')
-        save_gif(output_dir / "label.gif", output.labels*255, gif_fps,cmap='gray')
-        save_deepthmap_gif(output_dir / "depth_map.gif", output.depth_maps, gif_fps)
-        
-        save_pngs(output_dir / "rotate_dsa", output.vis_frames)
-        save_pngs(output_dir / "label", output.labels*255)
-        
-        np.savez_compressed(output_dir / "label.npz", output.labels)
-        np.savez_compressed(output_dir / "depth_map.npz", output.depth_maps)
         
         phase_0_data = self.reader.get_phase_0_data(coronary_type)
-        meta = phase_0_data.save(
-            output_dir, 
-            save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
-            coordinate_system="coronary_centering"
-        )
+
+        with ProcessPoolExecutor(max_workers=4) as executor:
+            futures = [
+                executor.submit(save_tif, output_dir / "rotate_dsa_raw.tif", output.raw_frames),
+                executor.submit(save_gif, output_dir / "rotate_dsa.gif", output.vis_frames, gif_fps, cmap='gray', vmin=0, vmax=255),
+                executor.submit(save_gif, output_dir / "rotate_dsa_raw.gif", output.raw_frames, gif_fps, cmap='gray'),
+                executor.submit(save_gif, output_dir / "label.gif", output.labels * 255, gif_fps, cmap='gray'),
+                executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", output.depth_maps, gif_fps),
+                executor.submit(save_pngs, output_dir / "rotate_dsa", output.vis_frames),
+                executor.submit(save_pngs, output_dir / "label", output.labels * 255),
+                executor.submit(np.savez_compressed, output_dir / "label.npz", output.labels),
+                executor.submit(np.savez_compressed, output_dir / "depth_map.npz", output.depth_maps),
+            ]
+            # phase_0_data.save() 含 torch 张量，在当前进程运行，与子进程池并行
+            meta = phase_0_data.save(
+                output_dir,
+                save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
+                coordinate_system="coronary_centering"
+            )
+            for f in futures:
+                f.result()
         
         json_data = self.get_geometry_json(coronary_type)
         json_data["postprocess_meta"] = output.meta
@@ -217,21 +222,24 @@ class RotateDSA:
         gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
     ) -> tuple[np.ndarray, np.ndarray]:
         labels, depth_maps = self.run_no_drr(coronary_type)
-        
-        save_gif(output_dir / "label.gif", labels*255, gif_fps, cmap='gray')
-        save_deepthmap_gif(output_dir / "depth_map.gif", depth_maps, gif_fps)
-        
-        save_pngs(output_dir / "label", labels*255)
-        
-        np.savez_compressed(output_dir / "label.npz", labels)
-        np.savez_compressed(output_dir / "depth_map.npz", depth_maps)
-        
         phase_0_data = self.reader.get_phase_0_data(coronary_type)
-        meta = phase_0_data.save(
-            output_dir, 
-            save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
-            coordinate_system="coronary_centering"
-        )
+
+        with ProcessPoolExecutor(max_workers=4) as executor:
+            futures = [
+                executor.submit(save_gif, output_dir / "label.gif", labels * 255, gif_fps, cmap='gray'),
+                executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", depth_maps, gif_fps),
+                executor.submit(save_pngs, output_dir / "label", labels * 255),
+                executor.submit(np.savez_compressed, output_dir / "label.npz", labels),
+                executor.submit(np.savez_compressed, output_dir / "depth_map.npz", depth_maps),
+            ]
+            # phase_0_data.save() 含 torch 张量，在当前进程运行
+            meta = phase_0_data.save(
+                output_dir,
+                save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
+                coordinate_system="coronary_centering"
+            )
+            for f in futures:
+                f.result()
         
         json_data = self.get_geometry_json(coronary_type)
         json_data["phase_0_save_meta"] = meta
@@ -246,6 +254,7 @@ class RotateDSA:
         coronary_type: Literal["LCA", "RCA"],
     ) -> None:
         phase_0_data = self.reader.get_phase_0_data(coronary_type)
+        
         meta = phase_0_data.save(
             output_dir, 
             save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
