@@ -132,6 +132,8 @@ class RotateDSA:
             labels[f] = label
             depth_maps[f] = depth_map
         
+        # Beer-Lambert: line integral (I = \int mu dx) → intensity. (I = I0 * exp(-\int mu dx))
+        frames = torch.exp( - frames)
         vis_frames, post_process_meta = postprocess_drr(frames)
 
         return RotateDsaOutput(

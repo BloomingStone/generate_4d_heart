@@ -23,20 +23,16 @@ def postprocess_drr(
         eps: float, used in normalization to avoid division by zero
         output_uint8: bool, if True, output is uint8, else float32 in [0,1]
     """
-
+    I = x
+    
     # -------------------------------
-    # 1. Beer-Lambert: line integral → intensity
-    # -------------------------------
-    I = I0 * torch.exp( - x)
-
-    # -------------------------------
-    # 2. Gamma correction
+    # Gamma correction
     # -------------------------------
     if gamma != 1.0:
         I = torch.pow(I, gamma)
     
     # -------------------------------
-    # 3. Normalize [0,1]
+    # Normalize [0,1]
     # -------------------------------
     # Use robust percentile-based normalization across the whole sequence (offline)
     def _percentile_value(t: torch.Tensor, q: float) -> torch.Tensor:
@@ -57,7 +53,7 @@ def postprocess_drr(
     I = I.clamp(0.0, 1.0)
 
     # -------------------------------
-    # 4. Noise
+    # Noise
     # -------------------------------
     if noise_std > 0:
         I = I + torch.randn_like(I) * noise_std
