@@ -46,12 +46,14 @@ class BatchDVFToDSA:
         output_root: Path,
         dataset_name: str,
         run_random: bool = True,
+        skip_existing: bool = False,
         output_mode_2d: OutputMode2D = OutputMode2D.DRR,
         output_mode_3d: list[OutputMode3D]|None = None,
         output_phase_3d: float = 0.0,
         output_phase_3d_num: int = 1,
         reader_type: Literal["rbf", "static"] = "rbf",
-        contrast_type: Literal["static", "flow"] = "static"
+        contrast_type: Literal["static", "flow"] = "static",
+        dryrun: bool = False,
     ): 
         if output_mode_3d is None:
             output_mode_3d = [OutputMode3D.COR_LABEL, OutputMode3D.COR_MESH]
@@ -89,6 +91,8 @@ class BatchDVFToDSA:
             })
         
         self.reader_type = reader_type
+        self.skip_existing = skip_existing
+        self.dryrun = dryrun
         self.torch_drr = TorchDRR(rotate_cfg=self._get_rotate_param())
         if contrast_type == "static":
             self.constrast_simulator = StaticIodineContrast()
@@ -187,6 +191,26 @@ class BatchDVFToDSA:
             
             image_nii = p["image_nii"]
             case_name = image_nii.stem.split('.')[0]
+
+            if self.dryrun:
+                for coronary_type in ("LCA", "RCA"):
+                    if self.skip_existing:
+                        output_case_dir = self.output_root / f"{self.dataset_name}__{case_name}__{coronary_type}"
+                        if output_case_dir.exists() and any(output_case_dir.iterdir()):
+                            print(f"[DRYRUN] (skip existing) {case_name} {coronary_type}")
+                            continue
+                    print(f"[DRYRUN] {case_name} {coronary_type}")
+                continue
+            
+            if self.skip_existing:
+                lca_dir = self.output_root / f"{self.dataset_name}__{case_name}__LCA"
+                rca_dir = self.output_root / f"{self.dataset_name}__{case_name}__RCA"
+                lca_exists = lca_dir.exists() and any(lca_dir.iterdir())
+                rca_exists = rca_dir.exists() and any(rca_dir.iterdir())
+                if lca_exists and rca_exists:
+                    logging.info(f"Skipping existing case {case_name} (both LCA and RCA already exist)")
+                    print(f"Skipping existing case {case_name} (both LCA and RCA already exist)")
+                    continue
             
             try:
                 logging.info(f"Generating reader:\n -volume: {p['image_nii']}\n -coronary: {p['coronary_nii']}\n -cavity: {p['cavity_nii']}")
@@ -213,6 +237,13 @@ class BatchDVFToDSA:
             
             for coronary_type in ("LCA", "RCA"):
                 
+                if self.skip_existing:
+                    output_case_dir = self.output_root / f"{self.dataset_name}__{case_name}__{coronary_type}"
+                    if output_case_dir.exists() and any(output_case_dir.iterdir()):
+                        logging.info(f"Skipping existing case {case_name} coronary {coronary_type} (output dir not empty)")
+                        print(f"Skipping existing case {case_name} coronary {coronary_type}")
+                        continue
+                
                 try:
                     logging.info(f"Processing case {case_name} coronary {coronary_type}")
                     self._gen_dsa_inner(reader, case_name, coronary_type)
@@ -233,8 +264,12 @@ def main(
     output_phase_3d_num: int = 1,
     reader_type: Literal["rbf", "static"] = "rbf",
     contrast_type: Literal["static", "flow"] = "static",
+    skip_existing: bool = False,
+    dryrun: bool = False,
 ):
     """
+    example command:
+    python scripts/batch_rbf.py --dataset-names shanghai --contrast-type flow  --output_root /media/data3/sj/Data/gen4d_outputs_flow --dryrun --skip-existing
     
     Parameters:
     ____
@@ -247,6 +282,8 @@ def main(
     output_phase_3d: cardiac phase to output 3D data, should be between 0 and 1, default is 0.0 (end-diastole)
     output_phase_3d_num: number of 3D phases to output, default is 1. If greater than 1, it will output multiple phases evenly spaced between 0 and 1. If output_phase_3d_num > 1, the output_phase_3d parameter will be ignored. (Not Implemented yet)
     contrast_type: type of contrast simulation to use, can be "static" or "flow", default is "static"
+    skip_existing: if True, skip cases whose output directory already exists and is not empty, default is False
+    dryrun: if True, only print the cases that would be processed without actually running, default is False
     """
     for d in dataset_names:
         d = d.lower()
@@ -289,6 +326,8 @@ def main(
             output_root=output_root,
             dataset_name=d,
             run_random=use_random_seed,
+            skip_existing=skip_existing,
+            dryrun=dryrun,
             output_mode_2d=output_mode_2d,
             output_mode_3d=output_mode_3d,
             output_phase_3d=output_phase_3d,
