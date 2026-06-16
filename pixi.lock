@@ -39,13 +39,12 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/cuda-nvtx-12.9.79-hecca717_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/cuda-nvvm-tools-12.9.86-h4bc722e_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/cudnn-9.10.2.21-hbcb9cd8_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-13.6.0-py314ha22e3b7_2.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-core-13.6.0-py314hf9e62a7_2.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-14.1.1-py314h3d8d815_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-core-14.1.1-py314hf9e62a7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/dav1d-1.2.1-hd590300_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/debugpy-1.8.20-py314h42812f9_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/eigen-5.0.1-hc65338a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/expat-2.8.1-hecca717_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/fastrlock-0.8.3-py314h8c728da_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/fftw-3.3.11-nompi_h3b011a4_100.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/fmt-12.1.0-hff5e90c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/giflib-5.2.2-hd590300_0.conda
@@ -203,6 +202,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/cuda-cudart-dev_linux-64-12.9.79-h3f2d84a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cuda-cudart-static_linux-64-12.9.79-h3f2d84a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cuda-cudart_linux-64-12.9.79-h3f2d84a_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cuda-pathfinder-1.5.5-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cuda-version-12.9-h4f385c5_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cyclopts-4.15.0-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dataclasses-0.8-pyhc8e2a94_3.tar.bz2
@@ -783,57 +783,60 @@ packages:
   purls: []
   size: 19646
   timestamp: 1762823905292
-- conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-13.6.0-py314ha22e3b7_2.conda
-  sha256: 8001c540f224e85a67c47a22187a292ec2667def220df5a25b8e97842c11338e
-  md5: 77111a2044ac0af8763e5e273f73ec69
+- conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-14.1.1-py314h3d8d815_0.conda
+  sha256: a9b23a34430aee57a341d886c4588917a837de669e451298c5c737e0fd731cc1
+  md5: 8a141941d33443a7c0e4ba91d14ba174
   depends:
   - cuda-cudart-dev_linux-64
   - cuda-nvrtc
   - cuda-version >=12,<13.0a0
-  - cupy-core 13.6.0 py314hf9e62a7_2
+  - cupy-core 14.1.1 py314hf9e62a7_0
   - libcublas
   - libcufft
   - libcurand
   - libcusolver
   - libcusparse
-  - python >=3.14.0rc2,<3.15.0a0
+  - python >=3.14,<3.15.0a0
   - python_abi 3.14.* *_cp314
   license: MIT
   license_family: MIT
   purls: []
-  size: 359022
-  timestamp: 1757733115996
-- conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-core-13.6.0-py314hf9e62a7_2.conda
-  sha256: c637e72310cd0faa5a83250d8dee77c72f285b57b3cb9bcc598a6a7a1de85dfa
-  md5: c40e7ff99d4d6d3ce28d73a0eda74a78
+  run_exports: {}
+  size: 421169
+  timestamp: 1780317081541
+- conda: https://conda.anaconda.org/conda-forge/linux-64/cupy-core-14.1.1-py314hf9e62a7_0.conda
+  sha256: 5a47312809790eea673c52fb14e4897539279222c4df060752314c2253622e19
+  md5: 9238bb6db4ea0951a89eebfd0e8c2624
   depends:
   - __glibc >=2.17,<3.0.a0
-  - fastrlock >=0.8.3,<0.9.0a0
+  - cuda-pathfinder >=1.3.4,<2.0a0
   - libgcc >=14
   - libstdcxx >=14
-  - numpy >=1.22
-  - python >=3.14.0rc2,<3.15.0a0
+  - numpy >=1.23,<3
+  - numpy >=2.0
+  - python >=3.14,<3.15.0a0
   - python_abi 3.14.* *_cp314
   constrains:
-  - libcufft >=11,<12.0a0
-  - libcurand >=10,<11.0a0
-  - optuna ~=3.0
-  - nccl >=2.27.7.1,<3.0a0
-  - libcusolver >=11,<12.0a0
-  - scipy >=1.7,<1.17
-  - libcublas >=12,<13.0a0
+  - cupy >=14.1.1,<14.2.0a0
   - libcusparse >=12,<13.0a0
-  - cupy >=13.6.0,<13.7.0a0
   - __cuda >=12.0
+  - scipy >=1.14,<1.17
+  - cutensor >=2.6.0.4,<3.0a0
+  - libcusolver >=11,<12.0a0
+  - optuna ~=3.0
+  - libcufft >=11,<12.0a0
   - cuda-nvrtc >=12,<13.0a0
+  - nccl >=2.30.4.1,<3.0a0
+  - libcublas >=12,<13.0a0
   - cuda-version >=12,<13.0a0
-  - cutensor >=2.3.1.0,<3.0a0
+  - libcurand >=10,<11.0a0
   license: MIT
   license_family: MIT
   purls:
   - pkg:pypi/cupy?source=hash-mapping
-  size: 56651016
-  timestamp: 1757733023711
+  run_exports: {}
+  size: 61221466
+  timestamp: 1780317024419
 - conda: https://conda.anaconda.org/conda-forge/linux-64/dav1d-1.2.1-hd590300_0.conda
   sha256: 22053a5842ca8ee1cf8e1a817138cdb5e647eb2c46979f84153f6ad7bde73020
   md5: 418c6ca5929a611cbd69204907a83995
@@ -879,22 +882,6 @@ packages:
   purls: []
   size: 148238
   timestamp: 1779278694477
-- conda: https://conda.anaconda.org/conda-forge/linux-64/fastrlock-0.8.3-py314h8c728da_2.conda
-  sha256: 1ea4fd24e37d27692b04b57fa51f14fd2217ea251087ce1c0701af234c1452d9
-  md5: f1f936bb0ff435f3190ca1c17fa327e7
-  depends:
-  - python
-  - libstdcxx >=14
-  - libgcc >=14
-  - __glibc >=2.17,<3.0.a0
-  - libgcc >=14
-  - python_abi 3.14.* *_cp314
-  license: MIT
-  license_family: MIT
-  purls:
-  - pkg:pypi/fastrlock?source=hash-mapping
-  size: 41496
-  timestamp: 1756729160091
 - conda: https://conda.anaconda.org/conda-forge/linux-64/fftw-3.3.11-nompi_h3b011a4_100.conda
   sha256: 6fd5d681fba20adaca771f138ac52dbf0a52e0dc2ac31b9ce7406068d102a9a7
   md5: 0717f4eb3d18259358a1fa77edb18917
@@ -3158,6 +3145,20 @@ packages:
   purls: []
   size: 197249
   timestamp: 1749218394213
+- conda: https://conda.anaconda.org/conda-forge/noarch/cuda-pathfinder-1.5.5-pyhc364b38_0.conda
+  sha256: 482d0082926006e1132b01c38916cc2503f9ae2c72d46b7d7ae0b2152f44c7e2
+  md5: 61b9137919ce01625767161067bc2b18
+  depends:
+  - python >=3.10
+  - cuda-version >=12.0,<14
+  - python
+  license: Apache-2.0
+  license_family: APACHE
+  purls:
+  - pkg:pypi/cuda-pathfinder?source=hash-mapping
+  run_exports: {}
+  size: 45383
+  timestamp: 1779846202856
 - conda: https://conda.anaconda.org/conda-forge/noarch/cuda-version-12.9-h4f385c5_3.conda
   sha256: 5f5f428031933f117ff9f7fcc650e6ea1b3fef5936cf84aa24af79167513b656
   md5: b6d5d7f1c171cbd228ea06b556cfa859

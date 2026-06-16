@@ -293,16 +293,20 @@ class FlowContrast(ContrastSimulator):
         return self._coord_tuple(nearest_coord)
 
     def _nearest_skeleton_voxel_to_region(self, region_mask: cp.ndarray, skeleton_mask: cp.ndarray) -> tuple[int, int, int]:
-        coords = cp.argwhere(skeleton_mask>0)
+        coords = cp.argwhere(skeleton_mask > 0)
         if len(coords) == 0:
             raise ValueError("Unable to find a skeleton voxel")
         region_coords = cp.argwhere(region_mask)
         if len(region_coords) == 0:
             nearest = coords[0]
         else:
-            distances = cp.linalg.norm(coords.astype(cp.float32)[None, :, :] - region_coords.astype(cp.float32)[:, None, :], axis=-1)
-            best_region_idx, best_skel_idx = cp.unravel_index(cp.argmin(distances), distances.shape)
-            nearest = coords[best_skel_idx]
+            # Use cupyx KDTree to avoid O(N*M) GPU memory blowup from pairwise distances,
+            # while keeping everything on GPU.
+            from cupyx.scipy.spatial import KDTree
+            tree = KDTree(coords.astype(cp.float32))
+            dists, nearest_skel_idxs = tree.query(region_coords.astype(cp.float32), k=1)
+            best_region_idx = int(cp.argmin(dists))
+            nearest = coords[nearest_skel_idxs[best_region_idx]]
         return self._coord_tuple(nearest)
 
     @staticmethod
