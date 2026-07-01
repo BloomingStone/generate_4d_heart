@@ -134,10 +134,11 @@ def test_rbf_reader(
     simulator_name: SimulatorName = SimulatorName.IDENTITY_CONTRAST,
 ):
     reader_name = ReaderName.RBF_READER
-    output_dir = output_root_dir / "readers_output" / str(reader_name)
     _, reader = reader_factory(simulator_name, reader_name)
 
-    _read_and_save(reader, output_dir)
+    for coronary_type in ["LCA", "RCA"]:
+        output_dir = output_root_dir / "readers_output" / f"{reader_name}_{coronary_type}"
+        _read_and_save(reader, output_dir, coronary_type=cast(Literal["LCA", "RCA"], coronary_type))
 
 
 if __name__ == "__main__":

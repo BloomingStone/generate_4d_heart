@@ -367,7 +367,8 @@ class DataReader(Protocol):
         coronary: dict[CoronaryType, Coronary]
         
         def __post_init__(self):
-            assert self.cavity.shape == next(iter(self.coronary.values())).volume.shape, "Cavity shape must match coronary volume shape"
+            assert self.cavity.shape == (volume_shape := next(iter(self.coronary.values())).volume.shape), \
+                f"Cavity shape must match coronary volume shape, but got cavity shape: {self.cavity.shape}, coronary volume shape: {volume_shape}"
             assert np.allclose(self.coronary[CoronaryType.LCA].original_affine, self.coronary[CoronaryType.RCA].original_affine, self.affine), "LCA and RCA must have the same original affine as the cavity affine"
         
         @staticmethod

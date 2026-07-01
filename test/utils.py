@@ -10,7 +10,7 @@ from generate_4d_heart.rotate_dsa.data_reader import (
 )
 from generate_4d_heart.rotate_dsa.contrast_simulator import (
     StaticIodineContrast, ThresholdIodineContrast, IdentityContrast, 
-    SimplePreprocessContrast, ContrastSimulator, FlowContrast
+    SimplePreprocessContrast, ContrastSimulator, FlowContrast, ClMarkerSimulator
 )
 
 
@@ -44,6 +44,7 @@ class SimulatorName(StrEnum):
     IDENTITY_CONTRAST = "identity_contrast"
     SIMPLE_PREPROCESS_CONTRAST = "simple_preprocess_contrast"
     FLOW_CONTRAST = "flow_contrast"
+    CL_MARKER_CONTRAST = "cl_marker_contrast"
     
     @classmethod
     def to_list(cls) -> list[str]:
@@ -55,7 +56,6 @@ class SimulatorName(StrEnum):
 
 
 
-@lru_cache(maxsize=5)
 def simulator_factory(
     simulator_name: SimulatorName
 ) -> ContrastSimulator:
@@ -70,6 +70,8 @@ def simulator_factory(
             return SimplePreprocessContrast()
         case SimulatorName.FLOW_CONTRAST:
             return FlowContrast()
+        case SimulatorName.CL_MARKER_CONTRAST:
+            return ClMarkerSimulator()
         case _:
             raise ValueError(f"Unsupported simulator name: {simulator_name}")
 

@@ -12,7 +12,7 @@ from utils import reader_factory, ReaderName, SimulatorName
 
 @pytest.mark.parametrize("reader_name", ReaderName.to_tuple())
 @pytest.mark.parametrize("simulator_name", (
-    str(SimulatorName.MULTIPLI_CONTRAST), str(SimulatorName.FLOW_CONTRAST)
+    str(SimulatorName.MULTIPLI_CONTRAST), str(SimulatorName.FLOW_CONTRAST), str(SimulatorName.CL_MARKER_CONTRAST)
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration(
@@ -103,5 +103,24 @@ def test_rotate_dsa_integration_full(
         shutil.rmtree(output_dir)
     dsa.run_and_save(
         output_dir=output_dir,
+        coronary_type=coronary_type
+    )
+
+
+@pytest.mark.parametrize("reader_name", (str(ReaderName.RBF_READER),))
+@pytest.mark.parametrize("simulator_name", (str(SimulatorName.CL_MARKER_CONTRAST), ))
+@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
+def test_rotate_dsa_integration_cl_marker(
+    output_root_dir: Path,
+    simple_drr: TorchDRR,
+    reader_name: str,
+    simulator_name: str,
+    coronary_type: Literal["LCA", "RCA"],
+):
+    test_rotate_dsa_integration(
+        output_root_dir=output_root_dir,
+        simple_drr=simple_drr,
+        reader_name=reader_name,
+        simulator_name=simulator_name,
         coronary_type=coronary_type
     )
