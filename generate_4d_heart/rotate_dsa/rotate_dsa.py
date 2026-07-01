@@ -23,53 +23,7 @@ from .types import Sec
 from .cardiac_phase import CardiacPhase
 from ..saver import save_tif, save_gif, save_pngs, save_deepthmap_gif
 from .postprocess import postprocess_drr
-
-
-class Torch3DLabelRenderer:
-    def __init__(self, c_arm: CArmGeometry):
-        self.fov = 2 * math.atan(c_arm.width * c_arm.delx / 2 / c_arm.sdd) / math.pi * 180
-        self.width = int(c_arm.width)
-        self.height = int(c_arm.height)
-        self.zfar = c_arm.sdd*1.2
-        self.raster_settings = RasterizationSettings(
-            image_size=(self.height, self.width),
-            blur_radius=0.0,
-            faces_per_pixel=1
-        )
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda:0")
-        else:
-            raise RuntimeError("No CUDA device available for Torch3DLabelRenderer")
-
-    @torch.no_grad()
-    def render(self, mesh_pv: pv.PolyData, R: torch.Tensor, T: torch.Tensor):
-        verts = torch.from_numpy(np.array(mesh_pv.points)).float()
-        faces_np = np.array(mesh_pv.faces.reshape(-1, 4)[:, 1:])  # skip the first number which is the number of points per face
-        faces = torch.from_numpy(faces_np).long()
-        mesh = Meshes([verts.to(self.device)], [faces.to(self.device)])
-
-        
-        R = R.squeeze()
-        T = T.squeeze()
-        cameras = FoVPerspectiveCameras(
-            device=self.device,
-            fov=self.fov,
-            R=R[None].to(self.device),      # pytorch3D 默认使用行向量，因此这里输入的 作用于列向量的 R_c2w 可以不用转置，直接视为R_w2c 矩阵
-            T=(-R.T @ T)[None].to(self.device), 
-            zfar=self.zfar
-        )
-        
-        rasterizer = MeshRasterizer(
-            cameras=cameras,
-            raster_settings=self.raster_settings
-        )
-        
-        # rasterize
-        fragments = rasterizer(mesh)
-        depth = fragments.zbuf[0, ..., 0]  # depth buffer
-        # silhouette
-        silhouette = (fragments.pix_to_face[..., 0] >= 0).float()
-        return silhouette.cpu().numpy(), depth.cpu().numpy()
+from .torch3d_label_renderer import Torch3DLabelRenderer
 
 @dataclass
 class PhysicalConfig:
@@ -126,7 +80,7 @@ class RotateDSA:
                 frames = frames.to(drr_res.device)
             frames[f] = drr_res
             
-            label, depth_map = self.label_plotter.render(
+            label, depth_map = self.label_plotter.render_silhouette_depth(
                 coronary.mesh_centering,
                 *self.drr.get_R_T_at_frame(f)
             )
@@ -165,7 +119,7 @@ class RotateDSA:
             phase = self._get_phase_at_frame(f)
             read_res = self.reader.get_data(phase, coronary_type).to_device(self.drr.device)
             
-            label, depth_map = label, depth_map = self.label_plotter.render(
+            label, depth_map = label, depth_map = self.label_plotter.render_silhouette_depth(
                 read_res.coronary.mesh_centering,
                 *self.drr.get_R_T_at_frame(f)
             )
