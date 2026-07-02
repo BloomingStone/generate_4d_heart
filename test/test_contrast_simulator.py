@@ -14,9 +14,9 @@ from utils import simulator_factory, SimulatorName
 test_angles = list(range(0, 180, 30))   # list of primary angles
 
 
-@pytest.mark.parametrize("sim_name", SimulatorName.to_tuple())
+@pytest.mark.parametrize("sim_name", tuple(SimulatorName))
 def test_contrast_simulators(
-    sim_name: str,
+    sim_name: SimulatorName,
     volume_dvf_dir: Path,
     output_root_dir: Path,
 ):

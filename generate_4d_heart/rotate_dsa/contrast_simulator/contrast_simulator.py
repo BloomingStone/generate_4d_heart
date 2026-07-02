@@ -48,7 +48,13 @@ class ContrastSimulator(Protocol):
         ...
 
 class IdentityContrast(ContrastSimulator):
-    """A simple contrast simulator that does not change the input volume, used for ablation study to verify the effect of contrast simulation."""
+    """
+    A simple contrast simulator that does not change the input volume, used for ablation study to verify the effect of contrast simulation.
+    
+    ** NOTICE **: 
+    This contrast simulator should only be used in label rendering. 
+    If use it in CTA volume rendering, the unmapped HU values may cause wrong projection results (too large or be negative).
+    """
     def preprocess(
         self, 
         ori_volume: torch.Tensor, 
@@ -80,7 +86,7 @@ class IdentityContrast(ContrastSimulator):
         return self.simulate(ori_volume, cavity_label, coronary_label, affine)
 
 
-class SimplePreprocessContrast(ContrastSimulator):
+class Hu2MuContrast(ContrastSimulator):
     """
     A simple contrast simulator that only preprocesses the input volume by mapping HU values to attenuation coefficients, 
     without adding any contrast effect. 

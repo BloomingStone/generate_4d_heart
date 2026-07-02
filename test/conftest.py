@@ -4,7 +4,7 @@ import warnings
 
 import pytest
 
-from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast, ThresholdIodineContrast, IdentityContrast, SimplePreprocessContrast, ContrastSimulator, FlowContrast
+from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast, ThresholdIodineContrast, IdentityContrast, Hu2MuContrast, ContrastSimulator, FlowContrast
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from utils import TEST_ROOT_DIR, TEST_DATA_ROOT_DIR, OUTPUT_ROOT_DIR
 
@@ -73,7 +73,7 @@ def identity_contrast() -> ContrastSimulator:
 @pytest.fixture(scope="session", autouse=True)
 def simple_preprocess_contrast() -> ContrastSimulator:
     print("Setting up SimplePreprocessContrast for the entire test session...")
-    return SimplePreprocessContrast()
+    return Hu2MuContrast()
 
 @pytest.fixture(scope="session", autouse=True)
 def flow_contrast() -> ContrastSimulator:

@@ -1,5 +1,5 @@
-from .contrast_simulator import ContrastSimulator, IdentityContrast, SimplePreprocessContrast
-from .multipli_contrast import StaticIodineContrast
+from .contrast_simulator import ContrastSimulator, IdentityContrast, Hu2MuContrast, Hu2MuContrast
+from .multipli_contrast import StaticIodineContrast, CtaResetContrast
 from .threshold_multipli_contrast import ThresholdIodineContrast
 from .flow_contrast import FlowContrast
 from .cl_marker_contrast import ClMarkerSimulator
@@ -11,5 +11,6 @@ __all__ = [
     "FlowContrast",
     "ClMarkerSimulator",
     "IdentityContrast",
-    "SimplePreprocessContrast",
+    "Hu2MuContrast",
+    "CtaResetContrast"
 ]

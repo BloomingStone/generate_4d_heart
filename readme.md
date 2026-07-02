@@ -101,3 +101,49 @@
 
 使用 `scripts/dataset_to_colmap.py` 将生成的旋转DSA图像和标签转化为colmap格式，输入为旋转DSA图像和标签文件夹，输出为colmap格式的文件夹。
 
+
+## 人造结构（Artifact）模拟
+
+人造结构（导丝、标记点、支架等）通过 mesh 表示，由 `generate_4d_heart/rotate_dsa/artifacts/` 下的模块管理。
+
+### Artifact 数据类
+
+```python
+@dataclass
+class Artifact:
+    mesh: pv.PolyData   # mesh 表示，世界坐标系
+    mu: float           # 线衰减系数 (mm⁻¹)
+    name: str           # 标识符
+```
+
+### 生成方式
+
+- **导丝** (`artifacts/guide_wire.py`): 对冠脉标签骨架化 → BFS 寻路 → 平滑 → `pv.Tube` 生成管状 mesh
+- **标记点** (`artifacts/marker.py`): 沿导丝中心线按物理间距采样 → `pv.Sphere` 生成球体 mesh（固定 2 个标记点）
+- **外部输入**: 通过 `ExternalArtifactConfig` 加载外部 `.vtp`/`.ply` 文件
+
+### ArtifactManager
+
+配置驱动工厂，按序处理依赖（导丝 → 标记点 → 外部文件），在 RBFReader 初始化时调用，生成的 artifacts 存储在 `Coronary.artifacts` 中。
+
+```python
+config = ArtifactManagerConfig(
+    guide_wire=GuideWireConfig(radius_mm=0.3),
+    markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
+)
+reader = RBFReader(
+    ...,
+    artifact_manager=ArtifactManager(config),
+)
+```
+
+### 渲染
+
+`Torch3DLabelRenderer.render_line_integral()` 使用 PyTorch3D rasterizer 计算 mesh 的 X 射线线积分贡献（`faces_per_pixel=2` → `path_length = back_depth - front_depth`），结果叠加在 DRR 的 line integral 上。
+
+### TODOs
+
++ [ ] **其他 reader 适配 artifact**: 目前仅在 `RBFReader` 中实现了 artifact 的生成与形变。`VolumesReader`、`VolumeDVFReader`、`StaticVolumeReader`、`StaticLabelReader` 等尚未接入 `artifact_manager` 参数，且 `get_data()` 中未对 artifact mesh 施加运动形变。
++ [ ] **外部输入 artifact 测试**: `ExternalArtifactConfig` 已定义，但尚未编写加载外部 `.vtp`/`.ply` 文件的单元测试和集成测试。
++ [ ] 增加对支架的模拟
+

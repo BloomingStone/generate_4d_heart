@@ -20,11 +20,12 @@ from generate_4d_heart.rotate_dsa.data_reader.data_reader import (
     DataReader, DataReaderResult, Coronary,
     load_nifti, apply_affine
 )
-from generate_4d_heart.ssm import SSMReader, polydata_io, Landmark
+from generate_4d_heart.ssm import SSMReader, Landmark
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.types import CoronaryType
 from generate_4d_heart import CavityLabel
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
+from generate_4d_heart.rotate_dsa.artifacts import ArtifactManager, Artifact
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ class RBFReader(DataReader):
     num_components_used: int = 1
     motion_multiplier: float = 1.3
     attenuation_transition: float = 5.0
+    
+    artifact_manager: ArtifactManager | None = None
 
     def __post_init__(self):
         print(f"\nInitializing RBFReader with \n\t- volume_nii={self.volume_nii} \n\t- cavity_nii={self.cavity_nii} \n\t- coronary_nii={self.coronary_nii}")
@@ -62,7 +65,7 @@ class RBFReader(DataReader):
         
         print("Initializing origin data...")
         self.origin_data = self._Data.init_from_volume(
-            volume, cavity, coronary, affine, self.device, self.contrast_simulator
+            volume, cavity, coronary, affine, self.device, self.contrast_simulator, self.artifact_manager
         )
         
         print("Initializing ROI from cavity and cropping data...")
@@ -196,6 +199,17 @@ class RBFReader(DataReader):
         mesh_points += self.rbf(phase, mesh_points)     # moving in world coordinate
         cor_mesh.points = mesh_points.cpu().numpy()
 
+        # Deform artifact meshes (same RBF displacement, world coordinates)
+        artifacts_deformed: list[Artifact] | None = None
+        if self.origin_data[cor_type].artifacts_original is not None:
+            artifacts_deformed = []
+            for art in self.origin_data[cor_type].artifacts_original:  # type: ignore[union-attr]
+                art_mesh = art.mesh.copy()
+                art_pts = torch.from_numpy(np.array(art_mesh.points)).to(self.device, torch.float32)
+                art_pts += self.rbf(phase, art_pts)   # moving in world coordinate
+                art_mesh.points = art_pts.cpu().numpy()
+                artifacts_deformed.append(Artifact(mesh=art_mesh, mu=art.mu, name=art.name))
+
         volume, cavity_label, cor_label = self._warp_and_recover_for_phase(cor_type, phase, global_time)
         
         return DataReaderResult(
@@ -208,7 +222,8 @@ class RBFReader(DataReader):
                 label=cor_label,
                 original_affine=self.origin_data[cor_type].original_affine,
                 centering_affine=cor_centering_affine,
-                mesh_original=cor_mesh
+                mesh_original=cor_mesh,
+                artifacts_original=artifacts_deformed,
             )
         )
     

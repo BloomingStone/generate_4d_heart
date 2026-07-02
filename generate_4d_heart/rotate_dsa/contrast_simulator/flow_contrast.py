@@ -14,6 +14,7 @@ import cupy as cp
 from generate_4d_heart import CavityLabel, MU_IDODINE, MU_WATER, VesselLabel
 
 from .contrast_simulator import ContrastSimulator
+from .multipli_contrast import CtaResetContrast
 
 from skimage.morphology import skeletonize
 
@@ -79,6 +80,8 @@ class FlowContrast(ContrastSimulator):
     ) -> torch.Tensor:
         raise NotImplementedError("FlowContrast does not support simulate without time, please use `simulate_with_time` instead")
 
+    # TODO 使用 CtaResetContrast的preprocess方法，逻辑一样，避免重复代码
+    # TODO 统一 ori_volume cavtiy 传递时的shape
     def preprocess(
         self,
         ori_volume: torch.Tensor,

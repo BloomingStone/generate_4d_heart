@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import pyvista as pv
+import numpy as np
 
 
 @dataclass
@@ -16,3 +17,13 @@ class Artifact:
 
     name: str = ""
     """Optional identifier for the artifact."""
+
+    def translate(self, vec: np.ndarray) -> "Artifact":
+        """Return a new Artifact with the mesh translated by ``vec``."""
+        new_mesh = self.mesh.copy()
+        new_mesh.points = new_mesh.points + vec
+        return Artifact(mesh=new_mesh, mu=self.mu, name=self.name)
+    
+    def copy(self) -> "Artifact":
+        """Return a copy of the artifact."""
+        return Artifact(mesh=self.mesh.copy(), mu=self.mu, name=self.name)

@@ -217,7 +217,7 @@ class TestArtifactManager:
             markers=None,
         )
         manager = ArtifactManager(config)
-        artifacts = manager.generate(
+        artifacts = manager.generate_or_load(
             coronary_label=lca_data["lca_label"],
             cavity_label=lca_data["cavity_label"],
             affine=lca_data["affine"],
@@ -231,7 +231,7 @@ class TestArtifactManager:
             markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
         )
         manager = ArtifactManager(config)
-        artifacts = manager.generate(
+        artifacts = manager.generate_or_load(
             coronary_label=lca_data["lca_label"],
             cavity_label=lca_data["cavity_label"],
             affine=lca_data["affine"],
@@ -248,7 +248,7 @@ class TestArtifactManager:
         )
         manager = ArtifactManager(config)
         with pytest.raises(ValueError, match="requires a guide wire"):
-            manager.generate(
+            manager.generate_or_load(
                 coronary_label=lca_data["lca_label"],
                 cavity_label=lca_data["cavity_label"],
                 affine=lca_data["affine"],
@@ -257,7 +257,7 @@ class TestArtifactManager:
     def test_manager_no_config(self, lca_data):
         config = ArtifactManagerConfig()
         manager = ArtifactManager(config)
-        artifacts = manager.generate(
+        artifacts = manager.generate_or_load(
             coronary_label=lca_data["lca_label"],
             cavity_label=lca_data["cavity_label"],
             affine=lca_data["affine"],
@@ -278,7 +278,7 @@ def drr_pose() -> tuple[torch.Tensor, torch.Tensor]:
     """Get R, T from a TorchDRR at frame 0 (proven working camera setup)."""
     drr = TorchDRR(
         c_arm_cfg=CArmGeometry(),
-        rotate_cfg=RotatedParameters(total_frame=2, fps=1, angular_velocity=0),
+        rotate_cfg=RotatedParameters(total_frame=2, fps=1, angular_velocity=0, alpha_start=30),
     )
     return drr.get_R_T_at_frame(0)
 
@@ -473,7 +473,7 @@ class TestArtifactIntergration:
             markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
         )
         manager = ArtifactManager(config)
-        artifacts = manager.generate(
+        artifacts = manager.generate_or_load(
             coronary_label=lca_data["lca_label"],
             cavity_label=lca_data["cavity_label"],
             affine=lca_data["affine"],

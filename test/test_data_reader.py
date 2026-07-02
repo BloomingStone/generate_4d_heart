@@ -7,7 +7,12 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-from generate_4d_heart.rotate_dsa.data_reader.data_reader import DataReader, get_mesh_in_world
+from generate_4d_heart.rotate_dsa.data_reader.data_reader import DataReader, get_mesh_in_world, CoronaryType
+from generate_4d_heart.rotate_dsa.artifacts import (
+    ArtifactManager, ArtifactManagerConfig, GuideWireConfig, MarkerConfig,
+)
+from generate_4d_heart.rotate_dsa.data_reader import RBFReader
+from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.saver import save_gif
 
@@ -63,12 +68,14 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         
         plotter_original.clear()
         plotter_original.add_mesh(data.coronary.mesh_original, color="lightgray", opacity=0.5)
+        plotter_original.add_mesh(data.coronary.get_coronary_central_line("world"), color="red", line_width=5)
         plotter_original.add_mesh(mesh_original_from_label, opacity=0.5)
         plotter_original.show_bounds()  #type: ignore
         plotter_original.write_frame()
         
         plotter_centering.clear()
         plotter_centering.add_mesh(data.coronary.mesh_centering, color="lightgray", opacity=0.5)
+        plotter_centering.add_mesh(data.coronary.get_coronary_central_line("coronary_centering"), color="red", line_width=5)
         plotter_centering.add_mesh(mesh_centering_from_label, opacity=0.5)
         plotter_centering.show_bounds()  #type: ignore
         plotter_centering.write_frame()
@@ -139,6 +146,71 @@ def test_rbf_reader(
     for coronary_type in ["LCA", "RCA"]:
         output_dir = output_root_dir / "readers_output" / f"{reader_name}_{coronary_type}"
         _read_and_save(reader, output_dir, coronary_type=cast(Literal["LCA", "RCA"], coronary_type))
+
+@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
+def test_rbf_reader_with_artifacts(
+    output_root_dir: Path,
+    volume_dvf_dir: Path,
+    coronary_type: Literal["LCA", "RCA"]
+):
+    """RBFReader with artifact_manager: animate coronary + artifacts motion."""
+    artifact_manager = ArtifactManager(ArtifactManagerConfig(
+        guide_wire=GuideWireConfig(radius_mm=0.3),
+        markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
+    ))
+    reader = RBFReader(
+        volume_nii=volume_dvf_dir / "image.nii.gz",
+        cavity_nii=volume_dvf_dir / "cavity.nii.gz",
+        coronary_nii=volume_dvf_dir / "coronary.nii.gz",
+        contrast_simulator=IdentityContrast(),
+        artifact_manager=artifact_manager,
+    )
+
+    output_dir = output_root_dir / "readers_output" / f"rbf_reader_artifacts_{coronary_type}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    F = 15
+
+    # ── Original-coordinate animation ──
+    plotter_original = pv.Plotter(off_screen=True)
+    plotter_original.open_gif(str(output_dir / "animation_artifacts_original.gif"))
+
+    # ── Centering-coordinate animation ──
+    plotter_centering = pv.Plotter(off_screen=True)
+    plotter_centering.open_gif(str(output_dir / "animation_artifacts_centering.gif"))
+
+    for phase_idx in range(F):
+        phase = CardiacPhase.from_index(phase_idx, F)
+        data = reader.get_data(phase, coronary_type)
+
+        # --- original view ---
+        plotter_original.clear()
+        plotter_original.add_mesh(data.coronary.mesh_original, color="lightgray", opacity=0.5)
+        if data.coronary.artifacts_original is not None:
+            for art in data.coronary.artifacts_original:
+                plotter_original.add_mesh(art.mesh, color="red" if "marker" in art.name else "orange", opacity=0.9)
+        plotter_original.show_bounds()
+        plotter_original.write_frame()
+
+        # --- centering view ---
+        plotter_centering.clear()
+        plotter_centering.add_mesh(data.coronary.mesh_centering, color="lightgray", opacity=0.5)
+        if data.coronary.artifacts_original is not None:
+            for art in data.coronary.artifacts_centering:
+                plotter_centering.add_mesh(art.mesh, color="red" if "marker" in art.name else "orange", opacity=0.9)
+        plotter_centering.show_bounds()
+        plotter_centering.write_frame()
+
+    plotter_original.close()
+    plotter_centering.close()
+
+    # Verify artifacts were generated and stored
+    cor = reader.origin_data[CoronaryType.LCA]
+    assert cor.artifacts_original is not None
+    assert len(cor.artifacts_original) == 3, f"Expected 3 artifacts, got {len(cor.artifacts_original)}"
+    names = {a.name for a in cor.artifacts_original}
+    assert "guide_wire" in names
+    assert any(n.startswith("marker_") for n in names)
 
 
 if __name__ == "__main__":

@@ -76,9 +76,6 @@ class RotateDSA:
                 coronary=coronary.label,
                 affine=coronary.centering_affine
             )
-            if frames.device != drr_res.device:
-                frames = frames.to(drr_res.device)
-            frames[f] = drr_res
             
             label, depth_map = self.label_plotter.render_silhouette_depth(
                 coronary.mesh_centering,
@@ -86,6 +83,20 @@ class RotateDSA:
             )
             labels[f] = label
             depth_maps[f] = depth_map
+
+            # Render artifact line integrals (if any) and add to DRR
+            artifacts_centering = coronary.artifacts_centering
+            if artifacts_centering is not None and len(artifacts_centering) > 0:
+                art_integral = self.label_plotter.render_line_integral(
+                    artifacts_centering,
+                    *self.drr.get_R_T_at_frame(f)
+                )
+                drr_res += torch.from_numpy(art_integral)[None][None].to(drr_res.device)
+            
+            
+            if frames.device != drr_res.device:
+                frames = frames.to(drr_res.device)
+            frames[f] = drr_res
         
         # Beer-Lambert: line integral (I = \int mu dx) → intensity. (I = I0 * exp(-\int mu dx))
         frames = torch.exp( - frames)

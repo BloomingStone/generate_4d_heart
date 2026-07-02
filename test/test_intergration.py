@@ -6,20 +6,25 @@ import pytest
 
 from generate_4d_heart.rotate_dsa import RotateDSA
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
+from generate_4d_heart.rotate_dsa.artifacts import (
+    ArtifactManager, ArtifactManagerConfig, GuideWireConfig, MarkerConfig,
+)
+from generate_4d_heart.rotate_dsa.data_reader import RBFReader
+from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 
-from utils import reader_factory, ReaderName, SimulatorName
+from utils import reader_factory, ReaderName, SimulatorName, TEST_DATA_ROOT_DIR, simulator_factory
 
 
-@pytest.mark.parametrize("reader_name", ReaderName.to_tuple())
+@pytest.mark.parametrize("reader_name", tuple(ReaderName))
 @pytest.mark.parametrize("simulator_name", (
-    str(SimulatorName.MULTIPLI_CONTRAST), str(SimulatorName.FLOW_CONTRAST), str(SimulatorName.CL_MARKER_CONTRAST)
+    SimulatorName.MULTIPLI_CONTRAST, SimulatorName.FLOW_CONTRAST, SimulatorName.CL_MARKER_CONTRAST, SimulatorName.IDENTITY_CONTRAST
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration(
     output_root_dir: Path,
     simple_drr: TorchDRR,
-    reader_name: str,
-    simulator_name: str,
+    reader_name: ReaderName,
+    simulator_name: SimulatorName,
     coronary_type: Literal["LCA", "RCA"],
 ):
     """测试完整的 RotateDSA 集成流程"""
@@ -71,23 +76,23 @@ def test_rotate_dsa_integration(
 @pytest.mark.parametrize(
     "reader_name, coronary_type",
     (
-        ("volumes_reader", "LCA"),
-        ("volume_dvf_reader", "LCA"),
-        ("static_volume_reader", "LCA"),
-        ("rbf_reader", "LCA"),
-        ("rbf_reader", "RCA"),      # RBFReader will be fully tested on both LCA and RCA
-        ("static_label_reader", "LCA"),  # StaticLabelReader only has LCA data
+        (ReaderName.VOLUMES_READER, "LCA"),
+        (ReaderName.VOLUME_DVF_READER, "LCA"),
+        (ReaderName.STATIC_VOLUME_READER, "LCA"),
+        (ReaderName.RBF_READER, "LCA"),
+        (ReaderName.RBF_READER, "RCA"),      # RBFReader will be fully tested on both LCA and RCA
+        (ReaderName.STATIC_LABEL_READER, "LCA"),  # StaticLabelReader only has LCA data
     )
 )
 @pytest.mark.parametrize("simulator_name", (
-    str(SimulatorName.MULTIPLI_CONTRAST), 
-    str(SimulatorName.FLOW_CONTRAST)
+    SimulatorName.MULTIPLI_CONTRAST, 
+    SimulatorName.FLOW_CONTRAST
 ))
 def test_rotate_dsa_integration_full(
     output_root_dir: Path,
     full_drr: TorchDRR,
-    reader_name: str,
-    simulator_name: str,
+    reader_name: ReaderName,
+    simulator_name: SimulatorName,
     coronary_type: Literal["LCA", "RCA"],
 ):
     """测试完整的 RotateDSA 集成流程 并生成完整数据"""
@@ -107,14 +112,14 @@ def test_rotate_dsa_integration_full(
     )
 
 
-@pytest.mark.parametrize("reader_name", (str(ReaderName.RBF_READER),))
-@pytest.mark.parametrize("simulator_name", (str(SimulatorName.CL_MARKER_CONTRAST), ))
+@pytest.mark.parametrize("reader_name", (ReaderName.RBF_READER,))
+@pytest.mark.parametrize("simulator_name", (SimulatorName.CL_MARKER_CONTRAST,))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration_cl_marker(
     output_root_dir: Path,
     simple_drr: TorchDRR,
-    reader_name: str,
-    simulator_name: str,
+    reader_name: ReaderName,
+    simulator_name: SimulatorName,
     coronary_type: Literal["LCA", "RCA"],
 ):
     test_rotate_dsa_integration(
@@ -124,3 +129,42 @@ def test_rotate_dsa_integration_cl_marker(
         simulator_name=simulator_name,
         coronary_type=coronary_type
     )
+
+@pytest.mark.parametrize("simulator_name", (
+    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST, SimulatorName.FLOW_CONTRAST
+))
+@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
+def test_rotate_dsa_integration_with_artifacts(
+    output_root_dir: Path,
+    simple_drr: TorchDRR,
+    volume_dvf_dir: Path,
+    simulator_name: SimulatorName,
+    coronary_type: Literal["LCA", "RCA"],
+):
+    """RBFReader with artifact_manager + RotateDSA integration."""
+    artifact_manager = ArtifactManager(ArtifactManagerConfig(
+        guide_wire=GuideWireConfig(radius_mm=0.3),
+        markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
+    ))
+    reader = RBFReader(
+        volume_nii=volume_dvf_dir / "image.nii.gz",
+        cavity_nii=volume_dvf_dir / "cavity.nii.gz",
+        coronary_nii=volume_dvf_dir / "coronary.nii.gz",
+        contrast_simulator=simulator_factory(simulator_name),
+        artifact_manager=artifact_manager,
+    )
+
+    dsa = RotateDSA(reader=reader, drr=simple_drr)
+
+    output_dir = output_root_dir / "intergration" / "artifacts" / f"rbf_reader_{simulator_name}_{coronary_type}"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    dsa.run_and_save(output_dir=output_dir, coronary_type=coronary_type, gif_fps=10)
+
+    # Verify output files exist
+    assert (output_dir / "rotate_dsa_raw.tif").exists()
+    assert (output_dir / "rotate_dsa_raw.gif").exists()
+    assert (output_dir / "rotate_dsa.gif").exists()
+    assert (output_dir / "rotate_dsa.json").exists()
+    assert (output_dir / "label.gif").exists()
+    assert (output_dir / "depth_map.gif").exists()

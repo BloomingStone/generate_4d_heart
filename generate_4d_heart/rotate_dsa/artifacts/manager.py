@@ -56,7 +56,7 @@ class ArtifactManager:
     def __init__(self, config: ArtifactManagerConfig):
         self.config = config
 
-    def generate(
+    def generate_or_load(
         self,
         coronary_label: np.ndarray,
         cavity_label: np.ndarray,

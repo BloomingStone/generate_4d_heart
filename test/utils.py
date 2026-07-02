@@ -10,7 +10,8 @@ from generate_4d_heart.rotate_dsa.data_reader import (
 )
 from generate_4d_heart.rotate_dsa.contrast_simulator import (
     StaticIodineContrast, ThresholdIodineContrast, IdentityContrast, 
-    SimplePreprocessContrast, ContrastSimulator, FlowContrast, ClMarkerSimulator
+    Hu2MuContrast, ContrastSimulator, FlowContrast, ClMarkerSimulator,
+    CtaResetContrast
 )
 
 
@@ -28,14 +29,6 @@ class ReaderName(StrEnum):
     RBF_READER = "rbf_reader"
     STATIC_VOLUME_READER = "static_volume_reader"
     STATIC_LABEL_READER = "static_label_reader"
-    
-    @classmethod
-    def to_list(cls) -> list[str]:
-        return [reader.value for reader in ReaderName]
-    
-    @classmethod
-    def to_tuple(cls) -> tuple[str, ...]:
-        return tuple(cls.to_list())
 
 
 class SimulatorName(StrEnum):
@@ -45,15 +38,8 @@ class SimulatorName(StrEnum):
     SIMPLE_PREPROCESS_CONTRAST = "simple_preprocess_contrast"
     FLOW_CONTRAST = "flow_contrast"
     CL_MARKER_CONTRAST = "cl_marker_contrast"
-    
-    @classmethod
-    def to_list(cls) -> list[str]:
-        return [sim.value for sim in SimulatorName]
-    
-    @classmethod
-    def to_tuple(cls) -> tuple[str, ...]:
-        return tuple(cls.to_list())
-
+    HU2MU_CONTRAST = "hu2mu_contrast"
+    CTA_RESET_CONTRAST = "cta_reset_contrast"
 
 
 def simulator_factory(
@@ -67,11 +53,15 @@ def simulator_factory(
         case SimulatorName.IDENTITY_CONTRAST:
             return IdentityContrast()
         case SimulatorName.SIMPLE_PREPROCESS_CONTRAST:
-            return SimplePreprocessContrast()
+            return Hu2MuContrast()
         case SimulatorName.FLOW_CONTRAST:
             return FlowContrast()
         case SimulatorName.CL_MARKER_CONTRAST:
             return ClMarkerSimulator()
+        case SimulatorName.HU2MU_CONTRAST:
+            return Hu2MuContrast()
+        case SimulatorName.CTA_RESET_CONTRAST:
+            return CtaResetContrast()
         case _:
             raise ValueError(f"Unsupported simulator name: {simulator_name}")
 
