@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from generate_4d_heart.rotate_dsa.data_reader.data_reader import DataReader, get_mesh_in_world, CoronaryType
 from generate_4d_heart.rotate_dsa.artifacts import (
-    ArtifactManager, ArtifactManagerConfig, GuideWireConfig, MarkerConfig,
+    ArtifactManager, ArtifactManagerConfig, GuideWireConfig, MarkerConfig, StentConfig
 )
 from generate_4d_heart.rotate_dsa.data_reader import RBFReader
 from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
@@ -151,13 +151,10 @@ def test_rbf_reader(
 def test_rbf_reader_with_artifacts(
     output_root_dir: Path,
     volume_dvf_dir: Path,
-    coronary_type: Literal["LCA", "RCA"]
+    coronary_type: Literal["LCA", "RCA"],
+    artifact_manager: ArtifactManager
 ):
     """RBFReader with artifact_manager: animate coronary + artifacts motion."""
-    artifact_manager = ArtifactManager(ArtifactManagerConfig(
-        guide_wire=GuideWireConfig(radius_mm=0.3),
-        markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
-    ))
     reader = RBFReader(
         volume_nii=volume_dvf_dir / "image.nii.gz",
         cavity_nii=volume_dvf_dir / "cavity.nii.gz",
@@ -207,7 +204,7 @@ def test_rbf_reader_with_artifacts(
     # Verify artifacts were generated and stored
     cor = reader.origin_data[CoronaryType.LCA]
     assert cor.artifacts_original is not None
-    assert len(cor.artifacts_original) == 3, f"Expected 3 artifacts, got {len(cor.artifacts_original)}"
+    assert len(cor.artifacts_original) == 4, f"Expected 3 artifacts, got {len(cor.artifacts_original)}"
     names = {a.name for a in cor.artifacts_original}
     assert "guide_wire" in names
     assert any(n.startswith("marker_") for n in names)

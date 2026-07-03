@@ -30,7 +30,8 @@ class Torch3DLabelRenderer:
         self.artifacts_settings = RasterizationSettings(
             image_size=(self.height, self.width),
             blur_radius=0.0,
-            faces_per_pixel=2  # front + back faces
+            faces_per_pixel=2,  # front + back faces
+            bin_size=0,          # naive rasterization for fine geometry (stent struts)
         )
         
         if torch.cuda.is_available():

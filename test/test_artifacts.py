@@ -18,10 +18,12 @@ from generate_4d_heart.rotate_dsa.artifacts import (
     Artifact,
     generate_guide_wire,
     generate_markers,
+    generate_stent,
     ArtifactManager,
     ArtifactManagerConfig,
     GuideWireConfig,
     MarkerConfig,
+    StentConfig,
 )
 
 from generate_4d_heart.rotate_dsa.torch3d_label_renderer import Torch3DLabelRenderer
@@ -207,6 +209,102 @@ class TestMarkerGeneration:
                 marker_distance_mm=6.0,
             )
 
+
+
+# ---- Test Stent generation ---------------------------------------------------
+
+class TestStentGeneration:
+    def test_generate_stent_synthetic(self):
+        """Stent on a straight centerline segment."""
+        cl = np.zeros((30, 3), dtype=np.float64)
+        cl[:, 2] = np.linspace(0, 30, 30)
+        stent = generate_stent(cl, 5, 25, stent_radius_mm=2.0, strut_radius_mm=0.15)
+        assert stent.name == "stent"
+        assert stent.mesh.n_points > 0
+        assert stent.mesh.n_cells > 0
+
+    def test_stent_uses_large_portion(self, lca_data):
+        """Stent on a real coronary centerline."""
+        _, cl = generate_guide_wire(
+            coronary_label=lca_data["lca_label"],
+            cavity_label=lca_data["cavity_label"],
+            affine=lca_data["affine"],
+        )
+        idx_p, idx_d = len(cl) // 4, len(cl) * 3 // 4
+        stent = generate_stent(cl, idx_p, idx_d, stent_radius_mm=1.2, strut_radius_mm=0.1)
+        assert stent.mesh.n_points > 1000
+
+    def test_stent_proximal_before_distal_raises(self):
+        cl = np.zeros((10, 3))
+        with pytest.raises(ValueError, match="idx_proximal"):
+            generate_stent(cl, 7, 3)
+
+    def test_stent_idx_out_of_range_raises(self):
+        cl = np.zeros((10, 3))
+        with pytest.raises(ValueError, match="idx_distal"):
+            generate_stent(cl, 0, 99)
+
+    def test_stent_too_short_segment(self, lca_data):
+        """Stent with identical markers should raise or produce degenerate mesh."""
+        _, cl = generate_guide_wire(
+            coronary_label=lca_data["lca_label"],
+            cavity_label=lca_data["cavity_label"],
+            affine=lca_data["affine"],
+        )
+        stent = generate_stent(cl, 5, 6, stent_radius_mm=1.0, strut_radius_mm=0.05)
+        assert stent.mesh.n_points > 0
+
+
+# ---- Test ArtifactManager with stent -----------------------------------------
+
+class TestArtifactManagerStent:
+    def test_manager_guide_wire_markers_stent(self, lca_data):
+        """Full pipeline: guide wire → markers → stent between markers."""
+        config = ArtifactManagerConfig(
+            guide_wire=GuideWireConfig(radius_mm=0.3),
+            markers=MarkerConfig(distance_mm=10.0, radius_mm=0.4),
+            stent=StentConfig(radius_mm=1.5, strut_radius_mm=0.1, n_wires=8),
+        )
+        manager = ArtifactManager(config)
+        artifacts = manager.generate_or_load(
+            coronary_label=lca_data["lca_label"],
+            cavity_label=lca_data["cavity_label"],
+            affine=lca_data["affine"],
+        )
+        names = [a.name for a in artifacts]
+        assert "guide_wire" in names
+        assert any(n.startswith("marker_") for n in names)
+        assert "stent" in names
+        stent = [a for a in artifacts if a.name == "stent"][0]
+        assert stent.mesh.n_points > 1000
+
+    def test_manager_stent_without_markers_raises(self, lca_data):
+        config = ArtifactManagerConfig(
+            guide_wire=GuideWireConfig(),
+            markers=None,
+            stent=StentConfig(),
+        )
+        manager = ArtifactManager(config)
+        with pytest.raises(ValueError, match="StentConfig requires"):
+            manager.generate_or_load(
+                coronary_label=lca_data["lca_label"],
+                cavity_label=lca_data["cavity_label"],
+                affine=lca_data["affine"],
+            )
+
+    def test_manager_stent_without_guide_wire_raises(self, lca_data):
+        config = ArtifactManagerConfig(
+            guide_wire=None,
+            markers=MarkerConfig(),
+            stent=StentConfig(),
+        )
+        manager = ArtifactManager(config)
+        with pytest.raises(ValueError, match="requires a guide wire"):
+            manager.generate_or_load(
+                coronary_label=lca_data["lca_label"],
+                cavity_label=lca_data["cavity_label"],
+                affine=lca_data["affine"],
+            )
 
 # ---- Test ArtifactManager ---------------------------------------------------
 
@@ -465,23 +563,19 @@ class TestArtifactIntergration:
         return centering_T - original_T
 
     def test_generate_and_render_artifacts(
-        self, lca_data, renderer, drr_pose, artifact_output_dir
+        self, lca_data, renderer, drr_pose, artifact_output_dir, artifact_manager
     ):
-        """Generate guide wire and markers, then render them (centered)."""
-        config = ArtifactManagerConfig(
-            guide_wire=GuideWireConfig(radius_mm=0.3),
-            markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
-        )
-        manager = ArtifactManager(config)
-        artifacts = manager.generate_or_load(
+        """Generate guide wire + markers + stent, then render them (centered)."""
+        artifacts = artifact_manager.generate_or_load(
             coronary_label=lca_data["lca_label"],
             cavity_label=lca_data["cavity_label"],
             affine=lca_data["affine"],
         )
-        for art in artifacts:
-            print(f"Generated artifact: {art.name}, mu={art.mu}, mesh points={art.mesh.n_points}")
-        
         assert len(artifacts) >= 1
+        names = [a.name for a in artifacts]
+        assert "guide_wire" in names
+        assert any(n.startswith("marker_") for n in names)
+        assert "stent" in names
 
         # Translate artifacts from world → centering coordinates
         offset = self._compute_centering_offset(lca_data)
@@ -499,15 +593,16 @@ class TestArtifactIntergration:
         for art in artifacts:
             art.mesh.save(artifact_output_dir / f"{art.name}.vtp", binary=True)
         _save_render_png(
-            artifact_output_dir / "render_artifacts.png",
+            artifact_output_dir / "render_all.png",
             result,
-            "Guide wire + markers (centered)",
+            "Guide wire + markers + stent (centered)",
         )
-        
+
         for art in artifacts:
             rendered = renderer.render_line_integral([art], R, T)
             _save_render_png(
-                artifact_output_dir / f"render_{art.name}.png",
+                artifact_output_dir / f"render_all_{art.name}.png",
                 rendered,
                 f"Artifact: {art.name} (mu={art.mu})",
             )
+

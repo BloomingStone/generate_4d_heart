@@ -5,6 +5,7 @@ import shutil
 import pytest
 
 from generate_4d_heart.rotate_dsa import RotateDSA
+from generate_4d_heart.rotate_dsa.artifacts.manager import StentConfig
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa.artifacts import (
     ArtifactManager, ArtifactManagerConfig, GuideWireConfig, MarkerConfig,
@@ -140,12 +141,9 @@ def test_rotate_dsa_integration_with_artifacts(
     volume_dvf_dir: Path,
     simulator_name: SimulatorName,
     coronary_type: Literal["LCA", "RCA"],
+    artifact_manager: ArtifactManager
 ):
     """RBFReader with artifact_manager + RotateDSA integration."""
-    artifact_manager = ArtifactManager(ArtifactManagerConfig(
-        guide_wire=GuideWireConfig(radius_mm=0.3),
-        markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4),
-    ))
     reader = RBFReader(
         volume_nii=volume_dvf_dir / "image.nii.gz",
         cavity_nii=volume_dvf_dir / "cavity.nii.gz",
