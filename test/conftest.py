@@ -5,8 +5,10 @@ import warnings
 import pytest
 
 from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast, ThresholdIodineContrast, IdentityContrast, Hu2MuContrast, ContrastSimulator, FlowContrast
-from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
+from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters, CArmGeometry
 from utils import TEST_ROOT_DIR, TEST_DATA_ROOT_DIR, OUTPUT_ROOT_DIR
+from generate_4d_heart.rotate_dsa.data_reader import CenteringMode
+
 
 @pytest.fixture(scope="session", autouse=True)
 def test_root_dir() -> Path:
@@ -80,6 +82,7 @@ def flow_contrast() -> ContrastSimulator:
     print("Setting up FlowContrast for the entire test session...")
     return FlowContrast()
 
+
 @pytest.fixture(scope="session", autouse=True)
 def simple_drr() -> TorchDRR:
     rotate_cfg = RotatedParameters(
@@ -88,6 +91,33 @@ def simple_drr() -> TorchDRR:
         angular_velocity = 30,  # 降低旋转速度
     )
     return TorchDRR(rotate_cfg=rotate_cfg)
+
+@pytest.fixture(scope="session", autouse=True)
+def pig_data_geom() -> CArmGeometry:
+    return CArmGeometry(
+        sdd=1200.0,
+        sod=760.0,
+        height=474,
+        width=648,
+        delx=0.616,
+        dely=0.616,
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def pig_data_drr(
+    pig_data_geom: CArmGeometry
+) -> TorchDRR:
+    rotate_cfg = RotatedParameters(
+        total_frame=402,  # 减少帧数
+        fps=80,           # 降低帧率
+        angular_velocity = 47.986,  # 降低旋转速度
+        alpha_start=-119.35
+    )
+    return TorchDRR(
+        c_arm_cfg=pig_data_geom,
+        rotate_cfg=rotate_cfg
+    )
 
 
 from generate_4d_heart.rotate_dsa.artifacts import (

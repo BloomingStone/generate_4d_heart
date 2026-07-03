@@ -124,27 +124,48 @@ def recenter(
     T[:3, 3] = new_t
     return T
 
-import cupy as cp
+CenteringMode = Literal["coronary_center", "image_center"]
 
-def get_coronary_centering_affine(coronary_label: Tensor, volume_affine: ndarray, device: torch.device) -> ndarray:
+def get_coronary_centering_affine(
+    coronary_label: Tensor,
+    volume_affine: ndarray,
+    device: torch.device,
+    centering_mode: CenteringMode = "coronary_center"
+) -> ndarray:
+    """
+    Compute a centering affine that translates the volume so that a target
+    voxel becomes the origin of the world coordinate system.
+
+    Args:
+        coronary_label: coronary label tensor.
+        volume_affine: affine matrix of the original volume.
+        device: torch device.
+        centering_mode: how to determine the target center voxel.
+            - "coronary_center" (default): use the AABB center of the coronary label.
+            - "image_center": use the geometric center of the image volume shape.
+
+    Returns:
+        centering affine matrix (4x4).
+    """
     W, H, D = coronary_label.shape[-3:]
-    image_center = (W//2, H//2, D//2)
+    image_center = (W // 2, H // 2, D // 2)
+
+    if centering_mode == "image_center":
+        return recenter(volume_affine, image_center)
+
+    # centering_mode == "coronary_center"
     with cp.cuda.Device(device.index):
-        # 1. 将数据转为 cupy 阵列并压缩维度
         label_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(device)))
-        
-        # 2. 找到所有非零（标签）点的坐标
         coords = cp.argwhere(label_cp > 0)
-        
+
         if coords.size == 0:
-            # 如果没找到标签，退回到图像物理中心
             label_center_voxel = image_center
         else:
-            # 3. 计算 AABB (Axis-Aligned Bounding Box) 的边界
+            # 3. AABB (Axis-Aligned Bounding Box) 的边界
             min_coords = coords.min(axis=0)
             max_coords = coords.max(axis=0)
             
-            # 4. 计算包围盒的中心
+            # 计算包围盒的中心
             # 这能确保最左边和最右边的分支被平等对待
             label_center_voxel = (
                 int((min_coords[0] + max_coords[0]) / 2),
@@ -408,7 +429,8 @@ class DataReader(Protocol):
             affine: np.ndarray,
             running_device: torch.device,
             contrast_simulator: ContrastSimulator|None,
-            artifact_manager: ArtifactManager|None = None
+            artifact_manager: ArtifactManager|None = None,
+            centering_mode: CenteringMode = "coronary_center"
         ) -> "DataReader._Data":
             lca, rca = separate_coronary(coronary, running_device)
             if contrast_simulator is not None:
@@ -438,7 +460,7 @@ class DataReader(Protocol):
                         volume=cor_vol,
                         label=cor_label,
                         original_affine=affine,
-                        centering_affine=get_coronary_centering_affine(cor_label, affine, running_device),
+                        centering_affine=get_coronary_centering_affine(cor_label, affine, running_device, centering_mode),
                         mesh_original=get_mesh_in_world(cor_label, affine),
                         artifacts_original=artifact_manager.generate_or_load(
                             coronary_label=cor_label.squeeze().cpu().numpy().astype(bool),
@@ -509,6 +531,13 @@ class DataReader(Protocol):
     """
     
     artifact_manager: ArtifactManager|None = None
+    
+    centering_mode: CenteringMode = "coronary_center"
+    """
+    Determines how the centering affine is computed:
+        - "coronary_center": center based on the AABB of the coronary label (default).
+        - "image_center": center based on the geometric center of the image volume shape.
+    """
     
 
     _origin_volume_size: tuple[int, int, int]

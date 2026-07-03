@@ -6,7 +6,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-from .data_reader import DataReader, DataReaderResult, Coronary, load_nifti
+from .data_reader import DataReader, DataReaderResult, Coronary, CenteringMode, load_nifti
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from ... import NUM_TOTAL_PHASE
 from ..cardiac_phase import CardiacPhase
@@ -19,7 +19,8 @@ class VolumesReader(DataReader):
         cavity_dir: Path,
         coronary_dir: Path,
         contrast_simulator: ContrastSimulator,
-        device: torch.device = torch.device("cuda:0")
+        device: torch.device = torch.device("cuda:0"),
+        centering_mode: CenteringMode = "coronary_center"
     ):
         """
         Volume data reader for 4D cardiac MRI.
@@ -41,6 +42,7 @@ class VolumesReader(DataReader):
         self.device = device
         # default contrast simulator: identity
         self.contrast_simulator = contrast_simulator
+        self.centering_mode = centering_mode
         image_file_list = sorted(image_dir.glob("*.nii*"))
         cavity_file_list = sorted(cavity_dir.glob("*.nii*"))
         coronary_file_list = sorted(coronary_dir.glob("*.nii*"))
@@ -76,7 +78,8 @@ class VolumesReader(DataReader):
                 coronary=coronary_label,
                 affine=affine,
                 running_device=self.device,
-                contrast_simulator=self.contrast_simulator
+                contrast_simulator=self.contrast_simulator,
+                centering_mode=self.centering_mode
             ))
         
         # Align coronary centering affine across phases

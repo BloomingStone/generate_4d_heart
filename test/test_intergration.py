@@ -166,3 +166,26 @@ def test_rotate_dsa_integration_with_artifacts(
     assert (output_dir / "rotate_dsa.json").exists()
     assert (output_dir / "label.gif").exists()
     assert (output_dir / "depth_map.gif").exists()
+
+
+@pytest.mark.parametrize("simulator_name", (
+    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST, SimulatorName.FLOW_CONTRAST
+))
+@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
+def test_rotate_dsa_integration_with_artifacts_pig_data(
+    output_root_dir: Path,
+    pig_data_drr: TorchDRR,
+    volume_dvf_dir: Path,
+    simulator_name: SimulatorName,
+    coronary_type: Literal["LCA", "RCA"],
+    artifact_manager: ArtifactManager
+):
+    """RBFReader with artifact_manager + RotateDSA integration."""
+    test_rotate_dsa_integration_with_artifacts(
+        output_root_dir=output_root_dir,
+        simple_drr=pig_data_drr,
+        volume_dvf_dir=volume_dvf_dir,
+        simulator_name=simulator_name,
+        coronary_type=coronary_type,
+        artifact_manager=artifact_manager
+    )

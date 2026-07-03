@@ -4,7 +4,7 @@ from typing import Literal
 import torch
 import numpy as np
 
-from .data_reader import DataReader, DataReaderResult, Coronary, load_nifti
+from .data_reader import DataReader, DataReaderResult, Coronary, CenteringMode, load_nifti
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator, IdentityContrast
 from ..cardiac_phase import CardiacPhase
 from ..types import CoronaryType
@@ -16,7 +16,8 @@ class StaticVolumeReader(DataReader):
         cavity_path: Path,
         coronary_path: Path,
         contrast_simulator: ContrastSimulator,
-        device: torch.device = torch.device("cuda:0")
+        device: torch.device = torch.device("cuda:0"),
+        centering_mode: CenteringMode = "coronary_center"
     ):
         self.volume_nii = volume_path
         self.cavity_nii = cavity_path
@@ -26,6 +27,7 @@ class StaticVolumeReader(DataReader):
         self.device = device
         # default contrast simulator: identity (no change)
         self.contrast_simulator = contrast_simulator
+        self.centering_mode = centering_mode
         
         volume, affine = load_nifti(self.volume_nii)
         assert affine is not None
@@ -41,7 +43,8 @@ class StaticVolumeReader(DataReader):
             coronary=coronary,
             affine=affine,
             running_device=self.device,
-            contrast_simulator=self.contrast_simulator
+            contrast_simulator=self.contrast_simulator,
+            centering_mode=self.centering_mode
         )
 
         self._origin_volume_size = volume.shape[2:]   #type: ignore
@@ -102,7 +105,8 @@ class StaticLabelReader(StaticVolumeReader):
         cavity_path: Path,
         coronary_path: Path,
         contrast_simulator: ContrastSimulator,
-        device: torch.device = torch.device("cuda:0")
+        device: torch.device = torch.device("cuda:0"),
+        centering_mode: CenteringMode = "coronary_center"
     ):
         self.cavity_nii = cavity_path
         self.coronary_nii = coronary_path
@@ -111,6 +115,7 @@ class StaticLabelReader(StaticVolumeReader):
         self.device = device
         # default contrast simulator: identity (no change)
         self.contrast_simulator = contrast_simulator
+        self.centering_mode = centering_mode
         
         self.volume_nii = None  # StaticLabelReader does not use volume data
 
@@ -125,7 +130,8 @@ class StaticLabelReader(StaticVolumeReader):
             coronary=coronary,
             affine=cavity_affine,
             running_device=self.device,
-            contrast_simulator=None
+            contrast_simulator=None,
+            centering_mode=self.centering_mode
         )
         if not self.contrast_simulator.contrast_change_over_time:
             print("Applying STATIC contrast simulation to original volume for StaticLabelReader...")

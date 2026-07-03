@@ -12,6 +12,8 @@ from skimage.morphology import skeletonize
 from .contrast_simulator import ContrastSimulator
 from generate_4d_heart import CavityLabel, MU_WATER, MU_IDODINE, MU_GUIDE_WIRE, MU_MARKER, VesselLabel
 
+
+# TODO 与 Artifacs 重复，需要删除
 @dataclass
 class ClMarkerSimulator(ContrastSimulator):
     """

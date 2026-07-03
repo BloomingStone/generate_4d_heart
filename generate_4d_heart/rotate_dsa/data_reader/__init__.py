@@ -1,4 +1,4 @@
-from .data_reader import DataReader, DataReaderResult
+from .data_reader import DataReader, DataReaderResult, CenteringMode
 from .volume_dvf_reader import VolumeDVFReader, CoronaryBoundLVLinearEnhancer, CoronaryBoundLVEnhancer, MovementEnhancer, CoronarySeprateEnhancer, IdentityMovementEnhancer
 from .volumes_reader import VolumesReader
 from .static_reader import StaticVolumeReader, StaticLabelReader
@@ -18,5 +18,6 @@ __all__ = [
     "IdentityMovementEnhancer",
     "RBFReader",
     "KDTreeRBF",
+    "CenteringMode",
     "invert_displacement_field",
 ]

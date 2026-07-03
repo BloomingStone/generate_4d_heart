@@ -17,7 +17,7 @@ import cupy as cp
 
 from generate_4d_heart.roi import ROI
 from generate_4d_heart.rotate_dsa.data_reader.data_reader import (
-    DataReader, DataReaderResult, Coronary,
+    DataReader, DataReaderResult, Coronary, CenteringMode,
     load_nifti, apply_affine
 )
 from generate_4d_heart.ssm import SSMReader, Landmark
@@ -46,6 +46,8 @@ class RBFReader(DataReader):
     attenuation_transition: float = 5.0
     
     artifact_manager: ArtifactManager | None = None
+    
+    centering_mode: CenteringMode = "coronary_center"
 
     def __post_init__(self):
         print(f"\nInitializing RBFReader with \n\t- volume_nii={self.volume_nii} \n\t- cavity_nii={self.cavity_nii} \n\t- coronary_nii={self.coronary_nii}")
@@ -65,7 +67,8 @@ class RBFReader(DataReader):
         
         print("Initializing origin data...")
         self.origin_data = self._Data.init_from_volume(
-            volume, cavity, coronary, affine, self.device, self.contrast_simulator, self.artifact_manager
+            volume, cavity, coronary, affine, self.device, self.contrast_simulator,
+            self.artifact_manager, centering_mode=self.centering_mode
         )
         
         print("Initializing ROI from cavity and cropping data...")

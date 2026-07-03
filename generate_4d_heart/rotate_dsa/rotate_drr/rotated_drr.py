@@ -14,33 +14,15 @@ class CArmGeometry:
     sdd: MM = 1200             # Source to detector distance
     sod: MM = 760             # Source to object distance
     height: Pixel = 512           # Height of image
-    _width: Pixel | None = None    # Width of image, default to height
+    width: Pixel = 512    # Width of image, default to height
     delx: MMPerPixel = 0.368           # Pixel size in x direction
-    _dely: MMPerPixel | None = None   # Pixel size in y direction, default to delx
+    dely: MMPerPixel = 0.368   # Pixel size in y direction, default to delx
     x0: MM = 0.0             # detector principal point x-offset
     y0: MM = 0.0             # detector principal point y-offset
-    
-    def __post_init__(self):
-        if self._width is None:
-            self._width = self.height
-        if self._dely is None:
-            self._dely = self.delx
-    
-    @property
-    def width(self) -> Pixel:
-        assert self._width is not None
-        return self._width
-    
-    @property
-    def dely(self) -> MMPerPixel:
-        assert self._dely is not None
-        return self._dely
 
     def to_dict(self) -> dict:
-        res = asdict(self)
-        res["width"] = res.pop("_width")
-        res["dely"] = res.pop("_dely")
-        return res
+        return asdict(self)
+    
 
 @dataclass
 class RotatedParameters:

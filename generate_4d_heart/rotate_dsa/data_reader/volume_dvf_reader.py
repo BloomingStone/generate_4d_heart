@@ -23,7 +23,8 @@ from ...roi import ROI
 from ..types import CoronaryType
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
-    DataReader, DataReaderResult, Coronary, separate_coronary, get_coronary_centering_affine,
+    DataReader, DataReaderResult, Coronary, CenteringMode,
+    separate_coronary, get_coronary_centering_affine,
     load_nifti, get_mesh_in_voxel, apply_affine, get_mesh_in_world
 )
 
@@ -234,6 +235,7 @@ class VolumeDVFReader(DataReader):
     movement_enhancer: "None | MovementEnhancer" = None
     recover_cropped_data: bool = True
     precompute_ddf: bool = True
+    centering_mode: CenteringMode = "coronary_center"
     device: torch.device = field(default_factory= lambda: torch.device("cuda:0"))
     
     def __post_init__(self):
@@ -262,7 +264,8 @@ class VolumeDVFReader(DataReader):
             coronary = coronary,
             affine = affine,
             running_device = self.device,
-            contrast_simulator = self.contrast_simulator
+            contrast_simulator = self.contrast_simulator,
+            centering_mode = self.centering_mode
         )
 
         self._origin_volume_size = volume.shape[2:]   #type: ignore
