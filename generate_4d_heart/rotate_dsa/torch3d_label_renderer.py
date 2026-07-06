@@ -24,7 +24,8 @@ class Torch3DLabelRenderer:
         self.raster_settings = RasterizationSettings(
             image_size=(self.height, self.width),
             blur_radius=0.0,
-            faces_per_pixel=1
+            faces_per_pixel=1,
+            bin_size=0,          # naive rasterization for fine geometry (stent struts)
         )
         
         self.artifacts_settings = RasterizationSettings(

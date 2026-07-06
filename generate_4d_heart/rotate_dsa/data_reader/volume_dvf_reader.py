@@ -351,12 +351,12 @@ class VolumeDVFReader(DataReader):
         
         return DataReaderResult(
             phase=phase,
-            cavity_label=cavity.cpu().to(torch.uint8),
+            cavity_label=cavity.to(torch.uint8),
             affine=affine,
             coronary = Coronary(
                 type=coronary_type,
-                volume=volume.cpu().to(torch.float32),
-                label=coronary_label.cpu().to(torch.bool),
+                volume=volume.to(torch.float32),
+                label=coronary_label.to(torch.bool),
                 original_affine=affine,
                 centering_affine=coronary_centering_affine,
                 mesh_original=mesh_original

@@ -242,18 +242,19 @@ class ROI:
             cropped_image: the cropped image, shape = (..., W', H', D')
             background: the background image which has the same shape as original image, if not provided, the background will be zeros
         Returns:
-            torch.Tensor: the recovered image
+            torch.Tensor: the recovered image, on the same device as cropped_image
         """
+        device = cropped_image.device
         if cropped_image.dim() > 3:
             output_shape = (*cropped_image.shape[:-3], *self.original_shape)
         else:
             output_shape = self.original_shape
             
         if background is not None:
-            assert background.shape == output_shape
-            output_data = background.clone()
+            assert background.shape == output_shape, f"background shape {background.shape} != output_shape {output_shape}"
+            output_data = background.to(device=device, copy=True)
         else:
-            output_data = torch.zeros(output_shape, dtype=cropped_image.dtype)
+            output_data = torch.zeros(output_shape, dtype=cropped_image.dtype, device=device)
         
         (x0, x1), (y0, y1), (z0, z1) = self.crop_box
         output_data[..., x0:x1, y0:y1, z0:z1] = cropped_image

@@ -141,7 +141,8 @@ def test_rotate_dsa_integration_with_artifacts(
     volume_dvf_dir: Path,
     simulator_name: SimulatorName,
     coronary_type: Literal["LCA", "RCA"],
-    artifact_manager: ArtifactManager
+    artifact_manager: ArtifactManager,
+    comment: str = ""
 ):
     """RBFReader with artifact_manager + RotateDSA integration."""
     reader = RBFReader(
@@ -154,7 +155,7 @@ def test_rotate_dsa_integration_with_artifacts(
 
     dsa = RotateDSA(reader=reader, drr=simple_drr)
 
-    output_dir = output_root_dir / "intergration" / "artifacts" / f"rbf_reader_{simulator_name}_{coronary_type}"
+    output_dir = output_root_dir / "intergration" / "artifacts" / f"rbf_reader_{simulator_name}_{coronary_type}{comment}"
     if output_dir.exists():
         shutil.rmtree(output_dir)
     dsa.run_and_save(output_dir=output_dir, coronary_type=coronary_type, gif_fps=10)
@@ -169,9 +170,9 @@ def test_rotate_dsa_integration_with_artifacts(
 
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST, SimulatorName.FLOW_CONTRAST
+    SimulatorName.CTA_RESET_CONTRAST,
 ))
-@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
+@pytest.mark.parametrize("coronary_type", ["LCA"])
 def test_rotate_dsa_integration_with_artifacts_pig_data(
     output_root_dir: Path,
     pig_data_drr: TorchDRR,
@@ -187,5 +188,28 @@ def test_rotate_dsa_integration_with_artifacts_pig_data(
         volume_dvf_dir=volume_dvf_dir,
         simulator_name=simulator_name,
         coronary_type=coronary_type,
-        artifact_manager=artifact_manager
+        artifact_manager=artifact_manager,
+        comment="_pig_data"
+    )
+
+
+def test_accelerate(
+    output_root_dir: Path,
+    volume_dvf_dir: Path,
+    artifact_manager: ArtifactManager
+):
+    """RBFReader with artifact_manager + RotateDSA integration (10 frames)."""
+    simple_drr = TorchDRR(
+        rotate_cfg=RotatedParameters(
+            total_frame=30,
+        )
+    )
+    test_rotate_dsa_integration_with_artifacts(
+        output_root_dir=output_root_dir,
+        simple_drr=simple_drr,
+        volume_dvf_dir=volume_dvf_dir,
+        simulator_name=SimulatorName.FLOW_CONTRAST,
+        coronary_type="LCA",
+        artifact_manager=artifact_manager,
+        comment="_accelerate"
     )

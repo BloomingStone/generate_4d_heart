@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Literal, Any
 import json
 import math
+import threading
+import queue
 from concurrent.futures import ProcessPoolExecutor
 
 from tqdm import tqdm
@@ -39,6 +41,7 @@ class RotateDsaOutput:
     depth_maps: np.ndarray
     meta: dict[str, Any]
 
+
 @dataclass
 class RotateDSA:
     reader: DataReader
@@ -54,52 +57,108 @@ class RotateDSA:
         coronary_type: Literal["LCA", "RCA"] = "LCA",
     ) -> RotateDsaOutput:
         """
-        Run whole process of rotate DRR
+        Run whole process of rotate DRR.
+        
+        Two-stage pipeline:
+        1. Batch-render the STATIC (non-warped, preprocessed) volume at all
+           frame angles with a single DRR _setup() call.
+        2. Per frame: render the DIFFERENCE volume (warped_full - static_full)
+           at the same centering affine, then add to the static result.
+           DRR is linear, so static + diff = full warped DRR.
+           Diff is ~sparse (nonzero only in ROI) and clamped ≥ 0 to avoid
+           unphysical brightness from negative line integrals.
+        
         Returns:
             RotateDsaOutput: Contains all generated outputs and metadata
         """
         assert coronary_type in ["LCA", "RCA"]
         total_frame = self.drr.rotate_cfg.total_frame
         w, h = self.drr.image_size
-        frames = torch.zeros(total_frame, w, h).to(torch.float32)
+        device = self.drr.device
+
+        # Pre-allocate results on GPU
+        frames = torch.zeros(total_frame, w, h, device=device, dtype=torch.float32)
         labels = np.zeros((total_frame, w, h), dtype=np.uint8)
         depth_maps = np.zeros((total_frame, w, h), dtype=np.float32)
-        for f in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
-            phase = self._get_phase_at_frame(f)
-            time = f / self.drr.rotate_cfg.fps
-            read_res = self.reader.get_data(phase, coronary_type, time).to_device(self.drr.device)
+
+        # ── Stage 1: Batch-render static volume (WITH ROI) at all angles ──
+        # Static provides the full background. Per-frame diff fills in ROI changes.
+        static_vol, centering_affine, _roi_mask = self.reader.get_static_data(coronary_type)
+        static_vol_gpu = static_vol.to(device)
+        empty_coronary = torch.zeros_like(static_vol_gpu, dtype=torch.bool)
+        static_frames = self.drr.get_projections_at_frames(
+            list(range(total_frame)),
+            volume=static_vol_gpu,
+            coronary=empty_coronary,
+            affine=centering_affine,
+        )
+        if static_frames.dim() == 3 and static_frames.shape[1] == 1:
+            static_frames = static_frames.squeeze(1)
+
+        # ── Stage 2: Per-frame render difference volume (warped - static) ──
+        # diff = warped_full - static_full  →  nonzero only inside ROI (sparse)
+        # static_frames + DRR(diff) = DRR(warped_full)  (by linearity of line integrals)
+        task_queue: queue.Queue = queue.Queue(maxsize=2)
+
+        def _producer():
+            try:
+                for f in range(total_frame):
+                    phase = self._get_phase_at_frame(f)
+                    time = f / self.drr.rotate_cfg.fps
+                    read_res = self.reader.get_data(phase, coronary_type, time)
+                    task_queue.put((f, read_res))
+            except Exception as e:
+                task_queue.put(e)
+            finally:
+                task_queue.put(None)
+
+        prod_thread = threading.Thread(target=_producer, daemon=True)
+        prod_thread.start()
+
+        for _ in tqdm(range(total_frame), desc="Generating Rotate DSA..."):
+            item = task_queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+
+            f, read_res = item
             coronary = read_res.coronary
-            
+
+            # diff = warped_full - static_full  (nonzero only inside ROI, sparse)
+            # Clip negative values: motion can reduce density locally, but
+            # negative line integrals → exp(-negative) > 1 (unphysical bright artifact)
+            diff_vol = (coronary.volume - static_vol_gpu).clamp(min=0.0)
+
             drr_res = self.drr.get_projection_at_frame(
                 frame=f,
-                volume=coronary.volume,
+                volume=diff_vol,
                 coronary=coronary.label,
-                affine=coronary.centering_affine
+                affine=coronary.centering_affine,
             )
-            
-            label, depth_map = self.label_plotter.render_silhouette_depth(
-                coronary.mesh_centering,
-                *self.drr.get_R_T_at_frame(f)
-            )
-            labels[f] = label
-            depth_maps[f] = depth_map
 
-            # Render artifact line integrals (if any) and add to DRR
-            artifacts_centering = coronary.artifacts_centering
-            if artifacts_centering is not None and len(artifacts_centering) > 0:
+            l, dm = self.label_plotter.render_silhouette_depth(
+                coronary.mesh_centering,
+                *self.drr.get_R_T_at_frame(f),
+            )
+            labels[f] = l
+            depth_maps[f] = dm
+
+            artifacts = coronary.artifacts_centering
+            if artifacts is not None and len(artifacts) > 0:
                 art_integral = self.label_plotter.render_line_integral(
-                    artifacts_centering,
-                    *self.drr.get_R_T_at_frame(f)
+                    artifacts,
+                    *self.drr.get_R_T_at_frame(f),
                 )
                 drr_res += torch.from_numpy(art_integral)[None][None].to(drr_res.device)
-            
-            
-            if frames.device != drr_res.device:
-                frames = frames.to(drr_res.device)
-            frames[f] = drr_res
-        
-        # Beer-Lambert: line integral (I = \int mu dx) → intensity. (I = I0 * exp(-\int mu dx))
-        frames = torch.exp( - frames)
+
+            # static_no_roi + diff → background outside ROI + dynamic change inside ROI
+            frames[f] = static_frames[f] + drr_res
+
+        prod_thread.join()
+
+        # Beer-Lambert: line integral → intensity
+        frames = torch.exp(-frames)
         vis_frames, post_process_meta = postprocess_drr(frames)
 
         return RotateDsaOutput(
@@ -116,27 +175,58 @@ class RotateDSA:
         coronary_type: Literal["LCA", "RCA"] = "LCA"
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Run whole process of rotate DRR
+        Run whole process of rotate DRR (labels + depth only, no X-ray projection).
+        
+        Uses a producer thread for data loading and the main thread for GPU rendering,
+        with a bounded queue (maxsize=2) for pipelined parallelism.
+        
         Returns:
-            np.ndarray: coroanry labels, shape is the same as DRR images, 0: background, 1: coronary
+            np.ndarray: coronary labels, shape is the same as DRR images, 0: background, 1: coronary
             np.ndarray: depth masks, shape is the same as DRR images, nan for background, depth value for coronary
         """
         assert coronary_type in ["LCA", "RCA"]
         total_frame = self.drr.rotate_cfg.total_frame
         w, h = self.drr.image_size
+
         labels = np.zeros((total_frame, w, h), dtype=np.uint8)
         depth_maps = np.zeros((total_frame, w, h), dtype=np.float32)
-        for f in tqdm(range(total_frame), desc="Generating Rotate DSA without DRR..."):
-            phase = self._get_phase_at_frame(f)
-            read_res = self.reader.get_data(phase, coronary_type).to_device(self.drr.device)
-            
-            label, depth_map = label, depth_map = self.label_plotter.render_silhouette_depth(
-                read_res.coronary.mesh_centering,
-                *self.drr.get_R_T_at_frame(f)
+
+        task_queue: queue.Queue = queue.Queue(maxsize=2)
+
+        # --- Producer thread: read data ---
+        def _producer():
+            try:
+                for f in range(total_frame):
+                    phase = self._get_phase_at_frame(f)
+                    read_res = self.reader.get_data(phase, coronary_type)
+                    task_queue.put((f, read_res))
+            except Exception as e:
+                task_queue.put(e)
+            finally:
+                task_queue.put(None)
+
+        prod_thread = threading.Thread(target=_producer, daemon=True)
+        prod_thread.start()
+
+        # --- Consumer (main thread): render labels + depth on GPU ---
+        for _ in tqdm(range(total_frame), desc="Generating Rotate DSA without DRR..."):
+            item = task_queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+
+            f, read_res = item
+            coronary = read_res.coronary
+
+            l, dm = self.label_plotter.render_silhouette_depth(
+                coronary.mesh_centering,
+                *self.drr.get_R_T_at_frame(f),
             )
-            labels[f] = label
-            depth_maps[f] = depth_map
-        
+            labels[f] = l
+            depth_maps[f] = dm
+
+        prod_thread.join()
         return labels, depth_maps
     
     

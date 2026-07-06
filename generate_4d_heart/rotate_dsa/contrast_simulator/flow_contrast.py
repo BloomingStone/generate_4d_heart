@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import heapq
-import hashlib
 import warnings
 import logging
 
@@ -67,7 +66,7 @@ class FlowContrast(ContrastSimulator):
 
     _cached_start_voxel: tuple[int, int, int] | None = field(default=None, init=False, repr=False)
     _cached_distance_map: torch.Tensor | None = field(default=None, init=False, repr=False)
-    _cached_cor_hash: str | None = field(default=None, init=False, repr=False)   # if coronary label changes, cached skeleton and distance map should be invalidated
+    _cached_cor_label: torch.Tensor | None = field(default=None, init=False, repr=False)   # cached coronary label for invalidation
 
     device: torch.device = field(default=torch.device("cpu"), init=False, repr=False)
 
@@ -107,7 +106,7 @@ class FlowContrast(ContrastSimulator):
         # reinit cached values as the preprocess step is usually called before simulate_with_time, and the coronary label may change between different calls of preprocess.
         self._cached_start_voxel = None
         self._cached_distance_map = None
-        self._cached_cor_hash = None
+        self._cached_cor_label = None
         
         return density
 
@@ -135,14 +134,17 @@ class FlowContrast(ContrastSimulator):
         coronary_label = coronary_label.squeeze()
         coronary_label = (coronary_label > 0).contiguous()
         
-        # Check if coronary label has changed since last call, if so invalidate cached skeleton and distance map
-        current_cor_hash = hashlib.md5(coronary_label.cpu().numpy().tobytes()).hexdigest()
-
-        if current_cor_hash != self._cached_cor_hash:
-            # Coronary label has changed, invalidate cached skeleton and distance map
+        # Check if coronary label has changed since last call, if so invalidate cached skeleton and distance map.
+        # Comparison done directly on GPU to avoid CPU transfer.
+        label_changed = (
+            self._cached_cor_label is None
+            or self._cached_cor_label.shape != coronary_label.shape
+            or not torch.equal(coronary_label, self._cached_cor_label)
+        )
+        if label_changed:
             self._cached_distance_map = None
             self._cached_start_voxel = None
-            self._cached_cor_hash = current_cor_hash
+            self._cached_cor_label = coronary_label.clone()
 
         # Compute distance map from coronary voxels to start voxel along the skeleton, then apply time-density model 
         # to get coronary density, and merge with baseline for output

@@ -149,6 +149,24 @@ class TorchDRR(RotateDRR):
         return drr_img
     
     
+    def get_projections_at_frames(
+        self,
+        frames: list[int],
+        volume: torch.Tensor,
+        coronary: torch.Tensor,
+        affine: np.ndarray,
+    ) -> torch.Tensor:
+        """
+        Batch-render DRR at multiple frames with a single _setup().
+        Returns shape (N, H, W), line integrals.
+        """
+        self._setup(volume, coronary, affine)
+        rotations = torch.tensor(
+            [self.rotate_cfg.get_rotaiton_radian_at_frame(f) for f in frames],
+            device=self.device,
+        )
+        return self._get_projection_after_setup(rotations)
+
     def get_projection_at_frame(
         self, 
         frame: int,
@@ -202,17 +220,6 @@ class TorchDRR(RotateDRR):
         
         return self._get_projection_after_setup(rotations)
     
-    
-    def get_projections_at_frames(
-        self,
-        frames: list[int],
-        volume: torch.Tensor,
-        coronary: torch.Tensor,
-        affine: np.ndarray,
-        make_center_at_coronary: bool = True
-    ) -> torch.Tensor:
-        ...
-        raise NotImplementedError() # TODO
     
     def get_additional_config(self) -> dict:
         return {

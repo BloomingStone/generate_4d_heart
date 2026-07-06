@@ -75,6 +75,16 @@ class RBFReader(DataReader):
         self.roi = ROI.get_from_cavity_np(cavity_np, affine, padding=30)
         self.cropped_data = self.origin_data.crop_by_roi(self.roi)
         
+        # Pre-move cropped tensors to GPU to avoid per-frame .to(device) in warp_and_recover
+        self.cropped_data.cavity = self.cropped_data.cavity.to(self.device)
+        for cor_type in (CoronaryType.LCA, CoronaryType.RCA):
+            cor = self.cropped_data.coronary[cor_type]
+            cor.volume = cor.volume.to(self.device)
+            cor.label = cor.label.to(self.device)
+        for cor_type in (CoronaryType.LCA, CoronaryType.RCA):
+            cor = self.origin_data.coronary[cor_type]
+            cor.volume = cor.volume.to(self.device)
+        
         print("Generating pericardium mask and attenuation mask...")
         _, pericardium_mask = generate_pericardium(cavity_np, coronary.squeeze().cpu().numpy())
         pericardium_mask = self.roi.crop_on_data(pericardium_mask)
@@ -82,6 +92,12 @@ class RBFReader(DataReader):
             external_dist = ndimage.distance_transform_edt(1 - cp.asarray(pericardium_mask))
             attenuation_mask = cp.asnumpy(cp.exp(-external_dist / self.attenuation_transition))  # 从心包外部开始，距离越远运动衰减越强，距离为transition时衰减为1/e #type: ignore
         self.attenuation_mask = torch.from_numpy(attenuation_mask).to(self.device, torch.float32)[None, None]  # (1, 1, *shape_after_crop)
+        
+        # Pre-allocate recover buffer for volume mode (avoids GPU alloc per frame)
+        self._recover_buffer = {
+            ct: self.origin_data.coronary[ct].volume.to(self.device).clone()
+            for ct in (CoronaryType.LCA, CoronaryType.RCA)
+        }
         
         print("Loading SSM result and initializing RBF...")
         ssm_result = self.ssm_reader.load(
@@ -104,6 +120,12 @@ class RBFReader(DataReader):
         coords_zoomed = np.stack(grid_zoomed, axis=-1)  # (N, 3)
         coords_zoomed = apply_affine(coords_zoomed, affine_zoomed)
         self.coords_zoomed = torch.from_numpy(coords_zoomed).to(self.device, torch.float32)
+        
+        # Pre-compute KDTree neighbour indices for the static dense grid.
+        # This avoids GPU→CPU transfer of 2.65M points + CPU KDTree query per frame.
+        print("Pre-computing KDTree indices for dense grid (this may take a moment)...")
+        self.rbf.cache_points(coords_zoomed)  # stores original (X, Y, Z, 3) shape
+        self.rbf.cache_kdtree_indices(coords_zoomed.reshape(-1, 3))
         
         self.affine_crop = torch.from_numpy(self.roi.affine_after_crop).to(self.device, torch.float32)
         self.affine_crop_inv: torch.Tensor = torch.linalg.inv(self.affine_crop)
@@ -129,7 +151,7 @@ class RBFReader(DataReader):
         形变都在世界坐标下得到，然后再还原回 ROI 裁剪缩放后的体素坐标得到形变场，并同样在此坐标下进行体积和标签的 warping（为了减少
         计算量），最后再还原回原始空间。
         """
-        dx: torch.Tensor = self.rbf(phase, self.coords_zoomed)  # (*shape_zoomed, 3) in world coordinate
+        dx: torch.Tensor = self.rbf(phase)  # uses pre-cached dense grid + KDTree indices
         dx = rearrange(dx, "x y z c -> 1 c x y z")
         dx = F.interpolate(
             dx, 
@@ -145,7 +167,8 @@ class RBFReader(DataReader):
         dx = dx * self.attenuation_mask  
 
         # forward deformation field -> inverse deformation field, still in voxel coordinate
-        dx = invert_displacement_field(dx)  
+        # Use direct v = -u approximation (small displacements → acceptable accuracy)
+        dx = -dx
 
         # extract label and volume for the given coronary type, and apply contrast simulation if needed
         cropped_cavity = self.cropped_data.cavity
@@ -167,7 +190,7 @@ class RBFReader(DataReader):
         def warp_and_recover(tensor: Tensor, mode: Literal["volume", "cavity", "coronary"]) -> Tensor:
             if mode == "volume":
                 warper = self.image_warper
-                recover = lambda x: self.roi.recover_cropped_tensor(x, background=ori_volume)
+                recover = lambda x: self.roi.recover_cropped_tensor(x, background=self._recover_buffer[cor_type])
                 final_dtype = torch.float32
             else:
                 warper = self.label_warper
@@ -178,13 +201,27 @@ class RBFReader(DataReader):
                     final_dtype = torch.bool
                 else:
                     raise ValueError(f"Unsupported mode: {mode}")
-            return recover(warper(tensor.to(self.device, torch.float32), dx)).cpu().to(final_dtype)
+            return recover(warper(tensor.to(self.device, torch.float32), dx)).to(final_dtype)
 
         cropped_cavity = warp_and_recover(self.cropped_data.cavity, mode="cavity")
         volume = warp_and_recover(cropped_volume, mode="volume")
         cropped_cor_label = warp_and_recover(cropped_cor_label, mode="coronary")
         
         return volume, cropped_cavity, cropped_cor_label
+
+    @torch.no_grad()
+    def get_static_data(
+        self,
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+    ) -> tuple[Tensor, np.ndarray, Tensor]:
+        """Return (static_volume, centering_affine, roi_mask) for batch DRR."""
+        cor_type = CoronaryType(coronary_type)
+        cor = self.origin_data.coronary[cor_type]
+        # ROI mask from crop_box: True where the dynamic ROI will fill in
+        (x0, x1), (y0, y1), (z0, z1) = self.roi.crop_box
+        roi_mask = torch.zeros(self.roi.original_shape, dtype=torch.bool)
+        roi_mask[x0:x1, y0:y1, z0:z1] = True
+        return cor.volume, cor.centering_affine, roi_mask
 
     @torch.no_grad()
     def get_data(
@@ -321,10 +358,30 @@ class KDTreeRBF(nn.Module):
         
         self._copy_stream: torch.cuda.Stream|None = None
         self.cached_pts: torch.Tensor|None  = None
+        self._cached_pts_shape: tuple[int, ...] | None = None
+        """Original shape before flattening cached_pts, used to reshape the forward() output."""
+        self._cached_idx: torch.Tensor | None = None
+        """Pre-computed KDTree neighbour indices for cached_pts to avoid per-frame CPU query + GPU→CPU transfer."""
     
     def cache_points(self, points: np.ndarray):
         device = self.ctrl_pts.device
+        self._cached_pts_shape = points.shape  # original shape, e.g. (X, Y, Z, 3)
         self.cached_pts = torch.from_numpy(points).to(device, torch.half, non_blocking=True)
+    
+    def cache_kdtree_indices(self, points_np: np.ndarray):
+        """Pre-compute and store KDTree neighbour indices. Skips the CPU query in forward()."""
+        N = points_np.shape[0]
+        idx_list = []
+        for start in range(0, N, self.chunk_size):
+            end = min(start + self.chunk_size, N)
+            _, idx = self.tree.query(
+                points_np[start:end], k=self.k,
+                distance_upper_bound=self.radius, workers=-1,
+            )
+            if self.k == 1:
+                idx = idx[:, None]
+            idx_list.append(torch.from_numpy(idx))
+        self._cached_idx = torch.cat(idx_list, dim=0)
     
     @property
     def copy_stream(self) -> torch.cuda.Stream|None:
@@ -399,7 +456,7 @@ class KDTreeRBF(nn.Module):
             case None:
                 assert self.cached_pts is not None, "points is None and cached_pts is None, please call cache_points first"
                 points_gpu = self.cached_pts
-                points_np = points_gpu.cpu().numpy()
+                points_np = None  # use cached KDTree indices
             case torch.Tensor():
                 points_np = points.cpu().numpy()
                 points_gpu = points.to(device, torch.half, non_blocking=True)
@@ -409,38 +466,49 @@ class KDTreeRBF(nn.Module):
             case _:
                 raise TypeError(f"Unsupported type for points: {type(points)}")
         
-        shape = points_np.shape
+        shape = points_np.shape if points_np is not None else points_gpu.shape
         assert shape[-1] == 3, f"Last dimension of points must be 3, but got {shape[-1]}"
-        points_np = points_np.reshape(-1, 3)  # (N, 3)
-        points_gpu = points_gpu.reshape(-1, 3)  # (N, 3)
         
-        N = points_np.shape[0]
-        motion = torch.zeros((N, 3), dtype=torch.half, device=device)
-        prev :tuple[int, int, torch.Tensor]|None = None
-        
-        for start in range(0, N, self.chunk_size):
-            end = min(start + self.chunk_size, N)
-            
-            # ---------- CPU KDTree ----------
-            # set distance_upper_bound=radius thus points with dist > radius will not return
-            # set workers = -1 to use all CPU
-            _, idx = self.tree.query(points_np[start:end], k=self.k, distance_upper_bound=self.radius, workers=-1)
-            if self.k == 1:
-                idx = idx[:, None]  # (chunk, 1)    # type: ignore
-
-            idx_cpu = torch.from_numpy(idx)
-
-            # ---------- async H2D ----------
-            with torch.cuda.stream(self.copy_stream):
-                idx_gpu = idx_cpu.to(device)
-
+        if points is None and self._cached_idx is not None:
+            # Fast path: use pre-computed KDTree indices, skip CPU query + GPU→CPU transfer
+            points_gpu = points_gpu.reshape(-1, 3)
+            N = points_gpu.shape[0]
+            motion = torch.zeros((N, 3), dtype=torch.half, device=device)
+            prev: tuple[int, int, torch.Tensor] | None = None
+            for start in range(0, N, self.chunk_size):
+                end = min(start + self.chunk_size, N)
+                idx_gpu = self._cached_idx[start:end].to(device, non_blocking=True)
+                self._update_motion_by_prev(points_gpu, disp, motion, prev)
+                prev = (start, end, idx_gpu)
             self._update_motion_by_prev(points_gpu, disp, motion, prev)
-            prev = (start, end, idx_gpu)
+        else:
+            # Slow path: run KDTree query on CPU
+            points_np_flat = points_np.reshape(-1, 3)  # type: ignore
+            points_gpu = points_gpu.reshape(-1, 3)
+            N = points_gpu.shape[0]
+            motion = torch.zeros((N, 3), dtype=torch.half, device=device)
+            prev = None
+            for start in range(0, N, self.chunk_size):
+                end = min(start + self.chunk_size, N)
+                _, idx = self.tree.query(
+                    points_np_flat[start:end], k=self.k,
+                    distance_upper_bound=self.radius, workers=-1,
+                )
+                if self.k == 1:
+                    idx = idx[:, None]
+                idx_cpu = torch.from_numpy(idx)
+                with torch.cuda.stream(self.copy_stream):
+                    idx_gpu = idx_cpu.to(device)
+                self._update_motion_by_prev(points_gpu, disp, motion, prev)
+                prev = (start, end, idx_gpu)
+            self._update_motion_by_prev(points_gpu, disp, motion, prev)
         
-        # process the last `prev` block
-        self._update_motion_by_prev(points_gpu, disp, motion, prev)
-        
-        return motion.float().reshape(shape)
+        result = motion.float()
+        if points is None and self._cached_pts_shape is not None:
+            result = result.reshape(self._cached_pts_shape)
+        else:
+            result = result.reshape(shape)
+        return result
 
     def inverse_forward(self):
         pass

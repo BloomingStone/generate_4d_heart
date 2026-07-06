@@ -551,6 +551,19 @@ class DataReader(Protocol):
     ) -> DataReaderResult:
         ...
 
+    def get_static_data(
+        self,
+        coronary_type: CoronaryType | Literal["LCA", "RCA"],
+    ) -> tuple[Tensor, ndarray, Tensor]:
+        """
+        Return (static_volume, centering_affine, roi_mask) for batch DRR rendering.
+        - static_volume: preprocessed but WITHOUT time-varying contrast or motion warping
+        - centering_affine: world affine that centers the coronary at the origin
+        - roi_mask: bool tensor (same shape as volume), True = region that will be
+          filled by the dynamic ROI (to be zeroed out in the static for correct addition).
+        """
+        ...
+
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         ...
     
