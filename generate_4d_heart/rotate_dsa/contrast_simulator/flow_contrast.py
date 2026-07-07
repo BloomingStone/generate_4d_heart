@@ -12,7 +12,7 @@ import cupy as cp
 
 from generate_4d_heart import CavityLabel, MU_IDODINE, MU_WATER, VesselLabel
 
-from .contrast_simulator import ContrastSimulator
+from .contrast_simulator import ContrastSimulator, Hu2MuContrast
 from .multipli_contrast import CtaResetContrast
 
 from skimage.morphology import skeletonize
@@ -63,6 +63,8 @@ class FlowContrast(ContrastSimulator):
     t_out: float = 2.7
     alpha: float = 5.0
     beta: float = 1.5   # controls how velocity changes with vessel radius, v ~ (r/r0)^beta
+    
+    preprocess_contrast: Hu2MuContrast|CtaResetContrast = field(default_factory=lambda: Hu2MuContrast(mu_water_dsa=MU_WATER, mu_idodine=MU_IDODINE), init=False, repr=False)
 
     _cached_start_voxel: tuple[int, int, int] | None = field(default=None, init=False, repr=False)
     _cached_distance_map: torch.Tensor | None = field(default=None, init=False, repr=False)
@@ -88,27 +90,13 @@ class FlowContrast(ContrastSimulator):
         affine: np.ndarray,
     ) -> torch.Tensor:
         """Return baseline attenuation map (no coronary iodine applied)."""
-        density = ori_volume.clone().to(torch.float32)
-        density = density / 1000.0 * self.mu_water_dsa + self.mu_water_dsa
-
-        cavity = cavity_label.squeeze().to(torch.uint8)
-
-        masked_volume = ori_volume.squeeze()[cavity == CavityLabel.LA]
-        if masked_volume.numel() > 0:
-            v_min = torch.quantile(masked_volume, 0.1 / 100)
-            v_max = torch.quantile(masked_volume, 99.9 / 100)
-            threshold_mask = (ori_volume.squeeze() > v_min) & (ori_volume.squeeze() < v_max)
-            density.squeeze()[cavity > 0] = self.mu_water_dsa
-            density.squeeze()[threshold_mask] = self.mu_water_dsa
-
-        density.squeeze()[ori_volume.squeeze() < -2000] = 0.0
         
         # reinit cached values as the preprocess step is usually called before simulate_with_time, and the coronary label may change between different calls of preprocess.
         self._cached_start_voxel = None
         self._cached_distance_map = None
         self._cached_cor_label = None
         
-        return density
+        return self.preprocess_contrast.preprocess(ori_volume, cavity_label, affine)
 
     def simulate_with_time(
         self,

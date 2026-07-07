@@ -352,7 +352,7 @@ class VolumeDVFReader(DataReader):
         return DataReaderResult(
             phase=phase,
             cavity_label=cavity.to(torch.uint8),
-            affine=affine,
+            cavity_affine=affine,
             coronary = Coronary(
                 type=coronary_type,
                 volume=volume.to(torch.float32),

@@ -110,7 +110,7 @@ class VolumesReader(DataReader):
         return DataReaderResult(
             phase=phase,
             cavity_label=data.cavity.cpu().to(torch.uint8),
-            affine=self._origin_volume_affine,
+            cavity_affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
                 volume=volume.cpu(),
@@ -170,7 +170,7 @@ class VolumesReader(DataReader):
         return DataReaderResult(
             phase=phase,
             cavity_label=cavity.cpu().to(torch.uint8),
-            affine=self._origin_volume_affine,
+            cavity_affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=coronary_type,
                 volume=vol_interp.cpu(),

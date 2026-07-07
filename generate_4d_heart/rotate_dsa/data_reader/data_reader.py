@@ -180,11 +180,15 @@ def get_mesh_in_voxel(label: Tensor,max_points: int|None=10000) -> pv.PolyData:
     label_np = (label_np>0.5).astype(np.uint8)
     mesh: pv.PolyData = pv.wrap(label_np)\
         .contour([1], method='flying_edges')\
-        .triangulate().smooth_taubin().clean()
+        .triangulate().smooth_taubin().clean().triangulate()  # type: ignore
     
     if max_points is not None and mesh.n_points > max_points:
         decimate_rate = max_points / mesh.n_points
-        mesh = mesh.decimate_pro(reduction=decimate_rate, preserve_topology=True, feature_angle=30.0)  #type: ignore
+        try:
+            mesh = mesh.decimate_pro(reduction=decimate_rate, preserve_topology=True, feature_angle=30.0)  #type: ignore
+        except:
+            print(f"Warning: mesh decimation failed, returning original mesh with {mesh.n_points} points (max_points={max_points})")
+            pass
     return mesh
 
 def get_mesh_in_world(label: Tensor, affine: ndarray, max_points: int|None=10000) -> pv.PolyData:
@@ -266,16 +270,16 @@ class Coronary:
     
     def get_coronary_central_line(
         self, 
-        coordinate_system: Literal["world", "voxel", "coronary_centering"] = "coronary_centering"
+        coordinate_system: Literal["world", "voxel", "centering"] = "centering"
     ) -> ndarray:
         """
         Get the central line of the coronary in world coordinate
         
         Args:
-            coordinate_system (Literal["world", "voxel", "coronary_centering"]): coordinate system: 
+            coordinate_system (Literal["world", "voxel", "centering"]): coordinate system: 
                 "world": world coordinate, xyz = nii_volume_affine @ voxel_coordinate
                 "voxel": voxel coordinate
-                "coronary_centering": coronary centering coordinate that put the coronary at the ordinate of the world coordinate
+                "centering": coronary centering coordinate that put the coronary at the ordinate of the world coordinate
         
         Returns:
             central_line (ndarray): central line in world coordinate, shape: (N, 3)
@@ -285,7 +289,7 @@ class Coronary:
                 affine = self.original_affine
             case "voxel":
                 affine = np.eye(4)
-            case "coronary_centering":
+            case "centering":
                 affine = self.centering_affine
             case _:
                 raise ValueError(f"Invalid coordinate system: {coordinate_system}")
@@ -313,7 +317,7 @@ class DataReaderResult:
     """ Holds the result of reading data for a specific phase. Labels are int8 tensors. tensors are in shape (B=1, C=1, D, H, W)."""
     phase: CardiacPhase
     cavity_label: Tensor
-    affine: ndarray
+    cavity_affine: ndarray
     
     coronary: Coronary
     
@@ -325,7 +329,7 @@ class DataReaderResult:
         assert self.cavity_label.dtype == torch.uint8, "Cavity label must be of type int8"
         assert self.coronary.label.dtype == torch.bool, "LCA label must be of type bool"
         
-        assert np.allclose(self.coronary.original_affine, self.affine), "Coronary original affine must match DataReaderResult affine"
+        assert np.allclose(self.coronary.original_affine, self.cavity_affine), "Coronary original affine must match DataReaderResult affine"
     
     
     def to_device(self, device: torch.device) -> "DataReaderResult":
@@ -333,7 +337,7 @@ class DataReaderResult:
         return DataReaderResult(
             self.phase,
             self.cavity_label.to(device),
-            self.affine, 
+            self.cavity_affine, 
             self.coronary.to_device(device)
         )
     
@@ -345,7 +349,7 @@ class DataReaderResult:
         save_mesh: bool = False,
         save_central_line: bool = False,
         save_meta: bool = False,
-        coordinate_system: Literal["world", "voxel", "coronary_centering"] = "coronary_centering"
+        coordinate_system: Literal["world", "voxel", "centering"] = "centering"
     ) -> dict[str, Any]:
         """
         Save data to the specified directory
@@ -356,10 +360,10 @@ class DataReaderResult:
             save_mesh (bool): whether to save coronary mesh as .vtp file
             save_central_line (bool): whether to save coronary central line as .npz file
             save_meta (bool): whether to save meta information as json file
-            coordinate_system (Literal["world", "voxel", "coronary_centering"]): coordinate system for saved data
+            coordinate_system (Literal["world", "voxel", "centering"]): coordinate system for saved data
                 - "world": world coordinate, xyz = nii_volume_affine @ voxel_coordinate, affine will be the original affine of the nii volume
                 - "voxel": voxel coordinate, affine will be identity matrix
-                - "coronary_centering": coronary centering coordinate that put the coronary at the ordinate of the world coordinate, 
+                - "centering": coronary centering coordinate that put the coronary at the ordinate of the world coordinate, 
                 affine will be the centering affine of the coronary
         Returns:
             meta (dict): meta information of saving, includes phase, coronary type, and coordinate system
@@ -380,7 +384,7 @@ class DataReaderResult:
             case "voxel":
                 mesh = self.coronary.mesh_in_voxel
                 affine = np.eye(4)
-            case "coronary_centering":
+            case "centering":
                 mesh = self.coronary.mesh_centering
                 affine = self.coronary.centering_affine
             case _:
@@ -518,6 +522,14 @@ class DataReader(Protocol):
         def rca(self) -> Coronary:
             return self.coronary[CoronaryType.RCA]
         
+        def to_device(self, device: torch.device) -> "DataReader._Data":
+            return DataReader._Data(
+                affine=self.affine,
+                cavity=self.cavity.to(device),
+                coronary={cor_type: cor.to_device(device) for cor_type, cor in self.coronary.items()}
+            )
+
+        
     # end of _Data class
     
     n_phases: int
@@ -554,13 +566,12 @@ class DataReader(Protocol):
     def get_static_data(
         self,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
-    ) -> tuple[Tensor, ndarray, Tensor]:
+    ) -> list[tuple[Tensor, ndarray, ndarray | None]]:
         """
-        Return (static_volume, centering_affine, roi_mask) for batch DRR rendering.
-        - static_volume: preprocessed but WITHOUT time-varying contrast or motion warping
-        - centering_affine: world affine that centers the coronary at the origin
-        - roi_mask: bool tensor (same shape as volume), True = region that will be
-          filled by the dynamic ROI (to be zeroed out in the static for correct addition).
+        Return list of (volume, affine, roi_aabb) for layered batch DRR rendering.
+        Layers are rendered front-to-back; each layer's roi_aabb marks the region
+        (in voxel coords of that volume) that the next layer will cover.
+        See RBFReader.get_static_data for details.
         """
         ...
 

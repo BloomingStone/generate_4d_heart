@@ -48,6 +48,13 @@ class RBFReader(DataReader):
     artifact_manager: ArtifactManager | None = None
     
     centering_mode: CenteringMode = "coronary_center"
+    
+    background_nii: Path | None = None
+    """
+    Optional whole-chest background CT (same world coordinates as volume_nii).
+    If provided, used as the first static layer for DRR.
+    The region occupied by volume_nii is zeroed out to avoid double-counting.
+    """
 
     def __post_init__(self):
         print(f"\nInitializing RBFReader with \n\t- volume_nii={self.volume_nii} \n\t- cavity_nii={self.cavity_nii} \n\t- coronary_nii={self.coronary_nii}")
@@ -76,14 +83,8 @@ class RBFReader(DataReader):
         self.cropped_data = self.origin_data.crop_by_roi(self.roi)
         
         # Pre-move cropped tensors to GPU to avoid per-frame .to(device) in warp_and_recover
-        self.cropped_data.cavity = self.cropped_data.cavity.to(self.device)
-        for cor_type in (CoronaryType.LCA, CoronaryType.RCA):
-            cor = self.cropped_data.coronary[cor_type]
-            cor.volume = cor.volume.to(self.device)
-            cor.label = cor.label.to(self.device)
-        for cor_type in (CoronaryType.LCA, CoronaryType.RCA):
-            cor = self.origin_data.coronary[cor_type]
-            cor.volume = cor.volume.to(self.device)
+        self.origin_data = self.origin_data.to_device(self.device)
+        self.cropped_data = self.cropped_data.to_device(self.device)
         
         print("Generating pericardium mask and attenuation mask...")
         _, pericardium_mask = generate_pericardium(cavity_np, coronary.squeeze().cpu().numpy())
@@ -92,12 +93,6 @@ class RBFReader(DataReader):
             external_dist = ndimage.distance_transform_edt(1 - cp.asarray(pericardium_mask))
             attenuation_mask = cp.asnumpy(cp.exp(-external_dist / self.attenuation_transition))  # 从心包外部开始，距离越远运动衰减越强，距离为transition时衰减为1/e #type: ignore
         self.attenuation_mask = torch.from_numpy(attenuation_mask).to(self.device, torch.float32)[None, None]  # (1, 1, *shape_after_crop)
-        
-        # Pre-allocate recover buffer for volume mode (avoids GPU alloc per frame)
-        self._recover_buffer = {
-            ct: self.origin_data.coronary[ct].volume.to(self.device).clone()
-            for ct in (CoronaryType.LCA, CoronaryType.RCA)
-        }
         
         print("Loading SSM result and initializing RBF...")
         ssm_result = self.ssm_reader.load(
@@ -123,9 +118,50 @@ class RBFReader(DataReader):
         
         # Pre-compute KDTree neighbour indices for the static dense grid.
         # This avoids GPU→CPU transfer of 2.65M points + CPU KDTree query per frame.
-        print("Pre-computing KDTree indices for dense grid (this may take a moment)...")
+        print("Pre-computing KDTree indices for dense grid...")
         self.rbf.cache_points(coords_zoomed)  # stores original (X, Y, Z, 3) shape
         self.rbf.cache_kdtree_indices(coords_zoomed.reshape(-1, 3))
+        
+        # ── Load and preprocess optional background ──
+        self._background_volume: Tensor | None = None
+        self._background_affine: np.ndarray | None = None
+        self._background_roi_aabb: np.ndarray | None = None  # volume_nii's AABB in bg voxel coords
+        if self.background_nii is not None:
+            print(f"Loading background from {self.background_nii}...")
+            bg_vol, bg_affine = load_nifti(self.background_nii)  # (1,1,D,H,W)
+            # Apply preprocessing (dummy cavity label = zeros)
+            dummy_cavity = torch.zeros_like(bg_vol, dtype=torch.uint8)
+            bg_vol = self.contrast_simulator.preprocess(bg_vol, dummy_cavity, bg_affine)
+            
+            # Compute volume_nii's AABB in world coordinates, then in bg voxel coords.
+            # NIfTI data shape = (W, H, D) = (width, height, depth).
+            # load_nifti → tensor shape (1, 1, W, H, D) after [None][None].
+            # So _origin_volume_size = (W, H, D).
+            W, H, D = self._origin_volume_size
+            corners_voxel = np.array([
+                [0, 0, 0, 1], [W-1, 0, 0, 1], [0, H-1, 0, 1], [0, 0, D-1, 1],
+                [W-1, H-1, 0, 1], [W-1, 0, D-1, 1], [0, H-1, D-1, 1], [W-1, H-1, D-1, 1],
+            ], dtype=np.float32).T
+            corners_world = self._origin_volume_affine @ corners_voxel
+            inv_bg = np.linalg.inv(bg_affine)
+            corners_bg = inv_bg @ corners_world
+            bg_vox_min = corners_bg[:3].min(axis=1).astype(int)
+            bg_vox_max = corners_bg[:3].max(axis=1).astype(int) + 1
+            bg_shape = np.array(bg_vol.shape[-3:])
+            bg_vox_min = np.maximum(bg_vox_min, 0)
+            bg_vox_max = np.minimum(bg_vox_max, bg_shape)
+            
+            # Zero out volume_nii's region in background
+            bg_data = bg_vol.squeeze()  # (D, H, W)
+            bg_data[bg_vox_min[0]:bg_vox_max[0],
+                    bg_vox_min[1]:bg_vox_max[1],
+                    bg_vox_min[2]:bg_vox_max[2]] = 0.0
+            
+            self._background_volume = bg_data[None, None].to(torch.float32).to(self.device)
+            self._background_affine = bg_affine.copy()
+            self._background_roi_aabb = np.stack([bg_vox_min, bg_vox_max], axis=1)
+            print(f"Background: shape={bg_vol.shape[-3:]}, "
+                  f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
         
         self.affine_crop = torch.from_numpy(self.roi.affine_after_crop).to(self.device, torch.float32)
         self.affine_crop_inv: torch.Tensor = torch.linalg.inv(self.affine_crop)
@@ -140,7 +176,7 @@ class RBFReader(DataReader):
         print("RBFReader initialized successfully.")
 
     @torch.no_grad()
-    def _warp_and_recover_for_phase(
+    def _warp_for_phase(
         self, 
         cor_type: CoronaryType, 
         phase: CardiacPhase, 
@@ -167,14 +203,12 @@ class RBFReader(DataReader):
         dx = dx * self.attenuation_mask  
 
         # forward deformation field -> inverse deformation field, still in voxel coordinate
-        # Use direct v = -u approximation (small displacements → acceptable accuracy)
-        dx = -dx
+        dx = invert_displacement_field(dx)
 
         # extract label and volume for the given coronary type, and apply contrast simulation if needed
         cropped_cavity = self.cropped_data.cavity
         cropped_cor_label = self.cropped_data.coronary[cor_type].label
         
-        ori_volume = self.origin_data.coronary[cor_type].volume
         cropped_volume = self.cropped_data.coronary[cor_type].volume
           
         if self.contrast_simulator.contrast_change_over_time:
@@ -187,25 +221,23 @@ class RBFReader(DataReader):
             )
 
         # apply warping and recover to original space, for both volume and labels
-        def warp_and_recover(tensor: Tensor, mode: Literal["volume", "cavity", "coronary"]) -> Tensor:
+        def _warp(tensor: Tensor, mode: Literal["volume", "cavity", "coronary"]) -> Tensor:
             if mode == "volume":
                 warper = self.image_warper
-                recover = lambda x: self.roi.recover_cropped_tensor(x, background=self._recover_buffer[cor_type])
                 final_dtype = torch.float32
             else:
                 warper = self.label_warper
-                recover = self.roi.recover_cropped_tensor
                 if mode == "cavity":
                     final_dtype = torch.uint8
                 elif mode == "coronary":
                     final_dtype = torch.bool
                 else:
                     raise ValueError(f"Unsupported mode: {mode}")
-            return recover(warper(tensor.to(self.device, torch.float32), dx)).to(final_dtype)
+            return warper(tensor.to(self.device, torch.float32), dx).to(final_dtype)
 
-        cropped_cavity = warp_and_recover(self.cropped_data.cavity, mode="cavity")
-        volume = warp_and_recover(cropped_volume, mode="volume")
-        cropped_cor_label = warp_and_recover(cropped_cor_label, mode="coronary")
+        cropped_cavity = _warp(self.cropped_data.cavity, mode="cavity")
+        volume = _warp(cropped_volume, mode="volume")
+        cropped_cor_label = _warp(cropped_cor_label, mode="coronary")
         
         return volume, cropped_cavity, cropped_cor_label
 
@@ -213,15 +245,41 @@ class RBFReader(DataReader):
     def get_static_data(
         self,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
-    ) -> tuple[Tensor, np.ndarray, Tensor]:
-        """Return (static_volume, centering_affine, roi_mask) for batch DRR."""
+    ) -> list[tuple[Tensor, np.ndarray, np.ndarray | None]]:
+        """
+        Return list of (volume, affine, roi_aabb) for layered batch DRR rendering.
+        Layers are rendered front-to-back; each layer's roi_aabb is the region
+        (in that volume's voxel coordinates) that the NEXT layer will fill,
+        expressed as ((x0,x1), (y0,y1), (z0,z1)).
+        
+        Typical layers:
+        1. Background (optional chest CT, heart region zeroed)
+        2. Static heart (preprocessed, dynamic ROI zeroed)
+        The per-frame dynamic ROI is handled separately in run().
+        """
         cor_type = CoronaryType(coronary_type)
+        layers: list[tuple[Tensor, np.ndarray, np.ndarray | None]] = []
+        
+        # ── Layer 1: Background (if available) ──
+        if self._background_volume is not None:
+            assert self._background_affine is not None
+            assert self._background_roi_aabb is not None
+            
+            # Shift background affine to match centering affine (same translation as volume)
+            aff = self._background_affine.copy()
+            aff[:3, 3] += self.cropped_data.coronary[cor_type].T_original_to_centering
+            
+            layers.append((self._background_volume, aff, self._background_roi_aabb))
+        
+        # ── Layer 2: Static heart (dynamic ROI zeroed) ──
         cor = self.origin_data.coronary[cor_type]
-        # ROI mask from crop_box: True where the dynamic ROI will fill in
         (x0, x1), (y0, y1), (z0, z1) = self.roi.crop_box
-        roi_mask = torch.zeros(self.roi.original_shape, dtype=torch.bool)
-        roi_mask[x0:x1, y0:y1, z0:z1] = True
-        return cor.volume, cor.centering_affine, roi_mask
+        heart_vol = cor.volume.clone()
+        heart_vol[..., x0:x1, y0:y1, z0:z1] = 0.0
+        heart_roi_aabb = np.array([[x0, x1], [y0, y1], [z0, z1]])
+        layers.append((heart_vol, cor.centering_affine, heart_roi_aabb))
+        
+        return layers
 
     @torch.no_grad()
     def get_data(
@@ -233,7 +291,6 @@ class RBFReader(DataReader):
         cor_type = CoronaryType(coronary_type)
         
         # 冠脉mesh的同样形变先在原始世界坐标下进行，然后再平移到 centering affine 定义的坐标下，这样可以保证冠脉mesh和体积数据最终在投影坐标下能够正确对齐
-        cor_centering_affine = self.origin_data[cor_type].centering_affine
         cor_mesh = self.origin_data[cor_type].mesh_original.copy()
         mesh_points = torch.from_numpy(cor_mesh.points).to(self.device, torch.float32)
         mesh_points += self.rbf(phase, mesh_points)     # moving in world coordinate
@@ -250,18 +307,19 @@ class RBFReader(DataReader):
                 art_mesh.points = art_pts.cpu().numpy()
                 artifacts_deformed.append(Artifact(mesh=art_mesh, mu=art.mu, name=art.name))
 
-        volume, cavity_label, cor_label = self._warp_and_recover_for_phase(cor_type, phase, global_time)
+        volume, cavity_label, cor_label = self._warp_for_phase(cor_type, phase, global_time)
         
+        _cropped_data = self.cropped_data[cor_type]
         return DataReaderResult(
             phase=phase,
             cavity_label=cavity_label,
-            affine=self.origin_data.affine,
+            cavity_affine=_cropped_data.original_affine,
             coronary=Coronary(
                 type=cor_type,
                 volume=volume,
                 label=cor_label,
-                original_affine=self.origin_data[cor_type].original_affine,
-                centering_affine=cor_centering_affine,
+                original_affine=_cropped_data.original_affine,
+                centering_affine=_cropped_data.centering_affine,
                 mesh_original=cor_mesh,
                 artifacts_original=artifacts_deformed,
             )

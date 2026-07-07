@@ -1,22 +1,22 @@
+from dataclasses import dataclass, field
 import torch
 import numpy as np
 
-from .contrast_simulator import ContrastSimulator
+from .contrast_simulator import ContrastSimulator, Hu2MuContrast
 from generate_4d_heart import CavityLabel, MU_WATER, MU_IDODINE
 
+@dataclass
 class StaticIodineContrast(ContrastSimulator):
-    def __init__(
-        self, 
-        mu_water_dsa: float = MU_WATER,    # 水衰减系数 (mm^-1)
-        mu_idodine: float = MU_IDODINE,    # 碘化钠对比剂衰减系数 (mm^-1)
-    ):
-        """
-        adjust the contrast of coronary and cavity by simple multiplication
-        """
-        self.mu_idodine = mu_idodine
-        self.mu_water_dsa = mu_water_dsa
-        
-        self.cta_reset_contrast = CtaResetContrast(mu_water_dsa=self.mu_water_dsa, mu_idodine=self.mu_idodine)
+    mu_water_dsa: float = MU_WATER
+    """水衰减系数 (mm^-1)"""
+    
+    mu_idodine: float = MU_IDODINE
+    """XCA 碘化钠对比剂衰减系数 (mm^-1)"""
+    
+    preprocess_contrast: Hu2MuContrast|CtaResetContrast = field(default_factory=lambda: Hu2MuContrast(mu_water_dsa=MU_WATER, mu_idodine=MU_IDODINE), init=False, repr=False)
+    """
+    Exisiting contrast simulator used for preprocessing the input volume to convert HU values to attenuation coefficients
+    """
 
     def preprocess(
         self,
@@ -24,7 +24,7 @@ class StaticIodineContrast(ContrastSimulator):
         cavity_label: torch.Tensor,
         affine: np.ndarray,
     ) -> torch.Tensor:
-        return self.cta_reset_contrast.preprocess(ori_volume, cavity_label, affine)
+        return self.preprocess_contrast.preprocess(ori_volume, cavity_label, affine)
 
     def simulate(
         self, 

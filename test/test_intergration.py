@@ -213,3 +213,79 @@ def test_accelerate(
         artifact_manager=artifact_manager,
         comment="_accelerate"
     )
+
+
+@pytest.mark.parametrize("simulator_name", (
+    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST
+))
+def test_chest_data_with_background(
+    output_root_dir: Path,
+    pig_data_drr: TorchDRR,
+    simulator_name: SimulatorName,
+    artifact_manager: ArtifactManager,
+):
+    """Integration test with chest CTA data + background CT, using pig_data_drr."""
+    chest_dir = TEST_DATA_ROOT_DIR / "chest_data"
+    assert chest_dir.exists(), f"chest_data directory not found: {chest_dir}"
+
+    reader = RBFReader(
+        volume_nii=chest_dir / "image.nii.gz",
+        cavity_nii=chest_dir / "cavity.nii.gz",
+        coronary_nii=chest_dir / "coronary.nii.gz",
+        contrast_simulator=simulator_factory(simulator_name),
+        artifact_manager=artifact_manager,
+        background_nii=chest_dir / "background.nii.gz",
+        centering_mode = "image_center"
+    )
+
+    dsa = RotateDSA(reader=reader, drr=pig_data_drr, multi_threads=False)
+
+    output_dir = output_root_dir / "intergration" / "artifacts" / f"chest_background_{simulator_name}_LCA"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    dsa.run_and_save(output_dir=output_dir, coronary_type="LCA", gif_fps=10)
+
+    # Verify output files exist
+    assert (output_dir / "rotate_dsa_raw.tif").exists()
+    assert (output_dir / "rotate_dsa_raw.gif").exists()
+    assert (output_dir / "rotate_dsa.gif").exists()
+    assert (output_dir / "rotate_dsa.json").exists()
+    assert (output_dir / "label.gif").exists()
+    assert (output_dir / "depth_map.gif").exists()
+
+
+@pytest.mark.parametrize("simulator_name", (
+    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST
+))
+def test_chest_data_background_as_image(
+    output_root_dir: Path,
+    pig_data_drr: TorchDRR,
+    simulator_name: SimulatorName,
+    artifact_manager: ArtifactManager,
+):
+    """Integration test with chest CTA data + background CT, using pig_data_drr."""
+    chest_dir = TEST_DATA_ROOT_DIR / "chest_data"
+    assert chest_dir.exists(), f"chest_data directory not found: {chest_dir}"
+
+    reader = RBFReader(
+        volume_nii=chest_dir / "background.nii.gz",
+        cavity_nii=chest_dir / "cavity.nii.gz",
+        coronary_nii=chest_dir / "coronary.nii.gz",
+        contrast_simulator=simulator_factory(simulator_name),
+        artifact_manager=artifact_manager,
+    )
+
+    dsa = RotateDSA(reader=reader, drr=pig_data_drr)
+
+    output_dir = output_root_dir / "intergration" / "artifacts" / f"chest_background_{simulator_name}_LCA"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    dsa.run_and_save(output_dir=output_dir, coronary_type="LCA", gif_fps=10)
+
+    # Verify output files exist
+    assert (output_dir / "rotate_dsa_raw.tif").exists()
+    assert (output_dir / "rotate_dsa_raw.gif").exists()
+    assert (output_dir / "rotate_dsa.gif").exists()
+    assert (output_dir / "rotate_dsa.json").exists()
+    assert (output_dir / "label.gif").exists()
+    assert (output_dir / "depth_map.gif").exists()

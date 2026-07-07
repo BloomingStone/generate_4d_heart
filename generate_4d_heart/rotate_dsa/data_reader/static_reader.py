@@ -76,7 +76,7 @@ class StaticVolumeReader(DataReader):
         return DataReaderResult(
             phase=phase,
             cavity_label=self._data.cavity.cpu().to(torch.uint8),
-            affine=self._origin_volume_affine,
+            cavity_affine=self._origin_volume_affine,
             coronary=Coronary(
                 type=cor_type,
                 volume=volume.cpu(),

@@ -125,14 +125,14 @@ class BatchDVFToDSA:
                     save_nii(
                         output_case_dir / f"{self.otuput_phase_3d_str}_image.nii.gz",
                         data_3d.coronary.volume,        # 注意这里是已经经过了contrast simulator的处理, 冠脉区域强度增强的volume
-                        affine=data_3d.affine,
+                        affine=data_3d.coronary.affine,
                         is_label=False
                     )
                 case OutputMode3D.CAVITY_LABEL:
                     save_nii(
                         output_case_dir / f"{self.otuput_phase_3d_str}_cavity_label.nii.gz",
                         data_3d.cavity_label,
-                        affine=data_3d.affine,
+                        affine=data_3d.coronary.affine,
                         is_label=True
                     )
                 case OutputMode3D.COR_LABEL:
