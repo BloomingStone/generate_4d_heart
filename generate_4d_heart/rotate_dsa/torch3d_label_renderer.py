@@ -17,9 +17,13 @@ from .rotate_drr import CArmGeometry
 
 class Torch3DLabelRenderer:
     def __init__(self, c_arm: CArmGeometry):
-        self.fov = 2 * math.atan(c_arm.width * c_arm.delx / 2 / c_arm.sdd) / math.pi * 180
         self.width = int(c_arm.width)
         self.height = int(c_arm.height)
+        # PyTorch3D FoVPerspectiveCameras treats scalar fov as VERTICAL fov,
+        # and computes horizontal extent via max_x = max_y * aspect_ratio.
+        # Compute vertical FOV from detector height to match DRR projection.
+        self.fov = 2 * math.atan(c_arm.height * c_arm.dely / 2 / c_arm.sdd) / math.pi * 180
+        # self.aspect_ratio = c_arm.width / c_arm.height
         self.zfar = c_arm.sdd*1.2
         self.raster_settings = RasterizationSettings(
             image_size=(self.height, self.width),
@@ -59,6 +63,7 @@ class Torch3DLabelRenderer:
         cameras = FoVPerspectiveCameras(
             device=self.device,
             fov=self.fov,
+            # aspect_ratio=self.aspect_ratio,
             R=R[None].to(self.device),      # pytorch3D 默认使用行向量，因此这里输入的 作用于列向量的 R_c2w 可以不用转置，直接视为R_w2c 矩阵
             T=(-R.T @ T)[None].to(self.device), 
             zfar=self.zfar
@@ -108,6 +113,7 @@ class Torch3DLabelRenderer:
         cameras = FoVPerspectiveCameras(
             device=self.device,
             fov=self.fov,
+            # aspect_ratio=self.aspect_ratio,
             R=R[None].to(self.device),
             T=(-R.T @ T)[None].to(self.device),
             zfar=self.zfar,
