@@ -109,7 +109,7 @@ def pig_data_drr(
     pig_data_geom: CArmGeometry
 ) -> TorchDRR:
     rotate_cfg = RotatedParameters(
-        total_frame=10, #402,  
+        total_frame=20, #402,  
         fps=15,         #80，      
         angular_velocity = 47.986,  
         alpha_start=-119.35

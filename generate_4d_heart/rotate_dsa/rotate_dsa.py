@@ -39,6 +39,7 @@ class RotateDsaOutput:
     vis_frames: np.ndarray
     labels: np.ndarray
     depth_maps: np.ndarray
+    artifacts_proj: np.ndarray
     meta: dict[str, Any]
 
 
@@ -80,6 +81,7 @@ class RotateDSA:
         frames = torch.zeros(total_frame, w, h, device=device, dtype=torch.float32)
         labels = np.zeros((total_frame, w, h), dtype=np.uint8)
         depth_maps = np.zeros((total_frame, w, h), dtype=np.float32)
+        artifacts_proj = np.zeros((total_frame, w, h), dtype=np.float32)
 
         # ── Stage 1: Batch-render all static layers ──
         static_layers = self.reader.get_static_data(coronary_type)
@@ -128,6 +130,7 @@ class RotateDSA:
                     *self.drr.get_R_T_at_frame(f),
                 )
                 drr_res += torch.from_numpy(art_integral).to(drr_res.device)
+                artifacts_proj[f] += art_integral
 
             frames[f] += drr_res
 
@@ -175,6 +178,7 @@ class RotateDSA:
             vis_frames=vis_frames.cpu().numpy().astype(np.uint8),
             labels=labels,
             depth_maps=depth_maps,
+            artifacts_proj=artifacts_proj,
             meta=post_process_meta
         )
 
@@ -266,12 +270,13 @@ class RotateDSA:
                 executor.submit(save_pngs, output_dir / "label", output.labels * 255),
                 executor.submit(np.savez_compressed, output_dir / "label.npz", output.labels),
                 executor.submit(np.savez_compressed, output_dir / "depth_map.npz", output.depth_maps),
+                executor.submit(save_gif, output_dir / "artifacts_proj.gif", output.artifacts_proj, gif_fps),
             ]
             # phase_0_data.save() 含 torch 张量，在当前进程运行，与子进程池并行
             meta = phase_0_data.save(
                 output_dir,
                 save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
-                coordinate_system="coronary_centering"
+                coordinate_system="centering"
             )
             for f in futures:
                 f.result()
@@ -306,7 +311,7 @@ class RotateDSA:
             meta = phase_0_data.save(
                 output_dir,
                 save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
-                coordinate_system="coronary_centering"
+                coordinate_system="centering"
             )
             for f in futures:
                 f.result()
@@ -328,7 +333,7 @@ class RotateDSA:
         meta = phase_0_data.save(
             output_dir, 
             save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
-            coordinate_system="coronary_centering"
+            coordinate_system="centering"
         )
         
         json_data = self.get_geometry_json(coronary_type)

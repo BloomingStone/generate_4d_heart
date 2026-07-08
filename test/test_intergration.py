@@ -238,7 +238,7 @@ def test_chest_data_with_background(
         centering_mode = "image_center"
     )
 
-    dsa = RotateDSA(reader=reader, drr=pig_data_drr, multi_threads=False)
+    dsa = RotateDSA(reader=reader, drr=pig_data_drr)
 
     output_dir = output_root_dir / "intergration" / "artifacts" / f"chest_background_{simulator_name}_LCA"
     if output_dir.exists():

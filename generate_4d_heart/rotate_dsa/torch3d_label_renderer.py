@@ -23,7 +23,7 @@ class Torch3DLabelRenderer:
         # and computes horizontal extent via max_x = max_y * aspect_ratio.
         # Compute vertical FOV from detector height to match DRR projection.
         self.fov = 2 * math.atan(c_arm.height * c_arm.dely / 2 / c_arm.sdd) / math.pi * 180
-        # self.aspect_ratio = c_arm.width / c_arm.height
+        # self.aspect_ratio = c_arm.width / c_arm.height        # TODO calculate aspect ration from delx and dely
         self.zfar = c_arm.sdd*1.2
         self.raster_settings = RasterizationSettings(
             image_size=(self.height, self.width),

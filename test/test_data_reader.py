@@ -75,7 +75,7 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         
         plotter_centering.clear()
         plotter_centering.add_mesh(data.coronary.mesh_centering, color="lightgray", opacity=0.5)
-        plotter_centering.add_mesh(data.coronary.get_coronary_central_line("coronary_centering"), color="red", line_width=5)
+        plotter_centering.add_mesh(data.coronary.get_coronary_central_line("centering"), color="red", line_width=5)
         plotter_centering.add_mesh(mesh_centering_from_label, opacity=0.5)
         plotter_centering.show_bounds()  #type: ignore
         plotter_centering.write_frame()
@@ -100,7 +100,7 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
 
     
     phase_0_data = reader.get_phase_0_data("LCA")
-    central_line = phase_0_data.coronary.get_coronary_central_line("coronary_centering")
+    central_line = phase_0_data.coronary.get_coronary_central_line("centering")
     mesh = phase_0_data.coronary.mesh_original
     
     assert len(central_line.shape) == 2 and central_line.shape[-1] == 3
@@ -332,7 +332,7 @@ def test_rbf_reader_static_data_chest(
 def test_rbf_reader_static_data_chest_different(
     artifact_manager: ArtifactManager,
     output_root_dir: Path,
-    simulator_name: SimulatorName = SimulatorName.MULTIPLI_CONTRAST,
+    simulator_name: SimulatorName = SimulatorName.HU2MU_CONTRAST,
     data_with_background_dir: Path = TEST_DATA_ROOT_DIR / "chest_data" / "cta_single",
     name="chest_static_data_different"
 ):
