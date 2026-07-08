@@ -119,6 +119,28 @@ def pig_data_drr(
         rotate_cfg=rotate_cfg
     )
 
+@pytest.fixture(scope="session", autouse=True)
+def single_data_geom() -> CArmGeometry:
+    return CArmGeometry(
+        height=474,
+        width=648,
+        delx=0.3,
+        dely=0.6,
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def single_data_drr(
+    single_data_geom: CArmGeometry
+) -> TorchDRR:
+    rotate_cfg = RotatedParameters(
+        total_frame=1,
+    )
+    return TorchDRR(
+        c_arm_cfg=single_data_geom,
+        rotate_cfg=rotate_cfg
+    )
+
 
 from generate_4d_heart.rotate_dsa.artifacts import (
     ArtifactManager, ArtifactManagerConfig,

@@ -45,6 +45,8 @@ def save_tif(
     print(f"saving: {output_path}")
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
+    if frames_np.ndim == 2:
+        frames_np = frames_np[None]  # (H, W) → (1, H, W)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tifffile.imwrite(output_path, frames_np, imagej=True)
 
@@ -65,6 +67,8 @@ def save_pngs(
     print(f"saving pngs to: {output_dir}")
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
+    if frames_np.ndim == 2:
+        frames_np = frames_np[None]  # (H, W) → (1, H, W)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     for t, image in enumerate(frames_np):
@@ -89,6 +93,8 @@ def save_gif(
     print(f"saving: {output_path}")
     frames = frames.squeeze()
     frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
+    if frames_np.ndim == 2:
+        frames_np = frames_np[None]  # (H, W) → (1, H, W)
 
     h, w = frames_np.shape[1], frames_np.shape[2]
 

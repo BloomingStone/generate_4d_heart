@@ -573,7 +573,7 @@ class DataReader(Protocol):
         (in voxel coords of that volume) that the next layer will cover.
         See RBFReader.get_static_data for details.
         """
-        ...
+        return []
 
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
         ...
