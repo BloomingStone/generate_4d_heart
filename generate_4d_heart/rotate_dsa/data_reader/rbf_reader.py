@@ -55,6 +55,11 @@ class RBFReader(DataReader):
     If provided, used as the first static layer for DRR.
     The region occupied by volume_nii is zeroed out to avoid double-counting.
     """
+    
+    feather_width: float = 10
+    """
+    Feathering width (in background voxels) for the inward feathering of the volume_nii
+    """
 
     def __post_init__(self):
         print(f"\nInitializing RBFReader with \n\t- volume_nii={self.volume_nii} \n\t- cavity_nii={self.cavity_nii} \n\t- coronary_nii={self.coronary_nii}")
@@ -78,8 +83,13 @@ class RBFReader(DataReader):
             self.artifact_manager, centering_mode=self.centering_mode
         )
         
+        # ── Load and preprocess optional background, apply inward feathering to volume ──
+        # NOTE: must be after init_from_volume so origin_data's volumes are already in mu space
+        # (HU→mu).  Both sides feather in the same mu domain — no cross-domain trick needed.
+        self._load_background(self.origin_data, affine)
+        
         print("Initializing ROI from cavity and cropping data...")
-        self.roi = ROI.get_from_cavity_np(cavity_np, affine, padding=30)
+        self.roi = ROI.get_from_cavity_np(cavity_np, affine, padding=20)
         self.cropped_data = self.origin_data.crop_by_roi(self.roi)
         
         # Pre-move cropped tensors to GPU to avoid per-frame .to(device) in warp_and_recover
@@ -122,47 +132,6 @@ class RBFReader(DataReader):
         self.rbf.cache_points(coords_zoomed)  # stores original (X, Y, Z, 3) shape
         self.rbf.cache_kdtree_indices(coords_zoomed.reshape(-1, 3))
         
-        # ── Load and preprocess optional background ──
-        self._background_volume: Tensor | None = None
-        self._background_affine: np.ndarray | None = None
-        self._background_roi_aabb: np.ndarray | None = None  # volume_nii's AABB in bg voxel coords
-        if self.background_nii is not None:
-            print(f"Loading background from {self.background_nii}...")
-            bg_vol, bg_affine = load_nifti(self.background_nii)  # (1,1,D,H,W)
-            # Apply preprocessing (dummy cavity label = zeros)
-            dummy_cavity = torch.zeros_like(bg_vol, dtype=torch.uint8)
-            bg_vol = self.contrast_simulator.preprocess(bg_vol, dummy_cavity, bg_affine)
-            
-            # Compute volume_nii's AABB in world coordinates, then in bg voxel coords.
-            # NIfTI data shape = (W, H, D) = (width, height, depth).
-            # load_nifti → tensor shape (1, 1, W, H, D) after [None][None].
-            # So _origin_volume_size = (W, H, D).
-            W, H, D = self._origin_volume_size
-            corners_voxel = np.array([
-                [0, 0, 0, 1], [W-1, 0, 0, 1], [0, H-1, 0, 1], [0, 0, D-1, 1],
-                [W-1, H-1, 0, 1], [W-1, 0, D-1, 1], [0, H-1, D-1, 1], [W-1, H-1, D-1, 1],
-            ], dtype=np.float32).T
-            corners_world = self._origin_volume_affine @ corners_voxel
-            inv_bg = np.linalg.inv(bg_affine)
-            corners_bg = inv_bg @ corners_world
-            bg_vox_min = corners_bg[:3].min(axis=1).astype(int)
-            bg_vox_max = corners_bg[:3].max(axis=1).astype(int) + 1
-            bg_shape = np.array(bg_vol.shape[-3:])
-            bg_vox_min = np.maximum(bg_vox_min, 0)
-            bg_vox_max = np.minimum(bg_vox_max, bg_shape)
-            
-            # Zero out volume_nii's region in background
-            bg_data = bg_vol.squeeze()  # (D, H, W)
-            bg_data[bg_vox_min[0]:bg_vox_max[0],
-                    bg_vox_min[1]:bg_vox_max[1],
-                    bg_vox_min[2]:bg_vox_max[2]] = 0.0
-            
-            self._background_volume = bg_data[None, None].to(torch.float32).to(self.device)
-            self._background_affine = bg_affine.copy()
-            self._background_roi_aabb = np.stack([bg_vox_min, bg_vox_max], axis=1)
-            print(f"Background: shape={bg_vol.shape[-3:]}, "
-                  f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
-        
         self.affine_crop = torch.from_numpy(self.roi.affine_after_crop).to(self.device, torch.float32)
         self.affine_crop_inv: torch.Tensor = torch.linalg.inv(self.affine_crop)
         
@@ -174,6 +143,162 @@ class RBFReader(DataReader):
         self.image_warper = Warp(mode="bilinear", padding_mode="border").to(self.device).eval()
         
         print("RBFReader initialized successfully.")
+
+    @torch.no_grad()
+    def _load_background(
+        self,
+        origin_data: DataReader._Data,
+        affine: np.ndarray,
+    ) -> None:
+        """
+        Load and process the optional background CT, and apply inward feathering to the volume.
+
+        This method:
+          1. Loads the background NIfTI and applies contrast preprocessing.
+          2. Computes the volume's AABB in background voxel coordinates.
+          3. Applies **inward feathering** to *volume* (attenuates near the AABB boundary)
+          4. Zeroes the AABB interior in the background and applies **outward feathering**
+             (cosine ramp) so the background smoothly fades out at the boundary.
+
+        """
+        self._background_volume: Tensor | None = None
+        self._background_affine: np.ndarray | None = None
+        self._background_roi_aabb: np.ndarray | None = None
+        if self.background_nii is None:
+            return
+
+        print(f"Loading background from {self.background_nii}...")
+        bg_vol, bg_affine = load_nifti(self.background_nii)  # (1,1,D,H,W)
+        dummy_cavity = torch.zeros_like(bg_vol, dtype=torch.uint8)
+
+        bg_vol = self.contrast_simulator.preprocess(bg_vol, dummy_cavity, bg_affine)
+
+        # Compute volume's AABB in background voxel coords
+        W, H, D = self._origin_volume_size
+        corners_voxel = np.array([
+            [0, 0, 0, 1], [W-1, 0, 0, 1], [0, H-1, 0, 1], [0, 0, D-1, 1],
+            [W-1, H-1, 0, 1], [W-1, 0, D-1, 1], [0, H-1, D-1, 1], [W-1, H-1, D-1, 1],
+        ], dtype=np.float32).T
+        corners_world = self._origin_volume_affine @ corners_voxel
+        inv_bg = np.linalg.inv(bg_affine)
+        corners_bg = inv_bg @ corners_world
+        bg_vox_min = corners_bg[:3].min(axis=1).astype(int)
+        bg_vox_max = corners_bg[:3].max(axis=1).astype(int) + 1
+        bg_shape = np.array(bg_vol.shape[-3:])
+        bg_vox_min = np.maximum(bg_vox_min, 0)
+        bg_vox_max = np.minimum(bg_vox_max, bg_shape)
+
+        feather = self.feather_width  # voxels in background space
+
+        # ── Inward feathering on the volume ──
+        #
+        # Goal: attenuate volume voxels near the AABB boundary so that the
+        # volume smoothly blends into the background at the seam.
+        #
+        # Key insight: the feathering distance is defined in background voxel
+        # space (feather=10 bg-voxels), so we must evaluate the distance from
+        # each volume voxel to the AABB *in that same background space*.
+        #
+        # Coordinate transformation chain (applied per volume voxel):
+        #   vol_voxel (i,j,k) ──affine──→ world (x,y,z) ──inv_bg──→ bg_voxel (u,v,w)
+        #
+        # The AABB [bg_vox_min, bg_vox_max] is the bounding box of the volume
+        # in background voxel space. For a voxel inside this box, the distance
+        # to the nearest AABB face (L_inf norm, in bg-voxel units) tells us
+        # how far it is from the seam. Voxels within `feather` bg-voxels of
+        # any face get attenuated; voxels deeper inside are left untouched.
+        # Both LCA and RCA volumes share the same spatial dimensions (clones of the
+        # same preprocessed volume); pick any to read the shape.
+        sample_vol = next(iter(origin_data.coronary.values())).volume
+        D_vol, H_vol, W_vol = sample_vol.shape[-3:]
+
+        # Step 1: generate a full grid of volume voxel coordinates (D×H×W×3)
+        i = np.arange(D_vol)
+        j = np.arange(H_vol)
+        k = np.arange(W_vol)
+        vol_grid = np.stack(np.meshgrid(i, j, k, indexing='ij'), axis=-1)  # (D, H, W, 3)
+
+        # Step 2: flatten to (N, 3) and add homogeneous coordinate for affine transform
+        vol_flat = vol_grid.reshape(-1, 3).astype(np.float32)
+        vol_h = np.pad(vol_flat, ((0, 0), (0, 1)), constant_values=1)  # (N, 4) — [i,j,k,1]
+
+        # Step 3: vol_voxel → world → bg_voxel
+        world_pts = vol_h @ affine.T   # (N, 4) — volume affine maps voxel→world
+        bg_pts = world_pts @ inv_bg.T  # (N, 4) — inverse bg affine maps world→bg voxel
+        bg_pts = bg_pts[:, :3]         # (N, 3) — drop homogeneous coordinate
+
+        # Step 4: distance from each point to the nearest AABB face.
+        # For an axis-aligned box, distance along each axis is
+        #   min(pt - lo, hi - pt).
+        # d_face takes the MIN across axes → L_inf norm (shortest "chessboard"
+        # distance to any face, in bg-voxel units).
+        d_min = bg_pts - bg_vox_min[None, :]     # (N, 3)
+        d_max = bg_vox_max[None, :] - bg_pts     # (N, 3)
+        d_face = np.minimum(d_min, d_max)         # (N, 3)
+        d_boundary = d_face.min(axis=-1)          # (N,) — shortest distance to any face
+        d_boundary = np.maximum(d_boundary, 0)    # clamp negative (outside AABB) to 0
+
+        # Step 5: cosine inward ramp — 0 at the boundary, 1 at `feather` or deeper.
+        # Uses the same cosine profile as the background outward feathering below,
+        # so the two sides create a symmetric transition zone.
+        w = np.clip(d_boundary / feather, 0, 1).astype(np.float32)  # (N,) — 0→1
+        atten_cos = 0.5 * (1.0 - np.cos(np.pi * w))                 # (N,) — cosine easing
+        atten_cos = atten_cos.reshape(D_vol, H_vol, W_vol)          # (D, H, W)
+        atten = atten_cos  # alias for use below
+
+        # Step 6: apply inward attenuation directly in mu space, in-place.
+        for cor in origin_data.coronary.values():
+            cor.volume[0, 0] *= torch.from_numpy(atten)
+
+        # ── Process background: zero AABB interior + outward feathering ──
+        #
+        # Complement to the inward volume feathering above.
+        #
+        # Key: the background zeroing region is the volume's AABB CONTRACTED by
+        # `feather` voxels on each side.  This makes the two cosine ramps
+        # complementary → vol + bg = 1 everywhere in the transition zone:
+        #
+        #   contracted AABB                    original AABB
+        #   ──────────●────────────────────────●─────────────
+        #      inner ←│     ← feather →        │→ outer 
+        #   vol:  1───┘                       ┌─0  (inward cosine)
+        #   bg:   0───┐                       └─1  (outward cosine)
+        #   total:    1                        1
+        bg_zero_min = np.maximum(bg_vox_min + feather, 0).astype(int)
+        bg_zero_max = np.minimum(bg_vox_max - feather, bg_shape).astype(int)
+        for axis in range(3):
+            if bg_zero_max[axis] <= bg_zero_min[axis]:
+                bg_zero_min[axis] = bg_vox_min[axis]
+                bg_zero_max[axis] = bg_vox_min[axis] + 1
+
+        bg_data = bg_vol.squeeze()
+        bg_original = bg_data.clone()
+
+        bg_data[bg_zero_min[0]:bg_zero_max[0],
+                bg_zero_min[1]:bg_zero_max[1],
+                bg_zero_min[2]:bg_zero_max[2]] = 0.0
+
+        from scipy.ndimage import distance_transform_edt
+        aabb_mask = torch.zeros(bg_shape.tolist(), dtype=torch.bool)
+        aabb_mask[bg_zero_min[0]:bg_zero_max[0],
+                  bg_zero_min[1]:bg_zero_max[1],
+                  bg_zero_min[2]:bg_zero_max[2]] = True
+        outward_mask = ~aabb_mask  # True = outside contracted AABB → outward EDT
+        dist = torch.from_numpy(distance_transform_edt(outward_mask.numpy()))
+        feather_mask = (dist > 0) & (dist <= feather)  # voxels outside contracted AABB, ≤feather away
+        w = dist[feather_mask] / feather
+        w_cos = (0.5 * (1 - torch.cos(np.pi * w))).to(bg_data.dtype)
+        bg_data[feather_mask] = bg_original[feather_mask] * w_cos
+
+        bg_volume = bg_data[None, None].to(torch.float32).to(self.device)
+        bg_roi_aabb = np.stack([bg_vox_min, bg_vox_max], axis=1)
+
+        self._background_volume = bg_volume
+        self._background_affine = bg_affine.copy()
+        self._background_roi_aabb = bg_roi_aabb
+
+        print(f"Background: shape={bg_vol.shape[-3:]}, "
+              f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
 
     @torch.no_grad()
     def _warp_for_phase(
