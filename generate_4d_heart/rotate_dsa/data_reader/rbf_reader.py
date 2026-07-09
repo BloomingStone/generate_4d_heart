@@ -63,6 +63,13 @@ class RBFReader(DataReader):
 
     def __post_init__(self):
         print(f"\nInitializing RBFReader with \n\t- volume_nii={self.volume_nii} \n\t- cavity_nii={self.cavity_nii} \n\t- coronary_nii={self.coronary_nii}")
+        print(f"\t- Centering mode: {self.centering_mode}")
+        print(f"\t- Using contrast_simulator: {self.contrast_simulator}")
+        if self.background_nii is not None:
+            print(f"\t- Using background_nii: {self.background_nii}")
+        if self.artifact_manager is not None:
+            print(f"\t- Using artifact_manager: {self.artifact_manager.config}")
+        
         logger.info(f"Loading data from {self.volume_nii}, {self.cavity_nii}, {self.coronary_nii}")
         self.n_phases = self.ssm_reader.n_phases
         
@@ -562,7 +569,7 @@ class KDTreeRBF(nn.Module):
                 distance_upper_bound=self.radius, workers=-1,
             )
             if self.k == 1:
-                idx = idx[:, None]
+                idx = idx[:, None]  # type: ignore
             idx_list.append(torch.from_numpy(idx))
         self._cached_idx = torch.cat(idx_list, dim=0)
     
@@ -678,7 +685,7 @@ class KDTreeRBF(nn.Module):
                     distance_upper_bound=self.radius, workers=-1,
                 )
                 if self.k == 1:
-                    idx = idx[:, None]
+                    idx = idx[:, None]  # type: ignore
                 idx_cpu = torch.from_numpy(idx)
                 with torch.cuda.stream(self.copy_stream):
                     idx_gpu = idx_cpu.to(device)

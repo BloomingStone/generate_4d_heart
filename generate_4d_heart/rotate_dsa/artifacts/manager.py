@@ -157,6 +157,7 @@ class ArtifactManager:
             if not ext_cfg.path.exists():
                 raise FileNotFoundError(f"External artifact mesh not found: {ext_cfg.path}")
             mesh = pv.read(ext_cfg.path)
+            assert isinstance(mesh, pv.PolyData), f"External artifact mesh must be PolyData, got {type(mesh)}"
             name = ext_cfg.name if ext_cfg.name else ext_cfg.path.stem
             artifacts.append(Artifact(mesh=mesh, mu=ext_cfg.mu, name=name))
 

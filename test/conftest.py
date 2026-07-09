@@ -55,33 +55,6 @@ def volume_dvf_dir(test_data_root_dir: Path) -> Path:
     print(f"Volume with DVF directory: {p}")
     return p
 
-# --- Contrast simulators
-
-@pytest.fixture(scope="session", autouse=True)
-def multipli_contrast() -> ContrastSimulator:
-    print("Setting up StaticIodineContrast for the entire test session...")
-    return StaticIodineContrast()
-
-@pytest.fixture(scope="session", autouse=True)
-def threshold_multipli_contrast() -> ContrastSimulator:
-    print("Setting up ThresholdIodineContrast for the entire test session...")
-    return ThresholdIodineContrast()
-
-@pytest.fixture(scope="session", autouse=True)
-def identity_contrast() -> ContrastSimulator:
-    print("Setting up IdentityContrast for the entire test session...")
-    return IdentityContrast()
-
-@pytest.fixture(scope="session", autouse=True)
-def simple_preprocess_contrast() -> ContrastSimulator:
-    print("Setting up SimplePreprocessContrast for the entire test session...")
-    return Hu2MuContrast()
-
-@pytest.fixture(scope="session", autouse=True)
-def flow_contrast() -> ContrastSimulator:
-    print("Setting up FlowContrast for the entire test session...")
-    return FlowContrast()
-
 
 @pytest.fixture(scope="session", autouse=True)
 def simple_drr() -> TorchDRR:
@@ -108,22 +81,13 @@ def pig_data_geom() -> CArmGeometry:
 def pig_data_drr(
     pig_data_geom: CArmGeometry
 ) -> TorchDRR:
-    # rotate_cfg = RotatedParameters(
-    #     total_frame=20, #402,  
-    #     fps=15,         #80，      
-    #     angular_velocity = 47.986,  
-    #     alpha_start=-119.35
-    # )
-    rotate_cfg = RotatedParameters.from_alpha_range(
-        total_frame=402,
-        alpha_start=-120.0,
-        alpha_end=120.0,
-        fps=80.0,
-        beta_start=0.0,
-        coordinate_system="RAS",
-        parameterization="euler_angles",
-        convention="ZXY"
+    rotate_cfg = RotatedParameters(
+        total_frame=20, #402,  
+        fps=15,         #80，      
+        angular_velocity = 47.986,  
+        alpha_start=-119.35
     )
+
     return TorchDRR(
         c_arm_cfg=pig_data_geom,
         rotate_cfg=rotate_cfg
@@ -175,36 +139,4 @@ def full_drr() -> TorchDRR:
         )
     )
 
-
-# ---------------------------------------------------------------------------
-#  Session finalizer: 收集所有输出目录中的 .gif 文件，统一软链接到 all_gifs/
-# ---------------------------------------------------------------------------
-
-def pytest_sessionfinish(session, exitstatus) -> None:
-    """在所有测试结束后，将 output/ 下各子目录中的 .gif 软链接到 all_gifs/ 下统一查看。"""
-    gif_dir = OUTPUT_ROOT_DIR / "all_gifs"
-
-    # 清理上一次的软链接目录
-    if gif_dir.exists():
-        shutil.rmtree(gif_dir)
-    gif_dir.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    for gif_path in sorted(OUTPUT_ROOT_DIR.rglob("*.gif")):
-        # 跳过 all_gifs 自身的软链接
-        if gif_path.parent == gif_dir:
-            continue
-
-        # 用相对于 OUTPUT_ROOT_DIR 的路径构造扁平化名称，方便识别来源
-        rel = gif_path.relative_to(OUTPUT_ROOT_DIR)
-        # 将路径分隔符替换为 __，例如:
-        #   intergration_full/volumes_reader_flow_contrast_LCA/depth_map.gif
-        #   → intergration_full__volumes_reader_flow_contrast_LCA__depth_map.gif
-        link_name = "__".join(rel.parts)
-
-        link_path = gif_dir / link_name
-        link_path.symlink_to(gif_path.resolve())
-        count += 1
-
-    print(f"\n[conftest] 已收集 {count} 个 GIF 文件到 {gif_dir}")
 

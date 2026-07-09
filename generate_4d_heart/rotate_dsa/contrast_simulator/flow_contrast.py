@@ -13,7 +13,7 @@ import cupy as cp
 from generate_4d_heart import CavityLabel, MU_IDODINE, MU_WATER, VesselLabel
 
 from .contrast_simulator import ContrastSimulator, Hu2MuContrast
-from .multipli_contrast import CtaResetContrast
+from .static_iodine_contrast import CtaResetContrast
 
 from skimage.morphology import skeletonize
 

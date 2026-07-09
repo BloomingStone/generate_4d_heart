@@ -18,7 +18,7 @@ from utils import reader_factory, ReaderName, SimulatorName, TEST_DATA_ROOT_DIR,
 
 @pytest.mark.parametrize("reader_name", tuple(ReaderName))
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.MULTIPLI_CONTRAST, SimulatorName.FLOW_CONTRAST, SimulatorName.CL_MARKER_CONTRAST, SimulatorName.IDENTITY_CONTRAST
+    SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST, SimulatorName.CL_MARKER_CONTRAST, SimulatorName.IDENTITY_CONTRAST
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration(
@@ -86,7 +86,7 @@ def test_rotate_dsa_integration(
     )
 )
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.MULTIPLI_CONTRAST, 
+    SimulatorName.STATIC_IODINE_CONTRAST, 
     SimulatorName.FLOW_CONTRAST
 ))
 def test_rotate_dsa_integration_full(
@@ -132,7 +132,7 @@ def test_rotate_dsa_integration_cl_marker(
     )
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST, SimulatorName.FLOW_CONTRAST
+    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_rotate_dsa_integration_with_artifacts(
@@ -222,7 +222,7 @@ def test_accelerate(
 
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.HU2MU_CONTRAST, SimulatorName.MULTIPLI_CONTRAST
+    SimulatorName.HU2MU_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST
 ))
 def test_chest_data_with_background(
     output_root_dir: Path,
@@ -261,7 +261,7 @@ def test_chest_data_with_background(
 
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST
+    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST
 ))
 def test_chest_data_background_as_image(
     output_root_dir: Path,

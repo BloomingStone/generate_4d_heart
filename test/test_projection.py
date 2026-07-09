@@ -8,7 +8,7 @@ def test_projection(
     output_root_dir: Path
 ):
     _, reader=reader_factory(
-        simulator_name=SimulatorName.MULTIPLI_CONTRAST,
+        simulator_name=SimulatorName.STATIC_IODINE_CONTRAST,
         reader_name=ReaderName.STATIC_VOLUME_READER
     )
     dsa = RotateDSA(reader=reader, drr=single_data_drr, multi_threads=False)

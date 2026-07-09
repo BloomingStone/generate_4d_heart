@@ -2,18 +2,18 @@
 authors = ["shi_jie <1592277253@qq.com>"]
 channels = ["conda-forge"]
 name = "Gen4D"
-platforms = ["linux-64"]
 version = "0.1.0"
-
-[system-requirements]
-cuda = "12.0"
+platforms = [
+    {platform = "linux-64", cuda="12.0"},
+]
 
 [pypi-options]
 index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 
 
 [tasks]
-pytest = "pytest"
+rbf_gen_4d = "python scripts/batch_rbf_gen_4d.py"
+output_full_pigdata = "python scripts/output_full_pigdata.py"
 
 [dependencies]
 # conda-forge 的 pytorch-gpu 包含了 CUDA 12.* 的支持

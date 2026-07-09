@@ -32,10 +32,9 @@ class ReaderName(StrEnum):
 
 
 class SimulatorName(StrEnum):
-    MULTIPLI_CONTRAST = "multipli_contrast"
-    THRESHOLD_MULTIPLI_CONTRAST = "threshold_multipli_contrast"
+    STATIC_IODINE_CONTRAST = "static_iodine_contrast"
+    THRESHOLD_IODINE_CONTRAST = "threshold_iodine_contrast"
     IDENTITY_CONTRAST = "identity_contrast"
-    SIMPLE_PREPROCESS_CONTRAST = "simple_preprocess_contrast"
     FLOW_CONTRAST = "flow_contrast"
     CL_MARKER_CONTRAST = "cl_marker_contrast"
     HU2MU_CONTRAST = "hu2mu_contrast"
@@ -46,14 +45,12 @@ def simulator_factory(
     simulator_name: SimulatorName
 ) -> ContrastSimulator:
     match simulator_name:
-        case SimulatorName.MULTIPLI_CONTRAST:
+        case SimulatorName.STATIC_IODINE_CONTRAST:
             return StaticIodineContrast()
-        case SimulatorName.THRESHOLD_MULTIPLI_CONTRAST:
+        case SimulatorName.THRESHOLD_IODINE_CONTRAST:
             return ThresholdIodineContrast()
         case SimulatorName.IDENTITY_CONTRAST:
             return IdentityContrast()
-        case SimulatorName.SIMPLE_PREPROCESS_CONTRAST:
-            return Hu2MuContrast()
         case SimulatorName.FLOW_CONTRAST:
             return FlowContrast()
         case SimulatorName.CL_MARKER_CONTRAST:

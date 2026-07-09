@@ -100,6 +100,22 @@ class RotateDRR(Protocol):
         """
         ...
     
+    def get_projections_at_frames(
+        self, 
+        frames: list[int],
+        volume: torch.Tensor,
+        coronary: torch.Tensor,
+        affine: np.ndarray
+    ) -> torch.Tensor:
+        """
+        Get DRR images at given frames
+        Args:
+            frames (list[int]): list of frame numbers, starting from 0
+        Returns:
+            torch.Tensor: shape = (n, c, h, w), n = len(frames), c = 1, h = c_arm_geometry.height, w = c_arm_geometry.width
+        """
+        ...
+    
     def get_R_T_at_frame(
         self,
         frame: int

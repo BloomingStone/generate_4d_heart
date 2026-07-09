@@ -150,6 +150,7 @@ test/test_data/*
 test/test_data
 
 test/output/*
+output/*
 
 *.prof
 *.lprof
