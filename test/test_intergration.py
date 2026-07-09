@@ -253,11 +253,17 @@ def test_chest_data_with_background(
 
     # Verify output files exist
     assert (output_dir / "rotate_dsa_raw.tif").exists()
-    assert (output_dir / "rotate_dsa_raw.mp4").exists()
-    assert (output_dir / "rotate_dsa.mp4").exists()
     assert (output_dir / "rotate_dsa.json").exists()
-    assert (output_dir / "label.mp4").exists()
-    assert (output_dir / "depth_map.mp4").exists()
+    if dsa.drr.rotate_cfg.total_frame > 60:
+        assert (output_dir / "rotate_dsa_raw.mp4").exists()
+        assert (output_dir / "rotate_dsa.mp4").exists()
+        assert (output_dir / "label.mp4").exists()
+        assert (output_dir / "depth_map.mp4").exists()
+    else:
+        assert (output_dir / "rotate_dsa_raw.gif").exists()
+        assert (output_dir / "rotate_dsa.gif").exists()
+        assert (output_dir / "label.gif").exists()
+        assert (output_dir / "depth_map.gif").exists()
 
 
 @pytest.mark.parametrize("simulator_name", (

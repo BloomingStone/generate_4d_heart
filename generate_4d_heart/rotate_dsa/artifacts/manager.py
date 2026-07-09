@@ -17,25 +17,30 @@ from .stent import generate_stent
 
 @dataclass
 class GuideWireConfig:
-    radius_mm: float = 0.2
+    radius_mm: float = 0.3
     mu: float = MU_GUIDE_WIRE
 
 
 @dataclass
 class MarkerConfig:
-    distance_mm: float = 6.0
+    distance_mm: float = 13
     radius_mm: float = 0.5
     mu: float = MU_MARKER
-    margin_ratio: float = 0.9
-
+    margin_ratio: float = 0.8
+    """
+    Margin ratio for marker placement along the guide wire centerline, 
+    to avoid placing markers too close to the ends of the centerline.
+    """
+    
 
 @dataclass
 class StentConfig:
     radius_mm: float = 1.5
-    strut_radius_mm: float = 0.1
-    n_wires: int = 8
+    strut_radius_mm: float = 0.15
+    n_wires: int = 6
     mu: float = MU_GUIDE_WIRE
-
+    margin_from_marker_mm: float = 1
+    """Margin in mm from the nearest marker to the stent ends."""
 
 @dataclass
 class ExternalArtifactConfig:
@@ -92,65 +97,73 @@ class ArtifactManager:
         artifacts: list[Artifact] = []
         centerline_world: np.ndarray | None = None
         marker_centers: list[np.ndarray] | None = None
-
-        # 1. Guide wire
-        if self.config.guide_wire is not None:
-            gw_cfg = self.config.guide_wire
-            gw_artifact, centerline_world = generate_guide_wire(
-                coronary_label=coronary_label,
-                cavity_label=cavity_label,
-                affine=affine,
-                wire_radius_mm=gw_cfg.radius_mm,
-                mu=gw_cfg.mu,
-            )
-            artifacts.append(gw_artifact)
-
-        # 2. Markers (require guide wire centerline)
-        if self.config.markers is not None:
-            if centerline_world is None:
+        
+        if self.config.guide_wire is None:
+            if self.config.markers is not None or self.config.stent is not None:
                 raise ValueError(
-                    "MarkerConfig requires a guide wire to be generated first. "
+                    "ArtifactManager: Cannot generate markers or stent without a guide wire. "
                     "Set guide_wire in ArtifactManagerConfig."
                 )
-            mk_cfg = self.config.markers
-            marker_artifacts = generate_markers(
-                centerline_world=centerline_world,
-                marker_distance_mm=mk_cfg.distance_mm,
-                marker_radius_mm=mk_cfg.radius_mm,
-                mu=mk_cfg.mu,
-                margin_ratio=mk_cfg.margin_ratio,
-            )
-            artifacts.extend(marker_artifacts)
-            marker_centers = [np.array(m.mesh.center) for m in marker_artifacts]
+            return artifacts  # empty list
+
+        # 1. Guide wire
+        gw_cfg = self.config.guide_wire
+        gw_artifact, centerline_world = generate_guide_wire(
+            coronary_label=coronary_label,
+            cavity_label=cavity_label,
+            affine=affine,
+            wire_radius_mm=gw_cfg.radius_mm,
+            mu=gw_cfg.mu,
+        )
+        artifacts.append(gw_artifact)
+        
+        if self.config.markers is None:
+            if self.config.stent is not None:
+                raise ValueError(
+                    "ArtifactManager: Cannot generate stent without markers. "
+                    "Set markers in ArtifactManagerConfig."
+                )
+            return artifacts  # only guide wire
+
+        # 2. Markers (require guide wire centerline)
+        mk_cfg = self.config.markers
+        marker_artifacts = generate_markers(
+            centerline_world=centerline_world,
+            marker_distance_mm=mk_cfg.distance_mm,
+            marker_radius_mm=mk_cfg.radius_mm,
+            mu=mk_cfg.mu,
+            margin_ratio=mk_cfg.margin_ratio,
+        )
+        artifacts.extend(marker_artifacts)
+        marker_centers = [np.array(m.mesh.center) for m in marker_artifacts]
+        
+        if self.config.stent is None:
+            return artifacts  # guide wire + markers
 
         # 3. Stent (requires guide wire centreline + marker positions)
-        if self.config.stent is not None:
-            if centerline_world is None or marker_centers is None or len(marker_centers) < 2:
-                raise ValueError(
-                    "StentConfig requires a guide wire and at least 2 markers. "
-                    "Set both guide_wire and markers in ArtifactManagerConfig."
-                )
-            st_cfg = self.config.stent
-            # Find nearest centreline indices to the two markers
-            from scipy.spatial import KDTree
-            tree = KDTree(centerline_world)
-            _, idx0 = tree.query(marker_centers[0])   # distal marker
-            _, idx1 = tree.query(marker_centers[1])   # proximal marker
-            idx_proximal = int(min(idx0, idx1))
-            idx_distal = int(max(idx0, idx1))
-            if idx_distal - idx_proximal < 2:
-                idx_distal = min(idx_proximal + 2, len(centerline_world) - 1)
+        st_cfg = self.config.stent
+        avg_cl_d = np.mean(np.linalg.norm(np.diff(centerline_world, axis=0), axis=1))
+        idx_from_marker = int(st_cfg.margin_from_marker_mm / avg_cl_d)
+        # Find nearest centreline indices to the two markers
+        from scipy.spatial import KDTree
+        tree = KDTree(centerline_world)
+        _, idx0 = tree.query(marker_centers[0])   # distal marker
+        _, idx1 = tree.query(marker_centers[1])   # proximal marker
+        idx_proximal = int(min(idx0, idx1)) + idx_from_marker
+        idx_distal = int(max(idx0, idx1)) - idx_from_marker
+        if idx_distal - idx_proximal < 2:
+            idx_distal = min(idx_proximal + 2, len(centerline_world) - 1)
 
-            stent_artifact = generate_stent(
-                centerline_world=centerline_world,
-                idx_proximal=idx_proximal,
-                idx_distal=idx_distal,
-                stent_radius_mm=st_cfg.radius_mm,
-                strut_radius_mm=st_cfg.strut_radius_mm,
-                n_wires=st_cfg.n_wires,
-                mu=st_cfg.mu,
-            )
-            artifacts.append(stent_artifact)
+        stent_artifact = generate_stent(
+            centerline_world=centerline_world,
+            idx_proximal=idx_proximal,
+            idx_distal=idx_distal,
+            stent_radius_mm=st_cfg.radius_mm,
+            strut_radius_mm=st_cfg.strut_radius_mm,
+            n_wires=st_cfg.n_wires,
+            mu=st_cfg.mu,
+        )
+        artifacts.append(stent_artifact)
 
         # 4. External mesh files
         for ext_cfg in self.config.external_files:
