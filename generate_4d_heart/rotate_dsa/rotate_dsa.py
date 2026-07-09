@@ -23,7 +23,7 @@ from .contrast_simulator import ContrastSimulator
 from .rotate_drr import RotateDRR, CArmGeometry
 from .types import Sec
 from .cardiac_phase import CardiacPhase
-from ..saver import save_tif, save_gif, save_pngs, save_deepthmap_gif
+from ..saver import save_tif, save_gif, save_pngs, save_deepthmap_gif, save_video, save_deepthmap_video
 from .postprocess import postprocess_drr
 from .torch3d_label_renderer import Torch3DLabelRenderer
 
@@ -258,20 +258,34 @@ class RotateDSA:
         output = self.run(coronary_type)
         
         phase_0_data = self.reader.get_phase_0_data(coronary_type)
+        video_fps = self.drr.rotate_cfg.fps
+        total_frame = self.drr.rotate_cfg.total_frame
 
         with ProcessPoolExecutor(max_workers=4) as executor:
             futures = [
                 executor.submit(save_tif, output_dir / "rotate_dsa_raw.tif", output.raw_frames),
-                executor.submit(save_gif, output_dir / "rotate_dsa.gif", output.vis_frames, gif_fps, cmap='gray', vmin=0, vmax=255),
-                executor.submit(save_gif, output_dir / "rotate_dsa_raw.gif", output.raw_frames, gif_fps, cmap='gray'),
-                executor.submit(save_gif, output_dir / "label.gif", output.labels * 255, gif_fps, cmap='gray'),
-                executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", output.depth_maps, gif_fps),
                 executor.submit(save_pngs, output_dir / "rotate_dsa", output.vis_frames),
                 executor.submit(save_pngs, output_dir / "label", output.labels * 255),
                 executor.submit(np.savez_compressed, output_dir / "label.npz", output.labels),
                 executor.submit(np.savez_compressed, output_dir / "depth_map.npz", output.depth_maps),
-                executor.submit(save_gif, output_dir / "artifacts_proj.gif", output.artifacts_proj, gif_fps),
             ]
+
+            if total_frame > 60:
+                futures.extend([
+                    executor.submit(save_video, output_dir / "rotate_dsa.mp4", output.vis_frames, video_fps, vmin=0, vmax=255),
+                    executor.submit(save_video, output_dir / "rotate_dsa_raw.mp4", output.raw_frames, video_fps),
+                    executor.submit(save_video, output_dir / "label.mp4", output.labels * 255, video_fps),
+                    executor.submit(save_deepthmap_video, output_dir / "depth_map.mp4", output.depth_maps, video_fps),
+                    executor.submit(save_video, output_dir / "artifacts_proj.mp4", output.artifacts_proj, video_fps),
+                ])
+            else:
+                futures.extend([
+                    executor.submit(save_gif, output_dir / "rotate_dsa.gif", output.vis_frames, gif_fps, cmap='gray', vmin=0, vmax=255),
+                    executor.submit(save_gif, output_dir / "rotate_dsa_raw.gif", output.raw_frames, gif_fps, cmap='gray'),
+                    executor.submit(save_gif, output_dir / "label.gif", output.labels * 255, gif_fps, cmap='gray'),
+                    executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", output.depth_maps, gif_fps),
+                    executor.submit(save_gif, output_dir / "artifacts_proj.gif", output.artifacts_proj, gif_fps),
+                ])
             # phase_0_data.save() 含 torch 张量，在当前进程运行，与子进程池并行
             meta = phase_0_data.save(
                 output_dir,
@@ -298,15 +312,26 @@ class RotateDSA:
     ) -> tuple[np.ndarray, np.ndarray]:
         labels, depth_maps = self.run_no_drr(coronary_type)
         phase_0_data = self.reader.get_phase_0_data(coronary_type)
+        video_fps = self.drr.rotate_cfg.fps
+        total_frame = self.drr.rotate_cfg.total_frame
 
         with ProcessPoolExecutor(max_workers=4) as executor:
             futures = [
-                executor.submit(save_gif, output_dir / "label.gif", labels * 255, gif_fps, cmap='gray'),
-                executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", depth_maps, gif_fps),
                 executor.submit(save_pngs, output_dir / "label", labels * 255),
                 executor.submit(np.savez_compressed, output_dir / "label.npz", labels),
                 executor.submit(np.savez_compressed, output_dir / "depth_map.npz", depth_maps),
             ]
+
+            if total_frame > 60:
+                futures.extend([
+                    executor.submit(save_video, output_dir / "label.mp4", labels * 255, video_fps),
+                    executor.submit(save_deepthmap_video, output_dir / "depth_map.mp4", depth_maps, video_fps),
+                ])
+            else:
+                futures.extend([
+                    executor.submit(save_gif, output_dir / "label.gif", labels * 255, gif_fps, cmap='gray'),
+                    executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", depth_maps, gif_fps),
+                ])
             # phase_0_data.save() 含 torch 张量，在当前进程运行
             meta = phase_0_data.save(
                 output_dir,

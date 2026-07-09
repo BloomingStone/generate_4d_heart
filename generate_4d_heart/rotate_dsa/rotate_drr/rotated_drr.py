@@ -55,6 +55,29 @@ class RotatedParameters:
 
     def to_dict(self) -> dict:
         return asdict(self)
+    
+    @staticmethod
+    def from_alpha_range(
+        total_frame: int,
+        alpha_start: Degree,
+        alpha_end: Degree,
+        fps: float = 30.0,
+        beta_start: Degree = 0.0,
+        coordinate_system: str = "RAS",
+        parameterization: str = "euler_angles",
+        convention: str = "ZXY"
+    ) -> RotatedParameters:
+        angular_velocity = (alpha_end - alpha_start) * fps / total_frame
+        return RotatedParameters(
+            total_frame=total_frame,
+            alpha_start=alpha_start,
+            beta_start=beta_start,
+            angular_velocity=angular_velocity,
+            fps=fps,
+            coordinate_system=coordinate_system,
+            parameterization=parameterization,
+            convention=convention
+    )
 
 
 class RotateDRR(Protocol):

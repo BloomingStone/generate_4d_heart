@@ -96,6 +96,8 @@ def save_gif(
     if frames_np.ndim == 2:
         frames_np = frames_np[None]  # (H, W) → (1, H, W)
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     h, w = frames_np.shape[1], frames_np.shape[2]
 
     dpi = 100
@@ -141,7 +143,8 @@ def save_deepthmap_gif(
 ) -> None:
     depth_maps = depth_maps.squeeze()
     depth_maps_np = depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
-    vmin = np.min(depth_maps_np[depth_maps_np>0])
+    pos = depth_maps_np[depth_maps_np > 0]
+    vmin = np.min(pos) if pos.size > 0 else 0.0
     vmax = np.max(depth_maps_np)
     
     save_gif(
@@ -151,4 +154,65 @@ def save_deepthmap_gif(
         cmap='gray',
         vmin=vmin,
         vmax=vmax
+    )
+
+
+def save_video(
+    output_path: Path,
+    frames: torch.Tensor | np.ndarray,
+    fps: float = 30.0,
+    vmin: float | None = None,
+    vmax: float | None = None,
+) -> None:
+    """Save frames as an MP4 video using OpenCV.
+
+    Frames are normalized to [0, 255] uint8 using the provided vmin/vmax
+    (or auto-scaled from data min/max if not given).
+    """
+    print(f"saving: {output_path}")
+    frames = frames.squeeze()
+    frames_np = frames.cpu().numpy() if isinstance(frames, torch.Tensor) else frames
+    if frames_np.ndim == 2:
+        frames_np = frames_np[None]  # (H, W) → (1, H, W)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if vmin is None:
+        vmin = np.min(frames_np)
+    if vmax is None:
+        vmax = np.max(frames_np)
+
+    h, w = frames_np.shape[1], frames_np.shape[2]
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h), isColor=False)
+
+    for i in range(frames_np.shape[0]):
+        frame = frames_np[i]
+        if vmax - vmin > 1e-8:
+            frame_norm = np.clip((frame - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
+        else:
+            frame_norm = np.zeros_like(frame, dtype=np.uint8)
+        out.write(frame_norm)
+
+    out.release()
+
+
+def save_deepthmap_video(
+    output_path: Path,
+    depth_maps: torch.Tensor | np.ndarray,
+    fps: float = 30.0,
+) -> None:
+    depth_maps = depth_maps.squeeze()
+    depth_maps_np = depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
+    pos = depth_maps_np[depth_maps_np > 0]
+    vmin = np.min(pos) if pos.size > 0 else 0.0
+    vmax = np.max(depth_maps_np)
+
+    save_video(
+        output_path,
+        depth_maps_np,
+        fps=fps,
+        vmin=vmin,
+        vmax=vmax,
     )

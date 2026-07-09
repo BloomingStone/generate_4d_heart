@@ -162,11 +162,17 @@ def test_rotate_dsa_integration_with_artifacts(
 
     # Verify output files exist
     assert (output_dir / "rotate_dsa_raw.tif").exists()
-    assert (output_dir / "rotate_dsa_raw.gif").exists()
-    assert (output_dir / "rotate_dsa.gif").exists()
     assert (output_dir / "rotate_dsa.json").exists()
-    assert (output_dir / "label.gif").exists()
-    assert (output_dir / "depth_map.gif").exists()
+    if dsa.drr.rotate_cfg.total_frame > 60:
+        assert (output_dir / "rotate_dsa_raw.mp4").exists()
+        assert (output_dir / "rotate_dsa.mp4").exists()
+        assert (output_dir / "label.mp4").exists()
+        assert (output_dir / "depth_map.mp4").exists()
+    else:
+        assert (output_dir / "rotate_dsa_raw.gif").exists()
+        assert (output_dir / "rotate_dsa.gif").exists()
+        assert (output_dir / "label.gif").exists()
+        assert (output_dir / "depth_map.gif").exists()
 
 
 @pytest.mark.parametrize("simulator_name", (
@@ -216,7 +222,7 @@ def test_accelerate(
 
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.MULTIPLI_CONTRAST
+    SimulatorName.HU2MU_CONTRAST, SimulatorName.MULTIPLI_CONTRAST
 ))
 def test_chest_data_with_background(
     output_root_dir: Path,
@@ -247,11 +253,11 @@ def test_chest_data_with_background(
 
     # Verify output files exist
     assert (output_dir / "rotate_dsa_raw.tif").exists()
-    assert (output_dir / "rotate_dsa_raw.gif").exists()
-    assert (output_dir / "rotate_dsa.gif").exists()
+    assert (output_dir / "rotate_dsa_raw.mp4").exists()
+    assert (output_dir / "rotate_dsa.mp4").exists()
     assert (output_dir / "rotate_dsa.json").exists()
-    assert (output_dir / "label.gif").exists()
-    assert (output_dir / "depth_map.gif").exists()
+    assert (output_dir / "label.mp4").exists()
+    assert (output_dir / "depth_map.mp4").exists()
 
 
 @pytest.mark.parametrize("simulator_name", (
@@ -284,8 +290,8 @@ def test_chest_data_background_as_image(
 
     # Verify output files exist
     assert (output_dir / "rotate_dsa_raw.tif").exists()
-    assert (output_dir / "rotate_dsa_raw.gif").exists()
-    assert (output_dir / "rotate_dsa.gif").exists()
+    assert (output_dir / "rotate_dsa_raw.mp4").exists()
+    assert (output_dir / "rotate_dsa.mp4").exists()
     assert (output_dir / "rotate_dsa.json").exists()
-    assert (output_dir / "label.gif").exists()
-    assert (output_dir / "depth_map.gif").exists()
+    assert (output_dir / "label.mp4").exists()
+    assert (output_dir / "depth_map.mp4").exists()
