@@ -184,8 +184,12 @@ def save_video(
 
     h, w = frames_np.shape[1], frames_np.shape[2]
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h), isColor=False)
+    # Prefer H.264 (avc1) for better quality; fall back to mp4v if unavailable
+    codec = cv2.VideoWriter_fourcc(*'avc1')
+    out = cv2.VideoWriter(str(output_path), codec, fps, (w, h), isColor=True)
+    if not out.isOpened():
+        codec = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(str(output_path), codec, fps, (w, h), isColor=True)
 
     for i in range(frames_np.shape[0]):
         frame = frames_np[i]
@@ -193,7 +197,8 @@ def save_video(
             frame_norm = np.clip((frame - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
         else:
             frame_norm = np.zeros_like(frame, dtype=np.uint8)
-        out.write(frame_norm)
+        # Write as 3-channel BGR to avoid chroma-subsampling quality loss on grayscale
+        out.write(cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR))
 
     out.release()
 

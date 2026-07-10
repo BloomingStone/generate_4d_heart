@@ -49,6 +49,14 @@ class RBFReader(DataReader):
     
     centering_mode: CenteringMode = "coronary_center"
     
+    centerline_constraint_enabled: bool = True
+    """
+    If True (default), the RBF control-point displacements are projected
+    to first-order preserve coronary centreline edge lengths, preventing
+    stretching/shrinking of guide wires, stents, and markers.
+    Set to False to disable the constraint and use the raw SSM motion.
+    """
+    
     background_nii: Path | None = None
     """
     Optional whole-chest background CT (same world coordinates as volume_nii).
@@ -118,7 +126,17 @@ class RBFReader(DataReader):
             num_components_used=self.num_components_used,
             motion_multiplier=self.motion_multiplier
         )
-        self.rbf = KDTreeRBF(ssm_result.landmark).to(self.device).eval()
+
+        # Extract coronary centre-lines for length-preserving RBF constraints
+        print("Extracting coronary centre-lines for RBF length constraint...")
+        centerline_lca = self.origin_data.lca.get_coronary_central_line("world")
+        centerline_rca = self.origin_data.rca.get_coronary_central_line("world")
+        self.rbf = KDTreeRBF(
+            ssm_result.landmark,
+            centerlines=[centerline_lca, centerline_rca],
+            centerline_downsample=3,
+            centerline_constraint_enabled=self.centerline_constraint_enabled,
+        ).to(self.device).eval()
         
         print("Caching grid points for RBF-based warping...")
         shape_zoomed = self.roi.shape_after_crop_and_zoom
@@ -524,7 +542,10 @@ class KDTreeRBF(nn.Module):
         chunk_size: int = 1_000_000,
         radius_factor: float = 3.0,
         k: int = 64,
-        n_ctrl_pts: int = 500
+        n_ctrl_pts: int = 500,
+        centerlines: list[np.ndarray] | None = None,
+        centerline_downsample: int = 3,
+        centerline_constraint_enabled: bool = True,
     ):
         super().__init__()
         interval = max(1, landmark.mesh.n_points // n_ctrl_pts)
@@ -552,6 +573,10 @@ class KDTreeRBF(nn.Module):
         """Original shape before flattening cached_pts, used to reshape the forward() output."""
         self._cached_idx: torch.Tensor | None = None
         """Pre-computed KDTree neighbour indices for cached_pts to avoid per-frame CPU query + GPU→CPU transfer."""
+        
+        # ── Optimize ctrl_disps with centerline edge-length constraints ──
+        if centerlines is not None and centerline_constraint_enabled:
+            self._constrain_centerline_lengths(centerlines, centerline_downsample)
     
     def cache_points(self, points: np.ndarray):
         device = self.ctrl_pts.device
@@ -572,7 +597,133 @@ class KDTreeRBF(nn.Module):
                 idx = idx[:, None]  # type: ignore
             idx_list.append(torch.from_numpy(idx))
         self._cached_idx = torch.cat(idx_list, dim=0)
-    
+
+    @torch.no_grad()
+    def _constrain_centerline_lengths(
+        self,
+        centerlines: list[np.ndarray],
+        downsample_step: int = 3,
+    ):
+        """
+        Optimize ``ctrl_disps`` for all phases to *first-order* preserve
+        centreline edge lengths.
+
+        For each edge :math:`e_i = a_{i+1} - a_i` we enforce
+
+        .. math::
+            e_i \\cdot (v_{i+1} - v_i) = 0
+
+        where :math:`v_i = \\sum_j w_{ij} D_j` is the RBF displacement.
+
+        The original displacement :math:`c_{\\text{orig}}` (stacked per-phase)
+        is projected onto the null-space of the constraint matrix :math:`A`
+        via the closed-form projection
+
+        .. math::
+            c' = c - A^T (A A^T + \\lambda I)^{-1} A c .
+        """
+        device = self.ctrl_pts.device
+        ctrl_pts_f = self.ctrl_pts.float()  # (M, 3)
+        M = ctrl_pts_f.shape[0]
+        sigma2 = 2 * self.sigma ** 2
+
+        # ── 1. Downsample & upload centreline segments ──
+        cl_tensors: list[torch.Tensor] = []
+        for cl in centerlines:
+            sub = cl[::downsample_step]
+            if len(sub) >= 2:
+                cl_tensors.append(torch.from_numpy(sub).to(device, torch.float32))
+
+        if not cl_tensors:
+            return
+
+        # ── 2. Build constraint matrix A ∈ R^{K × 3M} ──
+        A_rows: list[torch.Tensor] = []
+        total_edges = 0
+
+        for cl_pts in cl_tensors:  # (N_s, 3)
+            N = cl_pts.shape[0]
+            edges = cl_pts[1:] - cl_pts[:-1]  # (N-1, 3)
+
+            # Pairwise distances  →  Gaussian weights (same scheme as forward())
+            dist = torch.cdist(cl_pts, ctrl_pts_f)                     # (N, M)
+            mask = (dist <= self.radius)
+            w = torch.exp(-dist.square() / sigma2) * mask
+            w_sum = w.sum(dim=1, keepdim=True).clamp(min=1e-5)
+            w = w / w_sum                                               # (N, M)
+
+            # Δw for each edge
+            dw = w[1:] - w[:-1]                                         # (N-1, M)
+
+            # A_seg[k, 3j+c] = dw[k,j] · edges[k,c]
+            A_seg = (dw.unsqueeze(1) * edges.unsqueeze(2)).reshape(N - 1, 3 * M)
+            A_rows.append(A_seg)
+            total_edges += N - 1
+
+        A = torch.cat(A_rows, dim=0)  # (K, 3M)  float32
+        K = A.shape[0]
+
+        # ── 3. Precompute A A^T (float64 for stability) ──
+        A_f64 = A.to(torch.float64)                                  # (K, 3M)
+        ATA = A_f64 @ A_f64.T                                        # (K, K)
+        # Tiny regularisation only to handle exact rank deficiency
+        reg = torch.eye(K, device=device, dtype=torch.float64) * 1e-10
+        ATA_reg = ATA + reg
+
+        print(f"KDTreeRBF: constraining {K} centreline edge-lengths "
+              f"across {M} control points for {self.n_phases} phases")
+
+        # ── 4. Compute residual BEFORE projection (float32, for reference) ──
+        ctrl_disps_f32 = self.ctrl_disps.float().clone()            # (P, M, 3)
+        residual_before = 0.0
+        for phase in range(self.n_phases):
+            c_test = ctrl_disps_f32[phase].reshape(-1)               # (3M,)
+            residual_before += (A @ c_test).norm().item()
+        residual_before /= self.n_phases
+
+        # ── 5. Project each phase (solve in float64), then rescale to preserve
+        #    original displacement magnitude.
+        #    Rescaling is safe here: A(α c') = α A c' = 0, so the edge-length
+        #    constraint remains exactly satisfied after uniform scaling.
+        norm_ratios: list[float] = []
+        for phase in range(self.n_phases):
+            c_orig_f64 = ctrl_disps_f32[phase].reshape(-1).to(torch.float64)  # (3M,)
+            orig_norm = c_orig_f64.norm().item()
+            
+            rhs = A_f64 @ c_orig_f64                                        # (K,)
+            y = torch.linalg.solve(ATA_reg, rhs)                            # (K,)
+            c_new_f64 = c_orig_f64 - A_f64.T @ y                            # (3M,)
+            
+            # Rescale to restore original displacement magnitude
+            new_norm = c_new_f64.norm().item()
+            if new_norm > 1e-12:
+                c_new_f64 = c_new_f64 * (orig_norm / new_norm)
+            
+            norm_ratios.append(new_norm / orig_norm if orig_norm > 0 else 1.0)
+            
+            ctrl_disps_f32[phase] = c_new_f64.float().reshape(M, 3)
+
+        # ── 6. Compute residual AFTER projection (float32, before half-cast) ──
+        residual_after = 0.0
+        for phase in range(self.n_phases):
+            c_test = ctrl_disps_f32[phase].reshape(-1)
+            residual_after += (A @ c_test).norm().item()
+        residual_after /= self.n_phases
+
+        # ── 7. Log displacement magnitude change ──
+        mean_ratio = float(np.mean(norm_ratios))
+        min_ratio = float(np.min(norm_ratios))
+        max_ratio = float(np.max(norm_ratios))
+
+        # ── 8. Write back ──
+        self.ctrl_disps.copy_(ctrl_disps_f32.half())
+
+        print(f"KDTreeRBF: mean constraint residual: "
+              f"{residual_before:.4f} → {residual_after:.6f} (float32), "
+              f"displacement norm ratio (pre-rescale): {mean_ratio:.4f} "
+              f"[{min_ratio:.4f}, {max_ratio:.4f}] → rescaled to 1.0, "
+              f"half-precision stored")
+
     @property
     def copy_stream(self) -> torch.cuda.Stream|None:
         device = self.ctrl_pts.device

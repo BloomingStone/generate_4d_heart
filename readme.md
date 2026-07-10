@@ -141,6 +141,96 @@ reader = RBFReader(
 
 `Torch3DLabelRenderer.render_line_integral()` 使用 PyTorch3D rasterizer 计算 mesh 的 X 射线线积分贡献（`faces_per_pixel=2` → `path_length = back_depth - front_depth`），结果叠加在 DRR 的 line integral 上。
 
+## 中心线长度保持约束（Centerline Length Constraint）
+
+RBF 形变场将 SSM 控制点位移插值到全部空间点。导丝、支架等人造结构附着在冠脉表面，随 RBF 形变时会被非均匀拉伸或压缩。该项目在 `KDTreeRBF` 中实现了一阶中心线长度保持约束，从源头抑制这种非物理变形。
+
+### 推导
+
+设 $a_i \in \mathbb{R}^3$ 为冠脉中心线点（LCA 与 RCA），$c_j \in \mathbb{R}^3$ 为 SSM 控制点，$D_j \in \mathbb{R}^3$ 为控制点位移。RBF 插值使用归一化高斯核：
+
+$$v_i = \sum_{j} w_{ij} D_j,\qquad w_{ij} = \frac{\exp(-\|a_i - c_j\|^2 / 2\sigma^2)}{\sum_{k} \exp(-\|a_i - c_k\|^2 / 2\sigma^2)}$$
+
+相邻中心线点 $a_i, a_{i+1}$ 的边向量为 $e_i = a_{i+1} - a_i$。形变后该边的长度变化一阶展开为：
+
+$$\|(a_{i+1} + v_{i+1}) - (a_i + v_i)\| - \|e_i\| \approx \hat{e}_i \cdot (v_{i+1} - v_i) + O(\|v\|^2)$$
+
+即 $\Delta L \approx \hat{e} \cdot \Delta v$ ——边长的**一阶变化等于位移差在边单位方向上的投影**。如图所示：
+
+```
+      Δv₁ ──→           Δv₁
+    ●───────●         ●───●
+   aᵢ      aᵢ₊₁     aᵢ'  aᵢ₊₁'
+    
+    Δv ∥ ê → 拉伸/压缩
+    Δv ⟂ ê → 弯曲（不影响长度）
+```
+
+令一阶项为零，得到线性约束：
+
+$$e_i \cdot (v_{i+1} - v_i) = 0$$
+
+代入 $v_i = \sum_j w_{ij} D_j$，记 $\Delta w_{ij} = w_{i+1,j} - w_{i,j}$：
+
+$$\sum_{j} \Delta w_{ij}\ (e_i \cdot D_j) = 0$$
+
+将所有 $K$ 条边的约束写成矩阵形式 $A c = 0$，其中 $c \in \mathbb{R}^{3M}$ 是堆叠的控制点位移向量（$M$ 个控制点，每点 3 坐标），$A \in \mathbb{R}^{K \times 3M}$ 的行构造为：
+
+$$A_{i,\ 3j + d} = \Delta w_{ij} \cdot e_i^{(d)},\qquad d \in \{0,1,2\}$$
+
+为找到最接近原始 SSM 位移 $c_0$ 且满足约束的 $c'$，求解带约束最小二乘：
+
+$$\min_{c'} \|c' - c_0\|^2 \quad \text{s.t.} \quad A c' = 0$$
+
+该问题有闭式解（Lagrange 乘子法）：
+
+$$c'_{\text{raw}} = c_0 - A^T (A A^T + \lambda I)^{-1} A c_0$$
+
+其中 $\lambda = 10^{-10}$ 是用于处理秩亏的正则化项。该投影在 `KDTreeRBF._constrain_centerline_lengths()` 中实现。
+
+### 位移幅值恢复
+
+投影会去除 $c_0$ 中沿 $A$ 行空间的分量（即导致中心线拉伸/收缩的成分），导致 $\|c'_{\text{raw}}\| < \|c_0\|$（实测约减少 14%）。由于 $A$ 是线性算子，均匀缩放不破坏约束：
+
+$$A(\alpha \cdot c') = \alpha \cdot A c' = \alpha \cdot 0 = 0$$
+
+因此可以在投影后做一步 rescale 恢复原始位移强度：
+
+$$c' = c'_{\text{raw}} \cdot \frac{\|c_0\|}{\|c'_{\text{raw}}\|}$$
+
+这样得到的 $c'$ 同时满足：
+- $A c' = 0$（中心线长度不变）
+- $\|c'\| = \|c_0\|$（位移强度不变）
+
+### 使用
+
+默认开启，无需额外配置。可通过 `RBFReader` 的 `centerline_constraint_enabled` 字段控制：
+
+```python
+# 开启（默认）
+reader = RBFReader(..., centerline_constraint_enabled=True)
+
+# 关闭（使用原始 SSM 形变场）
+reader = RBFReader(..., centerline_constraint_enabled=False)
+```
+
+初始化时输出约束统计：
+
+```
+KDTreeRBF: constraining 424 centreline edge-lengths across 500 control points for 20 phases
+KDTreeRBF: mean constraint residual: 834.8875 → 0.000035 (float32),
+           displacement norm ratio (pre-rescale): 0.8618 [0.8467, 0.8783] → rescaled to 1.0
+```
+
+- **约束残差**从 $834.89$ 降至 $3.5 \times 10^{-5}$（机器精度级别），一阶长度约束被精确满足。
+- **位移幅值**在投影后约降为原来的 $86\%$（$14\%$ 的成分导致中心线拉伸/收缩），经 rescale 恢复至 $100\%$。
+
+### 限制
+
+- 该约束仅维持**一阶**长度不变。对于大形变，高阶（弯曲）项仍可能引入微小长度变化。
+- 约束仅作用于冠脉中心线（LCA + RCA），不直接约束心肌等其他组织。心房、心室的收缩形变保持不变。
+- 降采样参数 `centerline_downsample=3` 在精度与计算代价间取得平衡；若中心线过密或过疏，可调整。
+
 ### TODOs
 
 + [ ] **其他 reader 适配 artifact**: 目前仅在 `RBFReader` 中实现了 artifact 的生成与形变。`VolumesReader`、`VolumeDVFReader`、`StaticVolumeReader`、`StaticLabelReader` 等尚未接入 `artifact_manager` 参数，且 `get_data()` 中未对 artifact mesh 施加运动形变。
