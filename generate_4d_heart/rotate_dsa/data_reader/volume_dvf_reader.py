@@ -14,8 +14,6 @@ import einops
 import pyvista as pv
 import cupy as cp
 from cupyx.scipy.ndimage import distance_transform_edt, binary_dilation, gaussian_filter
-from torch.utils.dlpack import to_dlpack as tensor2dlpack   #type: ignore
-from torch.utils.dlpack import from_dlpack as dlpack2tensor
 
 from ... import NUM_TOTAL_PHASE, CavityLabel
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
@@ -407,10 +405,11 @@ class VolumeDVFReader(DataReader):
 
 
 def tensor2cp(tensor: torch.Tensor, device: torch.device, dtype_cp=None):
+    x = cp.array(tensor.to(device))
     if dtype_cp is None:
-        return cp.from_dlpack(tensor2dlpack(tensor.to(device)))
+        return x
     else:
-        return cp.from_dlpack(tensor2dlpack(tensor.to(device))).astype(dtype_cp)
+        return x.astype(dtype_cp)
 
 
 class MovementEnhancer(Protocol):
@@ -483,7 +482,7 @@ class CoronaryBoundLVEnhancer(MovementEnhancer):
                 smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
             dvf_cp[:, :, *self.smooth_indices] = smoothed[:, :, *self.smooth_indices]
             
-            dvf = dlpack2tensor(dvf_cp)
+            dvf = torch.Tensor(dvf_cp)
             del dvf_cp
         return dvf
 
@@ -538,7 +537,7 @@ class CoronaryBoundLVLinearEnhancer(MovementEnhancer):
                 smoothed[:, i] = gaussian_filter(dvf_cp[:, i], sigma=2.0)
             dvf_cp[:, :, *self.smooth_indices] = smoothed[:, :, *self.smooth_indices]
             
-            dvf = dlpack2tensor(dvf_cp)
+            dvf = torch.Tensor(dvf_cp)
             del dvf_cp
         return dvf
 

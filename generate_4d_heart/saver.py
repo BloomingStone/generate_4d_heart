@@ -184,12 +184,8 @@ def save_video(
 
     h, w = frames_np.shape[1], frames_np.shape[2]
 
-    # Prefer H.264 (avc1) for better quality; fall back to mp4v if unavailable
-    codec = cv2.VideoWriter_fourcc(*'avc1')
-    out = cv2.VideoWriter(str(output_path), codec, fps, (w, h), isColor=True)
-    if not out.isOpened():
-        codec = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(str(output_path), codec, fps, (w, h), isColor=True)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h), isColor=True)
 
     for i in range(frames_np.shape[0]):
         frame = frames_np[i]

@@ -10,8 +10,6 @@ from cupyx.scipy.ndimage import label, center_of_mass
 import torch
 from torch import Tensor
 from torch.nn import functional as F
-from torch.utils.dlpack import from_dlpack as dlpack2tensor
-from torch.utils.dlpack import to_dlpack as tensor2dlpack   #type: ignore
 from nibabel.loadsave import load as nib_load
 from nibabel.nifti1 import Nifti1Image
 import pyvista as pv
@@ -82,12 +80,16 @@ def separate_coronary(coronary: Tensor, device: torch.device) -> tuple[Tensor, T
         lca (Tensor): LCA segmentation, dtype: torch.bool
         rca (Tensor): RCA segmentation, dtype: torch.bool
     """
+    
+    mempool = cp.get_default_memory_pool()
+    pinned_mem_pool = cp.get_default_pinned_memory_pool()
+    
     shape = coronary.shape
     coronary = coronary.squeeze()
     assert coronary.ndim == 3, "Coronary tensor after squeeze must be in shape (D, H, W)"
     
     with cp.cuda.Device(device.index):
-        coronary = cp.from_dlpack(tensor2dlpack(coronary.to(device)))
+        coronary = cp.array(coronary.to(device))
         labeled_array, num_features = label(coronary.astype(cp.int8))  # type: ignore
         
         if num_features <= 1:
@@ -104,13 +106,16 @@ def separate_coronary(coronary: Tensor, device: torch.device) -> tuple[Tensor, T
         center_0 = center_of_mass(region_0.astype(cp.float16))  # use float16 for fast computation
         center_1 = center_of_mass(region_1.astype(cp.float16))
         
-        region_0 = dlpack2tensor(region_0).reshape(shape).to(torch.bool)
-        region_1 = dlpack2tensor(region_1).reshape(shape).to(torch.bool)
+        region_0 = torch.tensor(region_0).reshape(shape).to(torch.bool)
+        region_1 = torch.tensor(region_1).reshape(shape).to(torch.bool)
     
         if center_0[0] > center_1[0]:
             return region_0, region_1
         else:
             return region_1, region_0
+    
+    mempool.free_all_blocks()
+    pinned_mem_pool.free_all_blocks()
 
 
 CenteringMode = Literal["coronary_center", "image_center"]
@@ -143,7 +148,7 @@ def get_centering_pos_in_origin_world(
 
     # centering_mode == "coronary_center"
     with cp.cuda.Device(device.index):
-        label_cp = cp.from_dlpack(tensor2dlpack(coronary_label.squeeze().to(device)))
+        label_cp = cp.array(coronary_label.squeeze().to(device))
         coords = cp.argwhere(label_cp > 0)
 
         if coords.size == 0:

@@ -2,10 +2,12 @@ from typing import Literal
 from dataclasses import dataclass, field
 from pathlib import Path
 import logging
+from pprint import pprint
 
 import numpy as np
 import pyvista as pv
-from scipy.spatial import KDTree
+from torch.utils.dlpack import from_dlpack as dlpack2tensor
+from cupyx.scipy.spatial import KDTree
 import torch
 from torch import Tensor
 from torch import nn
@@ -77,7 +79,7 @@ class RBFReader(DataReader):
         if self.background_nii is not None:
             print(f"\t- Using background_nii: {self.background_nii}")
         if self.artifact_manager is not None:
-            print(f"\t- Using artifact_manager: {self.artifact_manager.config}")
+            pprint(f"\t- Using artifact_manager: {self.artifact_manager.config}")
         
         logger.info(f"Loading data from {self.volume_nii}, {self.cavity_nii}, {self.coronary_nii}")
         self.n_phases = self.ssm_reader.n_phases
@@ -137,6 +139,7 @@ class RBFReader(DataReader):
             centerlines=[centerline_lca, centerline_rca],
             centerline_downsample=3,
             centerline_constraint_enabled=self.centerline_constraint_enabled,
+            device=self.device,
         ).to(self.device).eval()
         
         print("Caching grid points for RBF-based warping...")
@@ -176,6 +179,8 @@ class RBFReader(DataReader):
         origin_data: DataReader._Data,
         affine: np.ndarray,
     ) -> None:
+        mempool = cp.get_default_memory_pool()
+        pinned_mem_pool = cp.get_default_pinned_memory_pool()
         """
         Load and process the optional background CT, and apply inward feathering to the volume.
 
@@ -238,39 +243,36 @@ class RBFReader(DataReader):
         sample_vol = next(iter(origin_data.coronary.values())).volume.data
         D_vol, H_vol, W_vol = sample_vol.shape[-3:]
 
-        # Step 1: generate a full grid of volume voxel coordinates (D×H×W×3)
-        i = np.arange(D_vol)
-        j = np.arange(H_vol)
-        k = np.arange(W_vol)
-        vol_grid = np.stack(np.meshgrid(i, j, k, indexing='ij'), axis=-1)  # (D, H, W, 3)
+        # Step 1–5: CuPy-accelerated grid → bg-voxel distance computation
+        i = cp.arange(D_vol)
+        j = cp.arange(H_vol)
+        k = cp.arange(W_vol)
+        vol_grid = cp.stack(cp.meshgrid(i, j, k, indexing='ij'), axis=-1)  # (D, H, W, 3)
 
-        # Step 2: flatten to (N, 3) and add homogeneous coordinate for affine transform
-        vol_flat = vol_grid.reshape(-1, 3).astype(np.float32)
-        vol_h = np.pad(vol_flat, ((0, 0), (0, 1)), constant_values=1)  # (N, 4) — [i,j,k,1]
+        # Step 2: flatten to (N, 3) and add homogeneous coordinate
+        vol_flat = vol_grid.reshape(-1, 3).astype(cp.float32)
+        vol_h = cp.pad(vol_flat, ((0, 0), (0, 1)), constant_values=1)  # (N, 4)
 
         # Step 3: vol_voxel → world → bg_voxel
-        world_pts = vol_h @ affine.T   # (N, 4) — volume affine maps voxel→world
-        bg_pts = world_pts @ inv_bg.T  # (N, 4) — inverse bg affine maps world→bg voxel
-        bg_pts = bg_pts[:, :3]         # (N, 3) — drop homogeneous coordinate
+        affine_cp = cp.asarray(affine)
+        inv_bg_cp = cp.asarray(inv_bg)
+        world_pts = vol_h @ affine_cp.T
+        bg_pts = world_pts @ inv_bg_cp.T
+        bg_pts = bg_pts[:, :3]
 
-        # Step 4: distance from each point to the nearest AABB face.
-        # For an axis-aligned box, distance along each axis is
-        #   min(pt - lo, hi - pt).
-        # d_face takes the MIN across axes → L_inf norm (shortest "chessboard"
-        # distance to any face, in bg-voxel units).
-        d_min = bg_pts - bg_vox_min[None, :]     # (N, 3)
-        d_max = bg_vox_max[None, :] - bg_pts     # (N, 3)
-        d_face = np.minimum(d_min, d_max)         # (N, 3)
-        d_boundary = d_face.min(axis=-1)          # (N,) — shortest distance to any face
-        d_boundary = np.maximum(d_boundary, 0)    # clamp negative (outside AABB) to 0
+        # Step 4: distance from each point to the nearest AABB face
+        bg_vox_min_cp = cp.asarray(bg_vox_min)
+        bg_vox_max_cp = cp.asarray(bg_vox_max)
+        d_min = bg_pts - bg_vox_min_cp[None, :]
+        d_max = bg_vox_max_cp[None, :] - bg_pts
+        d_face = cp.minimum(d_min, d_max)
+        d_boundary = d_face.min(axis=-1)
+        d_boundary = cp.maximum(d_boundary, 0)
 
-        # Step 5: cosine inward ramp — 0 at the boundary, 1 at `feather` or deeper.
-        # Uses the same cosine profile as the background outward feathering below,
-        # so the two sides create a symmetric transition zone.
-        w = np.clip(d_boundary / feather, 0, 1).astype(np.float32)  # (N,) — 0→1
-        atten_cos = 0.5 * (1.0 - np.cos(np.pi * w))                 # (N,) — cosine easing
-        atten_cos = atten_cos.reshape(D_vol, H_vol, W_vol)          # (D, H, W)
-        atten = atten_cos  # alias for use below
+        # Step 5: cosine inward ramp — 0 at the boundary, 1 at `feather` or deeper
+        w = cp.clip(d_boundary / feather, 0, 1).astype(cp.float32)
+        atten_cos = 0.5 * (1.0 - cp.cos(cp.pi * w))
+        atten = cp.asnumpy(atten_cos.reshape(D_vol, H_vol, W_vol))
 
         # Step 6: apply inward attenuation directly in mu space, in-place.
         for cor in origin_data.coronary.values():
@@ -304,13 +306,15 @@ class RBFReader(DataReader):
                 bg_zero_min[1]:bg_zero_max[1],
                 bg_zero_min[2]:bg_zero_max[2]] = 0.0
 
-        from scipy.ndimage import distance_transform_edt
         aabb_mask = torch.zeros(bg_shape.tolist(), dtype=torch.bool)
         aabb_mask[bg_zero_min[0]:bg_zero_max[0],
                   bg_zero_min[1]:bg_zero_max[1],
                   bg_zero_min[2]:bg_zero_max[2]] = True
         outward_mask = ~aabb_mask  # True = outside contracted AABB → outward EDT
-        dist = torch.from_numpy(distance_transform_edt(outward_mask.numpy()))
+        # CuPy-accelerated distance transform on GPU
+        with cp.cuda.Device(self.device.index):
+            dist_cp = ndimage.distance_transform_edt(cp.asarray(outward_mask.numpy()))
+            dist = torch.from_numpy(cp.asnumpy(dist_cp))
         feather_mask = (dist > 0) & (dist <= feather)  # voxels outside contracted AABB, ≤feather away
         w = dist[feather_mask] / feather
         w_cos = (0.5 * (1 - torch.cos(np.pi * w))).to(bg_data.dtype)
@@ -325,6 +329,9 @@ class RBFReader(DataReader):
 
         print(f"Background: shape={bg_vol.shape[-3:]}, "
               f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
+        
+        mempool.free_all_blocks()
+        pinned_mem_pool.free_all_blocks()
 
     @torch.no_grad()
     def _warp_for_phase(
@@ -550,6 +557,7 @@ class KDTreeRBF(nn.Module):
         centerlines: list[np.ndarray] | None = None,
         centerline_downsample: int = 3,
         centerline_constraint_enabled: bool = True,
+        device: torch.device | None = None,
     ):
         super().__init__()
         interval = max(1, landmark.mesh.n_points // n_ctrl_pts)
@@ -569,7 +577,12 @@ class KDTreeRBF(nn.Module):
         self.k = k
         self.radius = sigma * radius_factor
         
-        self.tree = KDTree(ctrl_pts)
+        # Build CuPy KDTree on the target GPU device
+        if device is not None and device.type == 'cuda':
+            with cp.cuda.Device(device.index):
+                self.tree = KDTree(cp.asarray(ctrl_pts))
+        else:
+            self.tree = KDTree(cp.asarray(ctrl_pts))
         
         self._copy_stream: torch.cuda.Stream|None = None
         self.cached_pts: torch.Tensor|None  = None
@@ -588,18 +601,18 @@ class KDTreeRBF(nn.Module):
         self.cached_pts = torch.from_numpy(points).to(device, torch.half, non_blocking=True)
     
     def cache_kdtree_indices(self, points_np: np.ndarray):
-        """Pre-compute and store KDTree neighbour indices. Skips the CPU query in forward()."""
+        """Pre-compute and store KDTree neighbour indices using CuPy GPU KDTree + DLPack. Skips the CPU query in forward()."""
         N = points_np.shape[0]
         idx_list = []
         for start in range(0, N, self.chunk_size):
             end = min(start + self.chunk_size, N)
             _, idx = self.tree.query(
-                points_np[start:end], k=self.k,
-                distance_upper_bound=self.radius, workers=-1,
+                cp.asarray(points_np[start:end]), k=self.k,
+                distance_upper_bound=self.radius,
             )
             if self.k == 1:
                 idx = idx[:, None]  # type: ignore
-            idx_list.append(torch.from_numpy(idx))
+            idx_list.append(dlpack2tensor(idx.toDlpack()))
         self._cached_idx = torch.cat(idx_list, dim=0)
 
     @torch.no_grad()
@@ -827,7 +840,7 @@ class KDTreeRBF(nn.Module):
                 prev = (start, end, idx_gpu)
             self._update_motion_by_prev(points_gpu, disp, motion, prev)
         else:
-            # Slow path: run KDTree query on CPU
+            # Slow path: run KDTree query on GPU via CuPy + DLPack
             points_np_flat = points_np.reshape(-1, 3)  # type: ignore
             points_gpu = points_gpu.reshape(-1, 3)
             N = points_gpu.shape[0]
@@ -836,14 +849,12 @@ class KDTreeRBF(nn.Module):
             for start in range(0, N, self.chunk_size):
                 end = min(start + self.chunk_size, N)
                 _, idx = self.tree.query(
-                    points_np_flat[start:end], k=self.k,
-                    distance_upper_bound=self.radius, workers=-1,
+                    cp.asarray(points_np_flat[start:end]), k=self.k,
+                    distance_upper_bound=self.radius,
                 )
                 if self.k == 1:
                     idx = idx[:, None]  # type: ignore
-                idx_cpu = torch.from_numpy(idx)
-                with torch.cuda.stream(self.copy_stream):
-                    idx_gpu = idx_cpu.to(device)
+                idx_gpu = dlpack2tensor(idx.toDlpack())
                 self._update_motion_by_prev(points_gpu, disp, motion, prev)
                 prev = (start, end, idx_gpu)
             self._update_motion_by_prev(points_gpu, disp, motion, prev)

@@ -141,6 +141,12 @@ reader = RBFReader(
 
 `Torch3DLabelRenderer.render_line_integral()` 使用 PyTorch3D rasterizer 计算 mesh 的 X 射线线积分贡献（`faces_per_pixel=2` → `path_length = back_depth - front_depth`），结果叠加在 DRR 的 line integral 上。
 
+### TODOs
+
++ [ ] **其他 reader 适配 artifact**: 目前仅在 `RBFReader` 中实现了 artifact 的生成与形变。`VolumesReader`、`VolumeDVFReader`、`StaticVolumeReader`、`StaticLabelReader` 等尚未接入 `artifact_manager` 参数，且 `get_data()` 中未对 artifact mesh 施加运动形变。
++ [ ] **外部输入 artifact 测试**: `ExternalArtifactConfig` 已定义，但尚未编写加载外部 `.vtp`/`.ply` 文件的单元测试和集成测试。
++ [ ] 增加对支架的模拟
+
 ## 中心线长度保持约束（Centerline Length Constraint）
 
 RBF 形变场将 SSM 控制点位移插值到全部空间点。导丝、支架等人造结构附着在冠脉表面，随 RBF 形变时会被非均匀拉伸或压缩。该项目在 `KDTreeRBF` 中实现了一阶中心线长度保持约束，从源头抑制这种非物理变形。
@@ -231,9 +237,4 @@ KDTreeRBF: mean constraint residual: 834.8875 → 0.000035 (float32),
 - 约束仅作用于冠脉中心线（LCA + RCA），不直接约束心肌等其他组织。心房、心室的收缩形变保持不变。
 - 降采样参数 `centerline_downsample=3` 在精度与计算代价间取得平衡；若中心线过密或过疏，可调整。
 
-### TODOs
-
-+ [ ] **其他 reader 适配 artifact**: 目前仅在 `RBFReader` 中实现了 artifact 的生成与形变。`VolumesReader`、`VolumeDVFReader`、`StaticVolumeReader`、`StaticLabelReader` 等尚未接入 `artifact_manager` 参数，且 `get_data()` 中未对 artifact mesh 施加运动形变。
-+ [ ] **外部输入 artifact 测试**: `ExternalArtifactConfig` 已定义，但尚未编写加载外部 `.vtp`/`.ply` 文件的单元测试和集成测试。
-+ [ ] 增加对支架的模拟
 

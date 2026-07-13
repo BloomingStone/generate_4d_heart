@@ -97,6 +97,12 @@ def main(
     simple_drr: TorchDRR = pig_data_drr(pig_data_geom()),
 ):
     """RBFReader with artifact_manager + RotateDSA integration as pigdata settings."""
+    output_dir = output / f"{simulator_name}_{coronary_type}"
+    if output_dir.exists():
+        ans = input("output_dir exists, overwrite it? (Y/n)")
+        if ans.lower() != "y" and ans != "":
+            raise ValueError("Output directory already exists and user chose not to overwrite it.")
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     reader = RBFReader(
         volume_nii=cfg.volume_nii,
@@ -110,12 +116,6 @@ def main(
 
     dsa = RotateDSA(reader=reader, drr=simple_drr)
 
-    output_dir = output / f"{simulator_name}_{coronary_type}"
-    if output_dir.exists():
-        ans = input("output_dir exists, overwrite it? (Y/n)")
-        if ans.lower() != "y":
-            raise ValueError("Output directory already exists and user chose not to overwrite it.")
-    output_dir.mkdir(parents=True, exist_ok=False)
     dsa.run_and_save(output_dir=output_dir, coronary_type=coronary_type)
 
 if __name__ == "__main__":
