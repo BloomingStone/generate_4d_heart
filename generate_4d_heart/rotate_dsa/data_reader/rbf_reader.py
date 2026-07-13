@@ -6,7 +6,6 @@ from pprint import pprint
 
 import numpy as np
 import pyvista as pv
-from torch.utils.dlpack import from_dlpack as dlpack2tensor
 from cupyx.scipy.spatial import KDTree
 import torch
 from torch import Tensor
@@ -79,7 +78,8 @@ class RBFReader(DataReader):
         if self.background_nii is not None:
             print(f"\t- Using background_nii: {self.background_nii}")
         if self.artifact_manager is not None:
-            pprint(f"\t- Using artifact_manager: {self.artifact_manager.config}")
+            print(f"\t- Using artifact_manager:\n\t", end="")
+            pprint(self.artifact_manager.config)
         
         logger.info(f"Loading data from {self.volume_nii}, {self.cavity_nii}, {self.coronary_nii}")
         self.n_phases = self.ssm_reader.n_phases
@@ -330,8 +330,11 @@ class RBFReader(DataReader):
         print(f"Background: shape={bg_vol.shape[-3:]}, "
               f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
         
+        del bg_vol, bg_data, bg_original, aabb_mask, outward_mask, feather_mask, dist, dist_cp, w, w_cos,\
+            world_pts, bg_pts, vol_h, vol_flat, vol_grid
         mempool.free_all_blocks()
         pinned_mem_pool.free_all_blocks()
+        torch.cuda.empty_cache()
 
     @torch.no_grad()
     def _warp_for_phase(
@@ -612,7 +615,7 @@ class KDTreeRBF(nn.Module):
             )
             if self.k == 1:
                 idx = idx[:, None]  # type: ignore
-            idx_list.append(dlpack2tensor(idx.toDlpack()))
+            idx_list.append(torch.tensor(idx))
         self._cached_idx = torch.cat(idx_list, dim=0)
 
     @torch.no_grad()
@@ -854,7 +857,7 @@ class KDTreeRBF(nn.Module):
                 )
                 if self.k == 1:
                     idx = idx[:, None]  # type: ignore
-                idx_gpu = dlpack2tensor(idx.toDlpack())
+                idx_gpu = torch.tensor(idx)
                 self._update_motion_by_prev(points_gpu, disp, motion, prev)
                 prev = (start, end, idx_gpu)
             self._update_motion_by_prev(points_gpu, disp, motion, prev)

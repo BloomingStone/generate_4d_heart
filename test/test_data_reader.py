@@ -36,9 +36,9 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
     
     F = 15
     W, H, D = reader.volume_size
-    frames_w = torch.rand(F, H, D)
-    frames_h = torch.rand(F, W, D)
-    frames_d = torch.rand(F, W, H)
+    frames_w = []
+    frames_h = []
+    frames_d = []
 
     volume = None
     
@@ -56,9 +56,9 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         data = reader.get_data(phase, coronary_type)
         volume = data.coronary.volume.data[0, 0]
 
-        frames_w[phase_idx] = volume[W//2]
-        frames_h[phase_idx] = volume[:, H//2]
-        frames_d[phase_idx] = volume[:, :, D//2]
+        frames_w.append(volume[W//2])
+        frames_h.append(volume[:, H//2])
+        frames_d.append(volume[:, :, D//2])
 
         mesh_original_from_label = get_mesh_in_world(data.coronary.label.data, data.coronary.original_affine, max_points=None)
         test_res_original.append(np.allclose(mesh_original_from_label.bounds, data.coronary.mesh_original.bounds, atol=1, rtol=0.1))
@@ -90,9 +90,9 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         t = (t - t.min()) / (t.max() - t.min())
         return torch.clamp(t * 255, 0, 255).to(torch.uint8)
     
-    frames_w = uniform(frames_w)
-    frames_h = uniform(frames_h)
-    frames_d = uniform(frames_d)
+    frames_w = uniform(torch.stack(frames_w))
+    frames_h = uniform(torch.stack(frames_h))
+    frames_d = uniform(torch.stack(frames_d))
     
     save_gif(output_dir / "frames_w.gif", frames_w, cmap='gray')
     save_gif(output_dir / "frames_h.gif", frames_h, cmap='gray')

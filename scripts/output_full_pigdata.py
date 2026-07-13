@@ -92,7 +92,7 @@ def main(
     cfg: InputConfig = InputConfig(),
     output: Path = Path("output"),
     coronary_type: Literal["LCA", "RCA"] = "LCA",
-    simulator_name: SimulatorName = SimulatorName.HU2MU_CONTRAST,
+    simulator_name: SimulatorName = SimulatorName.CTA_RESET_CONTRAST,
     artifact_manager: ArtifactManager = artifact_manager(),
     simple_drr: TorchDRR = pig_data_drr(pig_data_geom()),
 ):

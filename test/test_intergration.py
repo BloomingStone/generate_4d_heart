@@ -222,7 +222,7 @@ def test_accelerate(
 
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.HU2MU_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST
+    SimulatorName.HU2MU_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.CTA_RESET_CONTRAST
 ))
 def test_chest_data_with_background(
     output_root_dir: Path,
