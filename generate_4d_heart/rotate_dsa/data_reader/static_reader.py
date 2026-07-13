@@ -5,9 +5,10 @@ import torch
 import numpy as np
 
 from .data_reader import DataReader, DataReaderResult, Coronary, CenteringMode, load_nifti
+from ...med_image import MedImage, Original, Centering
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator, IdentityContrast
 from ..cardiac_phase import CardiacPhase
-from ..types import CoronaryType
+from ...types import CoronaryType
 
 class StaticVolumeReader(DataReader):
     def __init__(
@@ -61,29 +62,27 @@ class StaticVolumeReader(DataReader):
     ) -> DataReaderResult:
         cor_type = CoronaryType(coronary_type)
         cor = self._data[cor_type]
-        volume = cor.volume 
-        
+        vol_data = cor.volume.data
+
         if self.contrast_simulator.contrast_change_over_time:
-            # For dynamic contrast simulators, simulate with time information
-            volume = self.contrast_simulator.simulate_with_time(
+            vol_data = self.contrast_simulator.simulate_with_time(
                 float(global_time),
-                volume,
-                self._data.cavity,
-                cor.label,
+                vol_data,
+                self._data.cavity.data,
+                cor.label.data,
                 cor.centering_affine,
             )
-        
+
         return DataReaderResult(
             phase=phase,
-            cavity_label=self._data.cavity.cpu().to(torch.uint8),
-            cavity_affine=self._origin_volume_affine,
+            cavity=self._data.cavity.cpu(),
             coronary=Coronary(
                 type=cor_type,
-                volume=volume.cpu(),
-                label=cor.label.cpu().to(torch.bool),
-                original_affine=cor.original_affine,
-                centering_affine=cor.centering_affine,
-                mesh_original=cor.mesh_original
+                volume=MedImage(data=vol_data.cpu(), affine=cor.volume.affine, coord=Original()),
+                label=cor.label.cpu(),
+                centering_coord=cor.centering_coord,
+                mesh_original=cor.mesh_original,
+                artifacts_original=cor.artifacts_original,
             )
         )
 
@@ -135,16 +134,16 @@ class StaticLabelReader(StaticVolumeReader):
         )
         if not self.contrast_simulator.contrast_change_over_time:
             print("Applying STATIC contrast simulation to original volume for StaticLabelReader...")
-            self._data.lca.volume = self.contrast_simulator.simulate(
-                self._data.lca.volume,
-                self._data.cavity,
-                self._data.lca.label,
+            self._data.lca.volume.data = self.contrast_simulator.simulate(
+                self._data.lca.volume.data,
+                self._data.cavity.data,
+                self._data.lca.label.data,
                 self._data.lca.centering_affine,
             )
-            self._data.rca.volume = self.contrast_simulator.simulate(
-                self._data.rca.volume,
-                self._data.cavity,
-                self._data.rca.label,
+            self._data.rca.volume.data = self.contrast_simulator.simulate(
+                self._data.rca.volume.data,
+                self._data.cavity.data,
+                self._data.rca.label.data,
                 self._data.rca.centering_affine,
             )
 

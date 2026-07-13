@@ -16,13 +16,14 @@ from cupyx.scipy import ndimage
 import cupy as cp
 
 from generate_4d_heart.roi import ROI
+from generate_4d_heart.med_image import MedImage, Original, Centering
 from generate_4d_heart.rotate_dsa.data_reader.data_reader import (
     DataReader, DataReaderResult, Coronary, CenteringMode,
     load_nifti, apply_affine
 )
 from generate_4d_heart.ssm import SSMReader, Landmark
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
-from generate_4d_heart.rotate_dsa.types import CoronaryType
+from generate_4d_heart.types import CoronaryType
 from generate_4d_heart import CavityLabel
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from generate_4d_heart.rotate_dsa.artifacts import ArtifactManager, Artifact
@@ -234,7 +235,7 @@ class RBFReader(DataReader):
         # any face get attenuated; voxels deeper inside are left untouched.
         # Both LCA and RCA volumes share the same spatial dimensions (clones of the
         # same preprocessed volume); pick any to read the shape.
-        sample_vol = next(iter(origin_data.coronary.values())).volume
+        sample_vol = next(iter(origin_data.coronary.values())).volume.data
         D_vol, H_vol, W_vol = sample_vol.shape[-3:]
 
         # Step 1: generate a full grid of volume voxel coordinates (D×H×W×3)
@@ -273,7 +274,7 @@ class RBFReader(DataReader):
 
         # Step 6: apply inward attenuation directly in mu space, in-place.
         for cor in origin_data.coronary.values():
-            cor.volume[0, 0] *= torch.from_numpy(atten)
+            cor.volume.data[0, 0] *= torch.from_numpy(atten)
 
         # ── Process background: zero AABB interior + outward feathering ──
         #
@@ -286,8 +287,8 @@ class RBFReader(DataReader):
         #   contracted AABB                    original AABB
         #   ──────────●────────────────────────●─────────────
         #      inner ←│     ← feather →        │→ outer 
-        #   vol:  1───┘                       ┌─0  (inward cosine)
-        #   bg:   0───┐                       └─1  (outward cosine)
+        #   vol:  1───┘                        └─0  (inward cosine)
+        #   bg:   0───┐                        ┌─1  (outward cosine)
         #   total:    1                        1
         bg_zero_min = np.maximum(bg_vox_min + feather, 0).astype(int)
         bg_zero_max = np.minimum(bg_vox_max - feather, bg_shape).astype(int)
@@ -356,16 +357,16 @@ class RBFReader(DataReader):
         dx = invert_displacement_field(dx)
 
         # extract label and volume for the given coronary type, and apply contrast simulation if needed
-        cropped_cavity = self.cropped_data.cavity
-        cropped_cor_label = self.cropped_data.coronary[cor_type].label
-        
-        cropped_volume = self.cropped_data.coronary[cor_type].volume
-          
+        cropped_cavity = self.cropped_data.cavity.data
+        cropped_cor_label = self.cropped_data.coronary[cor_type].label.data
+
+        cropped_volume = self.cropped_data.coronary[cor_type].volume.data
+
         if self.contrast_simulator.contrast_change_over_time:
             cropped_volume = self.contrast_simulator.simulate_with_time(
                 global_time,
-                cropped_volume, 
-                cropped_cavity, 
+                cropped_volume,
+                cropped_cavity,
                 cropped_cor_label,
                 self.cropped_data.coronary[cor_type].centering_affine
             )
@@ -385,7 +386,7 @@ class RBFReader(DataReader):
                     raise ValueError(f"Unsupported mode: {mode}")
             return warper(tensor.to(self.device, torch.float32), dx).to(final_dtype)
 
-        cropped_cavity = _warp(self.cropped_data.cavity, mode="cavity")
+        cropped_cavity = _warp(self.cropped_data.cavity.data, mode="cavity")
         volume = _warp(cropped_volume, mode="volume")
         cropped_cor_label = _warp(cropped_cor_label, mode="coronary")
         
@@ -395,40 +396,45 @@ class RBFReader(DataReader):
     def get_static_data(
         self,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
-    ) -> list[tuple[Tensor, np.ndarray, np.ndarray | None]]:
+    ) -> list[tuple[MedImage[Centering], np.ndarray]]:
         """
-        Return list of (volume, affine, roi_aabb) for layered batch DRR rendering.
-        Layers are rendered front-to-back; each layer's roi_aabb is the region
-        (in that volume's voxel coordinates) that the NEXT layer will fill,
-        expressed as ((x0,x1), (y0,y1), (z0,z1)).
-        
-        Typical layers:
-        1. Background (optional chest CT, heart region zeroed)
-        2. Static heart (preprocessed, dynamic ROI zeroed)
-        The per-frame dynamic ROI is handled separately in run().
+        Return list of (MedImage[Centering], roi_aabb) for layered batch DRR rendering.
+        roi_aabb 标记该层占用的体素包围盒 ((x0,x1),(y0,y1),(z0,z1))，用于拼接有效性判断.
+        Layers are rendered front-to-back.
         """
         cor_type = CoronaryType(coronary_type)
-        layers: list[tuple[Tensor, np.ndarray, np.ndarray | None]] = []
-        
+        layers: list[tuple[MedImage[Centering], np.ndarray]] = []
+
         # ── Layer 1: Background (if available) ──
         if self._background_volume is not None:
             assert self._background_affine is not None
             assert self._background_roi_aabb is not None
             
-            # Shift background affine to match centering affine (same translation as volume)
-            aff = self._background_affine.copy()
-            aff[:3, 3] += self.cropped_data.coronary[cor_type].T_original_to_centering
-            
-            layers.append((self._background_volume, aff, self._background_roi_aabb))
-        
+            img_world = MedImage(
+                data=self._background_volume,
+                affine=self._background_affine.copy(),
+                coord=Original(),
+            )
+            layers.append((
+                img_world.to_coord(self.cropped_data.coronary[cor_type].centering_coord),
+                self._background_roi_aabb,
+            ))
+
         # ── Layer 2: Static heart (dynamic ROI zeroed) ──
-        cor = self.origin_data.coronary[cor_type]
+        cor = self.origin_data.coronary[cor_type]  # before cropping, match static volume
         (x0, x1), (y0, y1), (z0, z1) = self.roi.crop_box
-        heart_vol = cor.volume.clone()
+        heart_vol = cor.volume.data.clone()
         heart_vol[..., x0:x1, y0:y1, z0:z1] = 0.0
         heart_roi_aabb = np.array([[x0, x1], [y0, y1], [z0, z1]])
-        layers.append((heart_vol, cor.centering_affine, heart_roi_aabb))
-        
+        layers.append((
+            MedImage(
+                data=heart_vol,
+                affine=cor.centering_affine,
+                coord=cor.centering_coord,
+            ),
+            heart_roi_aabb,
+        ))
+
         return layers
 
     @torch.no_grad()
@@ -439,7 +445,7 @@ class RBFReader(DataReader):
         global_time: float = 0.0,
     ) -> DataReaderResult:
         cor_type = CoronaryType(coronary_type)
-        
+
         # 冠脉mesh的同样形变先在原始世界坐标下进行，然后再平移到 centering affine 定义的坐标下，这样可以保证冠脉mesh和体积数据最终在投影坐标下能够正确对齐
         cor_mesh = self.origin_data[cor_type].mesh_original.copy()
         mesh_points = torch.from_numpy(cor_mesh.points).to(self.device, torch.float32)
@@ -457,19 +463,17 @@ class RBFReader(DataReader):
                 art_mesh.points = art_pts.cpu().numpy()
                 artifacts_deformed.append(Artifact(mesh=art_mesh, mu=art.mu, name=art.name))
 
-        volume, cavity_label, cor_label = self._warp_for_phase(cor_type, phase, global_time)
-        
+        volume_data, cavity_data, cor_label_data = self._warp_for_phase(cor_type, phase, global_time)
+
         _cropped_data = self.cropped_data[cor_type]
         return DataReaderResult(
             phase=phase,
-            cavity_label=cavity_label,
-            cavity_affine=_cropped_data.original_affine,
+            cavity=MedImage(data=cavity_data, affine=_cropped_data.original_affine, coord=Original()),
             coronary=Coronary(
                 type=cor_type,
-                volume=volume,
-                label=cor_label,
-                original_affine=_cropped_data.original_affine,
-                centering_affine=_cropped_data.centering_affine,
+                volume=MedImage(data=volume_data, affine=_cropped_data.original_affine, coord=Original()),
+                label=MedImage(data=cor_label_data, affine=_cropped_data.original_affine, coord=Original()),
+                centering_coord=_cropped_data.centering_coord,
                 mesh_original=cor_mesh,
                 artifacts_original=artifacts_deformed,
             )

@@ -54,16 +54,16 @@ def _read_and_save(reader: DataReader, output_dir: Path, coronary_type: Literal[
         phase = CardiacPhase.from_index(phase_idx, F)
 
         data = reader.get_data(phase, coronary_type)
-        volume = data.coronary.volume[0, 0]
-        
+        volume = data.coronary.volume.data[0, 0]
+
         frames_w[phase_idx] = volume[W//2]
         frames_h[phase_idx] = volume[:, H//2]
         frames_d[phase_idx] = volume[:, :, D//2]
-        
-        mesh_original_from_label = get_mesh_in_world(data.coronary.label, data.coronary.original_affine, max_points=None)
+
+        mesh_original_from_label = get_mesh_in_world(data.coronary.label.data, data.coronary.original_affine, max_points=None)
         test_res_original.append(np.allclose(mesh_original_from_label.bounds, data.coronary.mesh_original.bounds, atol=1, rtol=0.1))
-        
-        mesh_centering_from_label = get_mesh_in_world(data.coronary.label, data.coronary.centering_affine, max_points=None)
+
+        mesh_centering_from_label = get_mesh_in_world(data.coronary.label.data, data.coronary.centering_affine, max_points=None)
         test_res_centering.append(np.allclose(mesh_centering_from_label.bounds, data.coronary.mesh_centering.bounds, atol=1, rtol=0.1))
         
         plotter_original.clear()
@@ -186,7 +186,7 @@ def test_rbf_reader_with_artifacts(
         if data.coronary.artifacts_original is not None:
             for art in data.coronary.artifacts_original:
                 plotter_original.add_mesh(art.mesh, color="red" if "marker" in art.name else "orange", opacity=0.9)
-        plotter_original.show_bounds()
+        plotter_original.show_bounds()  # type: ignore
         plotter_original.write_frame()
 
         # --- centering view ---
@@ -195,7 +195,7 @@ def test_rbf_reader_with_artifacts(
         if data.coronary.artifacts_centering is not None:
             for art in data.coronary.artifacts_centering:
                 plotter_centering.add_mesh(art.mesh, color="red" if "marker" in art.name else "orange", opacity=0.9)
-        plotter_centering.show_bounds()
+        plotter_centering.show_bounds()  # type: ignore
         plotter_centering.write_frame()
 
     plotter_original.close()
@@ -257,39 +257,39 @@ def test_rbf_reader_static_data_chest(
             p = save_dir / f"{prefix}slice_{axis_name}.png"
             save_png(p, _normalize(slice_2d))
 
-    for i, (vol, aff, roi_aabb) in enumerate(layers):
+    for i, (img, roi_aabb) in enumerate(layers):
         layer_dir = output_dir / f"layer_{i}"
         layer_dir.mkdir(parents=True, exist_ok=True)
 
         # Save volume as NIfTI
-        save_nii(layer_dir / "volume.nii.gz", vol, aff)
+        save_nii(layer_dir / "volume.nii.gz", img.data, img.affine)
 
         # Save middle slices along three axes
-        _save_slices(vol, layer_dir)
+        _save_slices(img.data, layer_dir)
 
         # Save ROI AABB info
         if roi_aabb is not None:
             np.save(layer_dir / "roi_aabb.npy", roi_aabb)
             print(f"Layer {i}: roi_aabb = {roi_aabb.tolist()}, "
-                  f"volume shape = {vol.shape}, "
-                  f"affine =\n{aff}")
+                  f"volume shape = {img.data.shape}, "
+                  f"affine =\n{img.affine}")
 
     # Also save the dynamic ROI from get_data for reference
     dynamic_data = reader.get_data(CardiacPhase(0), "LCA")
     save_nii(output_dir / "dynamic_volume_phase0.nii.gz",
-             dynamic_data.coronary.volume,
+             dynamic_data.coronary.volume.data,
              dynamic_data.coronary.centering_affine)
-    _save_slices(dynamic_data.coronary.volume, output_dir, prefix="dynamic_")
+    _save_slices(dynamic_data.coronary.volume.data, output_dir, prefix="dynamic_")
 
-    combined_volume = layers[0][0].squeeze()
-    combined_affine = layers[0][1]
+    combined_volume = layers[0][0].data.squeeze()
+    combined_affine = layers[0][0].affine
     _save_slices(combined_volume, output_dir, prefix=f"combined_layer_0_")
 
     for i in range(1, len(layers)):
-        vol, aff, _ = layers[i]
+        img, _roi_aabb = layers[i]
         combined_volume += resample(
-            vol.squeeze(),
-            aff,
+            img.data.squeeze(),
+            img.affine,
             combined_affine,
             combined_volume.shape[-3:]  # (W, H, D)
         )
@@ -297,7 +297,7 @@ def test_rbf_reader_static_data_chest(
         
 
     combined_volume += resample(
-        dynamic_data.coronary.volume.squeeze(),
+        dynamic_data.coronary.volume.data.squeeze(),
         dynamic_data.coronary.centering_affine,
         combined_affine,
         combined_volume.shape[-3:]  # (W, H, D)
@@ -308,12 +308,12 @@ def test_rbf_reader_static_data_chest(
 
     print(f"\nAll static layers saved to {output_dir}")
     print(f"Total static layers: {len(layers)}")
-    for i, (vol, aff, roi_aabb) in enumerate(layers):
-        print(f"  Layer {i}: shape={vol.shape}, has_roi_aabb={roi_aabb is not None}")
+    for i, (img, roi_aabb) in enumerate(layers):
+        print(f"  Layer {i}: shape={img.data.shape}, has_roi_aabb={roi_aabb is not None}")
 
     # ── Visualize coronary mesh + artifacts in centering coordinate ──
-    plotter = pv.Plotter(off_screen=True, window_size=(1200, 900))
-    mesh_centering_from_label = get_mesh_in_world(dynamic_data.coronary.label, dynamic_data.coronary.centering_affine, max_points=None)
+    plotter = pv.Plotter(off_screen=True, window_size=[1200, 900])
+    mesh_centering_from_label = get_mesh_in_world(dynamic_data.coronary.label.data, dynamic_data.coronary.centering_affine, max_points=None)
 
     for _ in range(3):  # write a few frames for visibility
         plotter.clear()
@@ -322,7 +322,7 @@ def test_rbf_reader_static_data_chest(
         if dynamic_data.coronary.artifacts_centering is not None:
             for art in dynamic_data.coronary.artifacts_centering:
                 plotter.add_mesh(art.mesh, color="red" if "marker" in art.name else "orange", opacity=0.9)
-        plotter.show_bounds()
+        plotter.show_bounds()  # type: ignore
 
     plotter.screenshot(str(output_dir / "centering_coronary_artifacts.png"))
     plotter.close()
@@ -349,7 +349,7 @@ def resample(
     data: torch.Tensor,
     old_affine: np.ndarray,
     new_affine: np.ndarray,
-    new_shape: tuple[int, int, int]
+    new_shape: tuple[int, ...]
 ) -> torch.Tensor:
     """
     Resample data from old_affine space to new_affine space using grid_sample.

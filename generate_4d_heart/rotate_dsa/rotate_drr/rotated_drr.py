@@ -5,7 +5,8 @@ from typing import Protocol, TypeVar
 import torch
 import numpy as np
 
-from ..types import *
+from ...types import *
+from ...med_image import MedImage, Centering
 from ..cardiac_phase import CardiacPhase
 
 
@@ -83,39 +84,30 @@ class RotatedParameters:
 class RotateDRR(Protocol):
     c_arm_cfg: CArmGeometry
     rotate_cfg: RotatedParameters
-        
+
     def get_projection_at_frame(
-        self, 
+        self,
         frame: int,
-        volume: torch.Tensor,
-        coronary: torch.Tensor,
-        affine: np.ndarray
+        volume: MedImage[Centering],
+        coronary: MedImage[Centering],
     ) -> torch.Tensor:
         """
-        Get DRR image at given frame
-        Args:
-            frame (int): frame number, starting from 0
-        Returns:
-            torch.Tensor: shape = (c, h, w), c = 1, h = c_arm_geometry.height, w = c_arm_geometry.width
+        Get DRR image at given frame.
+        volume 和 coronary 必须是同一坐标系（通常为 Centering），共享相同 affine。
         """
         ...
-    
+
     def get_projections_at_frames(
-        self, 
+        self,
         frames: list[int],
-        volume: torch.Tensor,
-        coronary: torch.Tensor,
-        affine: np.ndarray
+        volume: MedImage[Centering],
+        coronary: MedImage[Centering],
     ) -> torch.Tensor:
         """
-        Get DRR images at given frames
-        Args:
-            frames (list[int]): list of frame numbers, starting from 0
-        Returns:
-            torch.Tensor: shape = (n, c, h, w), n = len(frames), c = 1, h = c_arm_geometry.height, w = c_arm_geometry.width
+        Get DRR images at given frames (batch render).
         """
         ...
-    
+
     def get_R_T_at_frame(
         self,
         frame: int

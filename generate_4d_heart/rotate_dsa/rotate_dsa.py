@@ -21,7 +21,8 @@ from pytorch3d.structures import Meshes
 from .data_reader import DataReader, DataReaderResult
 from .contrast_simulator import ContrastSimulator
 from .rotate_drr import RotateDRR, CArmGeometry
-from .types import Sec
+from ..med_image import MedImage
+from ..types import Sec
 from .cardiac_phase import CardiacPhase
 from ..saver import save_tif, save_gif, save_pngs, save_deepthmap_gif, save_video, save_deepthmap_video
 from .postprocess import postprocess_drr
@@ -50,6 +51,7 @@ class RotateDSA:
     physical_config: PhysicalConfig = field(default_factory=PhysicalConfig)
     multi_threads: bool = True
     """When False, disable producer thread and run single-threaded for easier debugging."""
+    
     label_plotter: Torch3DLabelRenderer = field(init=False)
     
     def __post_init__(self):
@@ -85,14 +87,15 @@ class RotateDSA:
 
         # ── Stage 1: Batch-render all static layers ──
         static_layers = self.reader.get_static_data(coronary_type)
-        for static_vol, static_affine, _roi_aabb in static_layers:
-            static_vol_gpu = static_vol.to(device)
-            empty_coronary = torch.zeros_like(static_vol_gpu, dtype=torch.bool)
+        for vol_img, _roi_aabb in static_layers:
             layer_frames = self.drr.get_projections_at_frames(
                 list(range(total_frame)),
-                volume=static_vol_gpu,
-                coronary=empty_coronary,
-                affine=static_affine,
+                volume=vol_img,
+                coronary=MedImage(
+                    data=torch.zeros_like(vol_img.data, dtype=torch.bool),
+                    affine=vol_img.affine,
+                    coord=vol_img.coord,
+                ),
             )
             if layer_frames.dim() == 4 and layer_frames.shape[1] == 1:
                 layer_frames = layer_frames.squeeze(1)
@@ -104,14 +107,13 @@ class RotateDSA:
             coronary = read_res.coronary
 
             if f == 0:
-                print(f"[dynamic layer] shape={coronary.volume.shape}, centering_affine[:3,3]={coronary.centering_affine[:3,3]}, "
+                print(f"[dynamic layer] shape={coronary.volume.data.shape}, centering_affine[:3,3]={coronary.centering_affine[:3,3]}, "
                       f"T_orig_to_centering={coronary.T_original_to_centering}")
 
             drr_res = self.drr.get_projection_at_frame(
                 frame=f,
-                volume=coronary.volume,
-                coronary=coronary.label,
-                affine=coronary.centering_affine,
+                volume=coronary.volume_centering,
+                coronary=coronary.label_centering,
             )
             # drr_res shape: (1, 1, H, W) → squeeze to (H, W)
             drr_res = drr_res.squeeze()

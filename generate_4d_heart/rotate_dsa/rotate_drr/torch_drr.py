@@ -8,7 +8,8 @@ from diffdrr.drr import DRR
 from diffdrr.pose import convert, RigidTransform
 
 from .rotated_drr import RotateDRR, CArmGeometry, RotatedParameters
-from ..types import Degree
+from ...med_image import MedImage, Centering
+from ...types import Degree
 from ... import MU_WATER
 
 
@@ -80,20 +81,22 @@ class TorchDRR(RotateDRR):
 
     def _setup(
         self,
-        volume: torch.Tensor,
-        coronary: torch.Tensor,
-        affine: np.ndarray,
+        volume: MedImage[Centering],
+        coronary: MedImage[Centering],
     ):
-        assert volume.dim() >= 3
-        w, h, d = volume.shape[-3:]
+        vol = volume.data
+        mask = coronary.data
+        aff = volume.affine
+        assert vol.dim() >= 3
+        w, h, d = vol.shape[-3:]
         shape = (1, w, h, d)
-        
+
         subject = Subject(
-            volume=ScalarImage(tensor=volume.float().reshape(*shape).to(self.device), affine=affine),
-            mask=LabelMap(tensor=coronary.reshape(*shape).to(self.device),affine=affine),
-            reorient = self.reorient,    # type: ignore
-            density = ScalarImage(tensor=volume.float().reshape(*shape).to(self.device),affine=affine),
-            fiducials = None,   #type: ignore
+            volume=ScalarImage(tensor=vol.float().reshape(*shape).to(self.device), affine=aff),
+            mask=LabelMap(tensor=mask.reshape(*shape).to(self.device), affine=aff),
+            reorient=self.reorient,  # type: ignore
+            density=ScalarImage(tensor=vol.float().reshape(*shape).to(self.device), affine=aff),
+            fiducials=None,  # type: ignore
         )
         
         geo = self.c_arm_cfg
@@ -152,15 +155,14 @@ class TorchDRR(RotateDRR):
     def get_projections_at_frames(
         self,
         frames: list[int],
-        volume: torch.Tensor,
-        coronary: torch.Tensor,
-        affine: np.ndarray,
+        volume: MedImage[Centering],
+        coronary: MedImage[Centering],
     ) -> torch.Tensor:
         """
         Batch-render DRR at multiple frames with a single _setup().
         Returns shape (N, H, W), line integrals.
         """
-        self._setup(volume, coronary, affine)
+        self._setup(volume, coronary)
         rotations = torch.tensor(
             [self.rotate_cfg.get_rotaiton_radian_at_frame(f) for f in frames],
             device=self.device,
@@ -168,18 +170,17 @@ class TorchDRR(RotateDRR):
         return self._get_projection_after_setup(rotations)
 
     def get_projection_at_frame(
-        self, 
+        self,
         frame: int,
-        volume: torch.Tensor,
-        coronary: torch.Tensor,
-        affine: np.ndarray,
+        volume: MedImage[Centering],
+        coronary: MedImage[Centering],
     ) -> torch.Tensor:
         """return shape=(T, C, W, H), C=0: image, C=1: coronary_mask, C=2: depthmask"""
-        self._setup(volume, coronary, affine)
-        
+        self._setup(volume, coronary)
+
         rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)
         rotations = torch.tensor([rotation], device=self.device)
-        
+
         return self._get_projection_after_setup(rotations)
     
     def get_R_T_at_frame(self, frame: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -203,21 +204,20 @@ class TorchDRR(RotateDRR):
         return (R, T)
     
     def get_projections_at_degrees(
-        self, 
+        self,
         angles: Degree | Sequence[Degree],
-        volume: torch.Tensor,
-        coronary: torch.Tensor,
-        affine: np.ndarray
+        volume: MedImage[Centering],
+        coronary: MedImage[Centering],
     ) -> torch.Tensor:
         if isinstance(angles, float | int):
             angles = [angles]
         rotations = torch.tensor([[radians(a), 0.0, 0.0] for a in angles], device=self.device)
-        self._setup(volume, coronary, affine)
-        
+        self._setup(volume, coronary)
+
         assert rotations.dim() == 2 and rotations.shape[1] == 3
         assert rotations.dtype == torch.float32
         rotations = rotations.to(self.device)
-        
+
         return self._get_projection_after_setup(rotations)
     
     

@@ -20,12 +20,12 @@ from torch.utils.dlpack import from_dlpack as dlpack2tensor
 from ... import NUM_TOTAL_PHASE, CavityLabel
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from ...roi import ROI
-from ..types import CoronaryType
+from ...med_image import MedImage, Original, Centering
+from ...types import CoronaryType
 from ..cardiac_phase import CardiacPhase
 from .data_reader import (
     DataReader, DataReaderResult, Coronary, CenteringMode,
-    separate_coronary, get_coronary_centering_affine,
-    load_nifti, get_mesh_in_voxel, apply_affine, get_mesh_in_world
+    load_nifti, apply_affine
 )
 
 class LazyCardiacDVFWarpModule(nn.Module):
@@ -56,7 +56,7 @@ class LazyCardiacDVFWarpModule(nn.Module):
         self.contrast_simulator = contrast_simulator
 
         spatial_dims = 3
-        self.spatial_size = torch.tensor(self.data.cavity.shape[-spatial_dims:]).to(device, non_blocking=True)   # (D H W)
+        self.spatial_size = torch.tensor(self.data.cavity.data.shape[-spatial_dims:]).to(device, non_blocking=True)   # (D H W)
 
         self._gpu_cache_max = 2
         self.gpu_cache = OrderedDict[int, Tensor]()
@@ -66,13 +66,13 @@ class LazyCardiacDVFWarpModule(nn.Module):
         self.ddf_list_cpu = ddf_list
         self.dvf_list_cpu = dvf_list
 
-        self.lca_volume = data.lca.volume.half().to(device, non_blocking=True)
-        self.rca_volume = data.rca.volume.half().to(device, non_blocking=True)
-        self.cavity = data.cavity.half().to(device, non_blocking=True)
-        
+        self.lca_volume = data.lca.volume.data.half().to(device, non_blocking=True)
+        self.rca_volume = data.rca.volume.data.half().to(device, non_blocking=True)
+        self.cavity = data.cavity.data.half().to(device, non_blocking=True)
+
         # shape = (1, C=2, D H W), c=0: lca, c=1: rca
-        lca = data.lca.label
-        rca = data.rca.label
+        lca = data.lca.label.data
+        rca = data.rca.label.data
         self.coronary = torch.concat((lca, rca), dim=1).half().to(device, non_blocking=True)
         
         def init_mesh_points(mesh: pv.PolyData) -> tuple[Tensor, Tensor]:
@@ -177,9 +177,9 @@ class LazyCardiacDVFWarpModule(nn.Module):
         if self.contrast_simulator.contrast_change_over_time:
             volume = self.contrast_simulator.simulate_with_time(
                 global_time,
-                volume, 
-                self.data.cavity, 
-                self.data[coronary_type].label, 
+                volume,
+                self.data.cavity.data,
+                self.data[coronary_type].label.data,
                 self.data[coronary_type].centering_affine
             )
 
@@ -337,29 +337,29 @@ class VolumeDVFReader(DataReader):
         global_time: float = 0.0,
     ) -> DataReaderResult:
         coronary_type = CoronaryType(coronary_type)
-        
-        volume, cavity, coronary_label, mesh_original = self.warpper(phase, coronary_type, global_time)
+
+        volume_data, cavity_data, cor_label_data, mesh_original = self.warpper(phase, coronary_type, global_time)
+
         if self.recover_cropped_data:
-            volume = self.roi.recover_cropped_tensor(volume, background=self.origin_data[coronary_type].volume)
-            cavity = self.roi.recover_cropped_tensor(cavity)
-            coronary_label = self.roi.recover_cropped_tensor(coronary_label)
-            affine = self.origin_data.affine
-            coronary_centering_affine = self.origin_data[coronary_type].centering_affine
+            orig_cor = self.origin_data[coronary_type]
+            volume_data = self.roi.recover_cropped_tensor(volume_data, background=orig_cor.volume.data)
+            cavity_data = self.roi.recover_cropped_tensor(cavity_data)
+            cor_label_data = self.roi.recover_cropped_tensor(cor_label_data)
+            affine = self.origin_data.cavity.affine
+            centering_coord = orig_cor.centering_coord
         else:
-            affine = self.cropped_data.affine
-            coronary_centering_affine = self.cropped_data[coronary_type].centering_affine
-        
+            affine = self.cropped_data.cavity.affine
+            centering_coord = self.cropped_data[coronary_type].centering_coord
+
         return DataReaderResult(
             phase=phase,
-            cavity_label=cavity.to(torch.uint8),
-            cavity_affine=affine,
-            coronary = Coronary(
+            cavity=MedImage(data=cavity_data.to(torch.uint8), affine=affine, coord=Original()),
+            coronary=Coronary(
                 type=coronary_type,
-                volume=volume.to(torch.float32),
-                label=coronary_label.to(torch.bool),
-                original_affine=affine,
-                centering_affine=coronary_centering_affine,
-                mesh_original=mesh_original
+                volume=MedImage(data=volume_data.to(torch.float32), affine=affine, coord=Original()),
+                label=MedImage(data=cor_label_data.to(torch.bool), affine=affine, coord=Original()),
+                centering_coord=centering_coord,
+                mesh_original=mesh_original,
             )
         )
     
@@ -403,7 +403,7 @@ class VolumeDVFReader(DataReader):
         if self.recover_cropped_data:
             return self._origin_volume_affine
         else:
-            return self.cropped_data.affine
+            return self.cropped_data.cavity.affine
 
 
 def tensor2cp(tensor: torch.Tensor, device: torch.device, dtype_cp=None):
@@ -412,24 +412,22 @@ def tensor2cp(tensor: torch.Tensor, device: torch.device, dtype_cp=None):
     else:
         return cp.from_dlpack(tensor2dlpack(tensor.to(device))).astype(dtype_cp)
 
+
 class MovementEnhancer(Protocol):
-    """
-    这个类的设计目的是为了给 VolumeDVFReader 打个补丁，增强冠脉区域运动。
-    目前从DVF中得到的冠脉运动运动幅度不够明显，这可能是因为深度配准网络无法很好地学习运动标签到形变场的映射
-    可以选择使用新实现的更稳定的 RBF Reader 作为替代
-    """
     def setup(self, dvf_reader: VolumeDVFReader) -> None:
         ...
 
     def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
         ...
+
 
 class IdentityMovementEnhancer(MovementEnhancer):
     def setup(self, dvf_reader: VolumeDVFReader) -> None:
         pass
-    
+
     def __call__(self, dvf: torch.Tensor) -> torch.Tensor:
         return dvf
+
 
 @dataclass
 class CoronaryBoundLVEnhancer(MovementEnhancer):
@@ -438,14 +436,14 @@ class CoronaryBoundLVEnhancer(MovementEnhancer):
     
     def setup(self, dvf_reader: VolumeDVFReader) -> None:
         self.device = dvf_reader.device
-        cavity_label = dvf_reader.cropped_data.cavity
-        
+        cavity_label = dvf_reader.cropped_data.cavity.data
+
         if self.enhance_coronary == "ALL":
             coronary_label = dvf_reader.cropped_data.all_coronary_label
         elif self.enhance_coronary == "LCA":
-            coronary_label = dvf_reader.cropped_data.lca.label
+            coronary_label = dvf_reader.cropped_data.lca.label.data
         elif self.enhance_coronary == "RCA":
-            coronary_label = dvf_reader.cropped_data.rca.label
+            coronary_label = dvf_reader.cropped_data.rca.label.data
         else:
             raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
     
@@ -496,14 +494,14 @@ class CoronaryBoundLVLinearEnhancer(MovementEnhancer):
     
     def setup(self, dvf_reader: VolumeDVFReader)->None:
         self.device = dvf_reader.device
-        cavity_label = dvf_reader.cropped_data.cavity
-        
+        cavity_label = dvf_reader.cropped_data.cavity.data
+
         if self.enhance_coronary == "ALL":
             coronary_label = dvf_reader.cropped_data.all_coronary_label
         elif self.enhance_coronary == "LCA":
-            coronary_label = dvf_reader.cropped_data.lca.label
+            coronary_label = dvf_reader.cropped_data.lca.label.data
         elif self.enhance_coronary == "RCA":
-            coronary_label = dvf_reader.cropped_data.rca.label
+            coronary_label = dvf_reader.cropped_data.rca.label.data
         else:
             raise ValueError(f"Unknown coronary type: {self.enhance_coronary}")
         
@@ -570,11 +568,11 @@ class CoronarySeprateEnhancer(MovementEnhancer):
     def setup(self, dvf_reader: VolumeDVFReader)->None:
         self.device = dvf_reader.device
         read_data = dvf_reader.cropped_data
-        cavity_label = read_data.cavity.to(torch.uint8)
+        cavity_label = read_data.cavity.data.to(torch.uint8)
 
         with cp.cuda.Device(self.device.index):
-            self.lca_data = self._inner_setup(read_data.lca.label, cavity_label==CavityLabel.LV, self.w_0_lca, self.w_1_lca)
-            self.rca_data = self._inner_setup(read_data.rca.label, cavity_label==CavityLabel.LV, self.w_0_rca, self.w_1_rca)
+            self.lca_data = self._inner_setup(read_data.lca.label.data, cavity_label==CavityLabel.LV, self.w_0_lca, self.w_1_lca)
+            self.rca_data = self._inner_setup(read_data.rca.label.data, cavity_label==CavityLabel.LV, self.w_0_rca, self.w_1_rca)
     
     def _inner_setup(self, target_label: torch.Tensor, ref_label: torch.Tensor, w_0: float, w_1: float):
         """

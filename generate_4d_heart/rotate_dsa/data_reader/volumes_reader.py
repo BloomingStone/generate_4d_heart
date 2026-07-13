@@ -7,10 +7,11 @@ import numpy as np
 from tqdm import tqdm
 
 from .data_reader import DataReader, DataReaderResult, Coronary, CenteringMode, load_nifti
+from ...med_image import MedImage, Original, Centering
 from generate_4d_heart.rotate_dsa.contrast_simulator import ContrastSimulator
 from ... import NUM_TOTAL_PHASE
 from ..cardiac_phase import CardiacPhase
-from ..types import CoronaryType
+from ...types import CoronaryType
 
 class VolumesReader(DataReader):
     def __init__(
@@ -82,12 +83,12 @@ class VolumesReader(DataReader):
                 centering_mode=self.centering_mode
             ))
         
-        # Align coronary centering affine across phases
-        self.lca_centering_affine_0 = self.data[0].coronary[CoronaryType.LCA].centering_affine
-        self.rca_centering_affine_0 = self.data[0].coronary[CoronaryType.RCA].centering_affine
+        # Align coronary centering coord across phases (centering affine is computed property)
+        lca_coord_0 = self.data[0].coronary[CoronaryType.LCA].centering_coord
+        rca_coord_0 = self.data[0].coronary[CoronaryType.RCA].centering_coord
         for data_at_phase in self.data:
-            data_at_phase.coronary[CoronaryType.LCA].centering_affine = self.lca_centering_affine_0
-            data_at_phase.coronary[CoronaryType.RCA].centering_affine = self.rca_centering_affine_0
+            data_at_phase.coronary[CoronaryType.LCA].centering_coord = lca_coord_0
+            data_at_phase.coronary[CoronaryType.RCA].centering_coord = rca_coord_0
 
 
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
@@ -96,28 +97,27 @@ class VolumesReader(DataReader):
     def _get_data_at_index(self, index: int, phase: CardiacPhase, coronary_type: CoronaryType, global_time: float|None=None) -> DataReaderResult:
         data = self.data[index]
         cor = data[coronary_type]
-        
-        volume = cor.volume
+
+        vol_data = cor.volume.data
         if self.contrast_simulator.contrast_change_over_time and global_time is not None:
-            volume = self.contrast_simulator.simulate_with_time(
+            vol_data = self.contrast_simulator.simulate_with_time(
                 float(global_time),
-                volume,
-                data.cavity,
-                cor.label,
+                vol_data,
+                data.cavity.data,
+                cor.label.data,
                 cor.centering_affine,
             )
 
         return DataReaderResult(
             phase=phase,
-            cavity_label=data.cavity.cpu().to(torch.uint8),
-            cavity_affine=self._origin_volume_affine,
+            cavity=data.cavity.cpu(),
             coronary=Coronary(
                 type=coronary_type,
-                volume=volume.cpu(),
-                label=cor.label.cpu().to(torch.bool),
-                original_affine=self._origin_volume_affine,
-                centering_affine=cor.centering_affine,
-                mesh_original=cor.mesh_original
+                volume=MedImage(data=vol_data.cpu(), affine=cor.volume.affine, coord=Original()),
+                label=cor.label.cpu(),
+                centering_coord=cor.centering_coord,
+                mesh_original=cor.mesh_original,
+                artifacts_original=cor.artifacts_original,
             )
         )
 
@@ -148,44 +148,42 @@ class VolumesReader(DataReader):
         cor1 = d1[coronary_type]
 
         # === intensity volume interpolation ===
-        vol_interp = (1 - w) * cor0.volume + w * cor1.volume
+        vol_interp = (1 - w) * cor0.volume.data + w * cor1.volume.data
 
         # cavity has multiple labels, mesh's points is non-structured, can not be simply interpolated.  
-        cavity = d0.cavity if w < 0.5 else d1.cavity
+        cavity_data = d0.cavity.data if w < 0.5 else d1.cavity.data
         mesh = cor0.mesh_original.copy() if w < 0.5 else cor1.mesh_original.copy()
 
         # === coronary label interpolation (LCA & RCA) ===
-        coronary_label = ((1 - w) * cor0.label.float() + w * cor1.label.float()) > 0.5
-        
+        coronary_label_data = ((1 - w) * cor0.label.data.float() + w * cor1.label.data.float()) > 0.5
+
         # If simulator is dynamic, apply simulate_with_time to coronary region now
         if self.contrast_simulator.contrast_change_over_time:
             vol_interp = self.contrast_simulator.simulate_with_time(
                 float(global_time),
                 vol_interp,
-                cavity,
-                coronary_label,
+                cavity_data,
+                coronary_label_data,
                 cor0.centering_affine,  # already aligned in __init__
             )
 
         return DataReaderResult(
             phase=phase,
-            cavity_label=cavity.cpu().to(torch.uint8),
-            cavity_affine=self._origin_volume_affine,
+            cavity=MedImage(data=cavity_data.cpu().to(torch.uint8), affine=self._origin_volume_affine, coord=Original()),
             coronary=Coronary(
                 type=coronary_type,
-                volume=vol_interp.cpu(),
-                label=coronary_label.cpu().to(torch.bool),
-                original_affine=self._origin_volume_affine,
-                centering_affine=cor0.centering_affine,  # already aligned in __init__
-                mesh_original=mesh
+                volume=MedImage(data=vol_interp.cpu(), affine=cor0.volume.affine, coord=Original()),
+                label=MedImage(data=coronary_label_data.cpu().to(torch.bool), affine=cor0.label.affine, coord=Original()),
+                centering_coord=cor0.centering_coord,
+                mesh_original=mesh,
             )
         )
     
     @property
     def lca_centering_affine(self) -> np.ndarray:
-        return self.lca_centering_affine_0
-    
+        return self.data[0].lca.centering_affine
+
     @property
     def rca_centering_affine(self) -> np.ndarray:
-        return self.rca_centering_affine_0
+        return self.data[0].rca.centering_affine
 

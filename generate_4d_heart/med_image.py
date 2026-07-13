@@ -1,24 +1,28 @@
 from __future__ import annotations
+from pathlib import Path
 from typing import TypeVar, Generic
 
 import torch
 import numpy as np
 
-from . rotate_dsa.types import CoronaryType
+from nibabel.loadsave import load as nib_load
+from nibabel.nifti1 import Nifti1Image
+
+from .types import CoronaryType
 
 
 # ─── 坐标系定义 ───
 
 class CoordinateSystem:
-    """坐标系基类。
+    """世界坐标系坐标系基类。
 
     变体:
-        World       — 世界坐标系，原点在 (0,0,0)
-        Centering   — 中心化坐标系，原点 = 目标中心在 World 中的位置（通过 cor_type 区分 LCA/RCA）
+        Original    — 原始世界坐标系
+        Centering   — 中心化坐标系，原点 = 目标中心在 Original 中的位置（通过 cor_type 区分 LCA/RCA）
     """
     name: str
     translation: np.ndarray
-    """该坐标系原点在 World 中的位置 (3,)。World 为 None。"""
+    """该坐标系原点在 Original 中的位置 (3,), Original 为 (0,0,0)"""
 
     def __init__(self, name: str):
         self.name = name
@@ -27,7 +31,9 @@ class CoordinateSystem:
         """返回 4×4 纯平移矩阵: self → target。
 
         原理：所有坐标系共享相同的 B（旋转+缩放），只差平移。
-            p_target = p_self + (translation_target - translation_self)
+            c_src + p_src = c_tgt + p_tgt   # 点位置不变，只是坐标系变化
+            A_tgt v = A_src v - (c_tgt - c_src)
+            A_tgt = [I, -T; 0, 1] A_src      # T = c_src - c_tgt   
         """
         if self is target or self.name == target.name:
             return np.eye(4)
@@ -37,18 +43,19 @@ class CoordinateSystem:
         delta = t_tgt - t_src
 
         T = np.eye(4)
-        T[:3, 3] = delta
+        T[:3, 3] = - delta
         return T
 
 
-class World(CoordinateSystem):
-    """世界坐标系，原点在 (0,0,0)，无平移。"""
+class Original(CoordinateSystem):
+    """原始世界坐标系，原点在 (0,0,0)，无平移。"""
     def __init__(self):
         super().__init__("WORLD")
+        self.translation = np.array([0.0, 0.0, 0.0])
 
 
 class Centering(CoordinateSystem):
-    """中心化坐标系。原点 = 目标中心在 World 中的位置。
+    """中心化坐标系。原点 = 目标中心在 Original 中的位置。
 
     通过 cor_type 区分 LCA/RCA，方便根据输入选择：
         Centering(CoronaryType.LCA, translation)
@@ -63,15 +70,10 @@ class Centering(CoordinateSystem):
         self.cor_type = cor_type
         self.translation = translation.copy()
 
-    @staticmethod
-    def from_cor_type(cor_type: CoronaryType, translation: np.ndarray) -> "Centering":
-        """根据 CoronaryType 创建对应的 Centering。"""
-        return Centering(cor_type, translation)
-
 
 # ─── TypeVar ───
 
-CS = TypeVar("CS", World, Centering)
+CS = TypeVar("CS", Original, Centering)
 """泛型约束：MedImage[World | Centering]"""
 
 
@@ -95,6 +97,45 @@ class MedImage(Generic[CS]):
         self.data = data
         self.affine = np.asarray(affine, dtype=np.float64)
         self.coord = coord
+
+    # ── 工具方法 ──
+
+    def to(self, device: torch.device) -> MedImage[CS]:
+        """将 data 移到指定设备，坐标系不变。"""
+        return MedImage(data=self.data.to(device), affine=self.affine, coord=self.coord)
+
+    def cpu(self) -> MedImage[CS]:
+        return MedImage(data=self.data.cpu(), affine=self.affine, coord=self.coord)
+
+    def clone(self) -> MedImage[CS]:
+        return MedImage(data=self.data.clone(), affine=self.affine.copy(), coord=self.coord)
+
+    @property
+    def spacing(self) -> np.ndarray:
+        """体素间距 (mm)，取自 affine 对角线。"""
+        return np.abs(np.diag(self.affine[:3, :3]))
+
+    @staticmethod
+    def from_nifti(path: Path, is_label: bool = False) -> MedImage[Original]:
+        """从 NIfTI 文件加载，返回 MedImage[World]。"""
+        nii = nib_load(path)
+        assert isinstance(nii, Nifti1Image)
+        affine = nii.affine if nii.affine is not None else np.eye(4)
+        tensor = torch.from_numpy(nii.get_fdata())  # type: ignore
+        if is_label:
+            tensor = tensor.round().to(torch.uint8)
+        else:
+            tensor = tensor.to(torch.float32)
+        tensor = tensor[None][None]  # (1, 1, D, H, W)
+        return MedImage(data=tensor, affine=affine, coord=Original())
+
+    def save_nifti(self, path: Path, is_label: bool = False) -> None:
+        """保存为 NIfTI 文件。"""
+        from nibabel.loadsave import save as nib_save
+        nii = Nifti1Image(self.data.squeeze().cpu().numpy(), self.affine)
+        nib_save(nii, path)  # type: ignore
+
+    # ── 坐标变换 ──
 
     def to_coord(self, target_cs: CoordinateSystem) -> MedImage:
         """变换到目标坐标系（纯平移，affine 的 B 部分不变）。"""

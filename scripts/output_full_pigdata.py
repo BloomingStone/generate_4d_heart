@@ -112,7 +112,9 @@ def main(
 
     output_dir = output / f"{simulator_name}_{coronary_type}"
     if output_dir.exists():
-        raise RuntimeError(f"Output directory {output_dir} already exists. Please remove it or choose a different output directory.")
+        ans = input("output_dir exists, overwrite it? (Y/n)")
+        if ans.lower() != "y":
+            raise ValueError("Output directory already exists and user chose not to overwrite it.")
     output_dir.mkdir(parents=True, exist_ok=False)
     dsa.run_and_save(output_dir=output_dir, coronary_type=coronary_type)
 
