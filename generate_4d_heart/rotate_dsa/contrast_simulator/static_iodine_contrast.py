@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 import torch
 import numpy as np
 
@@ -14,6 +15,15 @@ class StaticIodineContrast(ContrastSimulator):
     """XCA 碘化钠对比剂衰减系数 (mm^-1)"""
     
     preprocess_contrast: Hu2MuContrast|CtaResetContrast = field(default_factory=lambda: Hu2MuContrast(mu_water_dsa=MU_WATER, mu_idodine=MU_IDODINE), init=False, repr=False)
+    
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "type": self.__class__.__name__,
+            "mu_water_dsa": self.mu_water_dsa,
+            "mu_idodine": self.mu_idodine,
+            "preprocess_contrast": self.preprocess_contrast.meta,
+        }
     """
     Exisiting contrast simulator used for preprocessing the input volume to convert HU values to attenuation coefficients
     """
@@ -76,6 +86,14 @@ class CtaResetContrast(ContrastSimulator):
         """
         self.mu_idodine = mu_idodine
         self.mu_water_dsa = mu_water_dsa
+
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "type": self.__class__.__name__,
+            "mu_water_dsa": self.mu_water_dsa,
+            "mu_idodine": self.mu_idodine,
+        }
 
     def preprocess(
         self,

@@ -289,7 +289,7 @@ class RotateDSA:
                     executor.submit(save_gif, output_dir / "artifacts_proj.gif", output.artifacts_proj, gif_fps),
                 ])
             # phase_0_data.save() 含 torch 张量，在当前进程运行，与子进程池并行
-            meta = phase_0_data.save(
+            phase_0_meta = phase_0_data.save(
                 output_dir,
                 save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
                 coordinate_system="centering"
@@ -299,7 +299,8 @@ class RotateDSA:
         
         json_data = self.get_geometry_json(coronary_type)
         json_data["postprocess_meta"] = output.meta
-        json_data["phase_0_save_meta"] = meta
+        json_data["phase_0_save_meta"] = phase_0_meta
+        json_data["reader_meta"] = self.reader.meta
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(json_data, f, indent=2)
         
@@ -345,6 +346,7 @@ class RotateDSA:
         
         json_data = self.get_geometry_json(coronary_type)
         json_data["phase_0_save_meta"] = meta
+        json_data["reader_meta"] = self.reader.meta
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(json_data, f, indent=2)
         
@@ -365,6 +367,7 @@ class RotateDSA:
         
         json_data = self.get_geometry_json(coronary_type)
         json_data["phase_0_save_meta"] = meta
+        json_data["reader_meta"] = self.reader.meta
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(json_data, f, indent=2)
     

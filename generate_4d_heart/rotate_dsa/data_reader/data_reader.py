@@ -439,7 +439,7 @@ class DataReader(Protocol):
         ) -> "DataReader._Data":
             lca, rca = separate_coronary(coronary, running_device)
             if contrast_simulator is not None:
-                print("Preprocessing baseline volume with contrast simulator...")
+                print("Preprocessing volume with contrast simulator...")
                 volume = contrast_simulator.preprocess(volume, cavity, affine)
 
             lca_volume = volume.clone()
@@ -588,5 +588,22 @@ class DataReader(Protocol):
     def volume_affine(self) -> ndarray:
         return self._origin_volume_affine
 
-
+    @property
+    def meta(self) -> dict[str, Any]:
+        """
+        Return metadata of the data reader for traceability, including:
+        - n_phases, centering_mode, volume_size, volume_affine
+        - source_files: dict of NIfTI file paths used
+        - artifact_manager config (if any)
+        - contrast_simulator meta (if any)
+        """
+        return {
+            "n_phases": self.n_phases,
+            "centering_mode": self.centering_mode,
+            "volume_size": self.volume_size,
+            "volume_affine": self.volume_affine.tolist(),
+            "source_files": {},
+            "artifacts": self.artifact_manager.config.meta if self.artifact_manager is not None else None,
+            "contrast_simulator": self.contrast_simulator.meta if self.contrast_simulator is not None else None,
+        }
  

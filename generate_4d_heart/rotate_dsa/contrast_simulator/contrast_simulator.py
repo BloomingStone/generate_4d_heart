@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 import torch
@@ -46,6 +46,13 @@ class ContrastSimulator(Protocol):
         Usually, this should only be implemented when `contrast_change_over_time` is True.
         """
         ...
+    
+    @property
+    def meta(self) -> dict[str, Any]:
+        """
+        Return the meta information of the contrast simulator, e.g. parameters used in the simulation.
+        """
+        return {}
 
 class IdentityContrast(ContrastSimulator):
     """
@@ -55,6 +62,12 @@ class IdentityContrast(ContrastSimulator):
     This contrast simulator should only be used in label rendering. 
     If use it in CTA volume rendering, the unmapped HU values may cause wrong projection results (too large or be negative).
     """
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "type": self.__class__.__name__,
+        }
+
     def preprocess(
         self, 
         ori_volume: torch.Tensor, 
@@ -102,6 +115,14 @@ class Hu2MuContrast(ContrastSimulator):
         """
         self.mu_idodine = mu_idodine
         self.mu_water_dsa = mu_water_dsa
+
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "type": self.__class__.__name__,
+            "mu_water_dsa": self.mu_water_dsa,
+            "mu_idodine": self.mu_idodine,
+        }
 
     def preprocess(
         self,

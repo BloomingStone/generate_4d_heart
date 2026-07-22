@@ -16,12 +16,12 @@ from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 from utils import reader_factory, ReaderName, SimulatorName, TEST_DATA_ROOT_DIR, simulator_factory
 
 
-@pytest.mark.parametrize("reader_name", tuple(ReaderName))
+@pytest.mark.parametrize("reader_name", (ReaderName.RBF_READER, ReaderName.VOLUME_DVF_READER, ReaderName.VOLUMES_READER, ReaderName.STATIC_VOLUME_READER))
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST, SimulatorName.CL_MARKER_CONTRAST, SimulatorName.IDENTITY_CONTRAST
+    SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST, SimulatorName.HU2MU_CONTRAST
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
-def test_rotate_dsa_integration(
+def test_integ(
     output_root_dir: Path,
     simple_drr: TorchDRR,
     reader_name: ReaderName,
@@ -73,6 +73,24 @@ def test_rotate_dsa_integration(
     assert (output_dir / "rotate_dsa.gif").exists()
     assert (output_dir / "rotate_dsa.json").exists()
 
+@pytest.mark.parametrize("reader_name", (ReaderName.STATIC_LABEL_READER,))
+@pytest.mark.parametrize("simulator_name", (SimulatorName.IDENTITY_CONTRAST,))
+@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
+def test_integ_only_label(
+    output_root_dir: Path,
+    simple_drr: TorchDRR,
+    reader_name: ReaderName,
+    simulator_name: SimulatorName,
+    coronary_type: Literal["LCA", "RCA"],
+):
+    test_integ(
+        output_root_dir=output_root_dir,
+        simple_drr=simple_drr,
+        reader_name=reader_name,
+        simulator_name=simulator_name,
+        coronary_type=coronary_type
+    )
+
 
 @pytest.mark.parametrize(
     "reader_name, coronary_type",
@@ -89,7 +107,7 @@ def test_rotate_dsa_integration(
     SimulatorName.STATIC_IODINE_CONTRAST, 
     SimulatorName.FLOW_CONTRAST
 ))
-def test_rotate_dsa_integration_full(
+def test_integ_full(
     output_root_dir: Path,
     full_drr: TorchDRR,
     reader_name: ReaderName,
@@ -113,29 +131,11 @@ def test_rotate_dsa_integration_full(
     )
 
 
-@pytest.mark.parametrize("reader_name", (ReaderName.RBF_READER,))
-@pytest.mark.parametrize("simulator_name", (SimulatorName.CL_MARKER_CONTRAST,))
-@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
-def test_rotate_dsa_integration_cl_marker(
-    output_root_dir: Path,
-    simple_drr: TorchDRR,
-    reader_name: ReaderName,
-    simulator_name: SimulatorName,
-    coronary_type: Literal["LCA", "RCA"],
-):
-    test_rotate_dsa_integration(
-        output_root_dir=output_root_dir,
-        simple_drr=simple_drr,
-        reader_name=reader_name,
-        simulator_name=simulator_name,
-        coronary_type=coronary_type
-    )
-
 @pytest.mark.parametrize("simulator_name", (
     SimulatorName.CTA_RESET_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
-def test_rotate_dsa_integration_with_artifacts(
+def test_integ_artifacts(
     output_root_dir: Path,
     simple_drr: TorchDRR,
     volume_dvf_dir: Path,
@@ -176,10 +176,10 @@ def test_rotate_dsa_integration_with_artifacts(
 
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.CTA_RESET_CONTRAST,
+    SimulatorName.CTA_RESET_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST
 ))
 @pytest.mark.parametrize("coronary_type", ["LCA"])
-def test_rotate_dsa_integration_with_artifacts_pig_data(
+def test_integ_artifacts_pig_drr(
     output_root_dir: Path,
     pig_data_drr: TorchDRR,
     volume_dvf_dir: Path,
@@ -188,7 +188,7 @@ def test_rotate_dsa_integration_with_artifacts_pig_data(
     artifact_manager: ArtifactManager
 ):
     """RBFReader with artifact_manager + RotateDSA integration."""
-    test_rotate_dsa_integration_with_artifacts(
+    test_integ_artifacts(
         output_root_dir=output_root_dir,
         simple_drr=pig_data_drr,
         volume_dvf_dir=volume_dvf_dir,
@@ -199,32 +199,11 @@ def test_rotate_dsa_integration_with_artifacts_pig_data(
     )
 
 
-def test_accelerate(
-    output_root_dir: Path,
-    volume_dvf_dir: Path,
-    artifact_manager: ArtifactManager
-):
-    """RBFReader with artifact_manager + RotateDSA integration (10 frames)."""
-    simple_drr = TorchDRR(
-        rotate_cfg=RotatedParameters(
-            total_frame=30,
-        )
-    )
-    test_rotate_dsa_integration_with_artifacts(
-        output_root_dir=output_root_dir,
-        simple_drr=simple_drr,
-        volume_dvf_dir=volume_dvf_dir,
-        simulator_name=SimulatorName.FLOW_CONTRAST,
-        coronary_type="LCA",
-        artifact_manager=artifact_manager,
-        comment="_accelerate"
-    )
-
 
 @pytest.mark.parametrize("simulator_name", (
-    SimulatorName.HU2MU_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.CTA_RESET_CONTRAST
+    SimulatorName.HU2MU_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.CTA_RESET_CONTRAST, SimulatorName.FLOW_CONTRAST
 ))
-def test_chest_data_with_background(
+def test_integ_artifacts_pig_drr_chest_background(
     output_root_dir: Path,
     pig_data_drr: TorchDRR,
     simulator_name: SimulatorName,

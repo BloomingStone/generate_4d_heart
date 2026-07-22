@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+from typing import Any
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +56,15 @@ class ArtifactManagerConfig:
     markers: MarkerConfig | None = None
     stent: StentConfig | None = None
     external_files: list[ExternalArtifactConfig] = field(default_factory=list)
+    
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "guide_wire": asdict(self.guide_wire) if self.guide_wire is not None else None,
+            "markers": asdict(self.markers) if self.markers is not None else None,
+            "stent": asdict(self.stent) if self.stent is not None else None,
+            "external_files": [asdict(e) for e in self.external_files]
+        }
 
 
 # ---- ArtifactManager ---------------------------------------------------------

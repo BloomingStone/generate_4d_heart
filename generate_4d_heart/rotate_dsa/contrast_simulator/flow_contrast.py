@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 import heapq
 import warnings
 import logging
@@ -71,6 +72,20 @@ class FlowContrast(ContrastSimulator):
     _cached_cor_label: torch.Tensor | None = field(default=None, init=False, repr=False)   # cached coronary label for invalidation
 
     device: torch.device = field(default=torch.device("cpu"), init=False, repr=False)
+
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "type": self.__class__.__name__,
+            "mu_water_dsa": self.mu_water_dsa,
+            "mu_idodine": self.mu_idodine,
+            "velocity": self.velocity,
+            "t_in": self.t_in,
+            "t_out": self.t_out,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "preprocess_contrast": self.preprocess_contrast.meta,
+        }
 
     def simulate(
         self,

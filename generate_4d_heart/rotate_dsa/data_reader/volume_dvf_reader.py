@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, override, Literal, Protocol
+from typing import Callable, override, Literal, Protocol, Any
 from dataclasses import dataclass, field
 from collections import OrderedDict
 
@@ -402,6 +402,27 @@ class VolumeDVFReader(DataReader):
             return self._origin_volume_affine
         else:
             return self.cropped_data.cavity.affine
+
+    @property
+    @override
+    def meta(self) -> dict[str, Any]:
+        return {
+            "n_phases": self.n_phases,
+            "centering_mode": self.centering_mode,
+            "volume_size": self.volume_size,
+            "volume_affine": self.volume_affine.tolist(),
+            "source_files": {
+                "volume_nii": str(self.volume_nii),
+                "cavity_nii": str(self.cavity_nii),
+                "coronary_nii": str(self.coronary_nii),
+                "roi_json": str(self.roi_json),
+                "dvf_dir": str(self.dvf_dir),
+            },
+            "recover_cropped_data": self.recover_cropped_data,
+            "precompute_ddf": self.precompute_ddf,
+            "movement_enhancer": type(self.movement_enhancer).__name__ if self.movement_enhancer is not None else None,
+            "contrast_simulator": self.contrast_simulator.meta if self.contrast_simulator is not None else None,
+        }
 
 
 def tensor2cp(tensor: torch.Tensor, device: torch.device, dtype_cp=None):

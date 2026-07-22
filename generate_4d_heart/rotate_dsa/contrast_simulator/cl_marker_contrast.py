@@ -63,6 +63,9 @@ class ClMarkerSimulator(ContrastSimulator):
         """
         Convert HU image to baseline attenuation map and normalize cavity/threshold regions to water baseline.
         """
+        import warnings
+        warnings.warn("ClMarkerSimulator.preprocess is deprecated. Use generate_4d_heart.rotate_dsa.artifacts instead.")
+        
         res = ori_volume.clone()
         res = res / 1000.0 * self.mu_water + self.mu_water  # HU -> attenuation
 

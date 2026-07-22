@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Any
 from dataclasses import dataclass, field
 from pathlib import Path
 import logging
@@ -509,6 +509,31 @@ class RBFReader(DataReader):
     def volume_affine(self) -> np.ndarray:
         return self.roi.original_affine
 
+    @property
+    def meta(self) -> dict[str, Any]:
+        source_files = {
+            "volume_nii": str(self.volume_nii),
+            "cavity_nii": str(self.cavity_nii),
+            "coronary_nii": str(self.coronary_nii),
+            "background_nii": str(self.background_nii) if self.background_nii is not None else None,
+        }
+        if self.background_nii is not None:
+            source_files["background_nii"] = str(self.background_nii)
+        return {
+            "n_phases": self.n_phases,
+            "centering_mode": self.centering_mode,
+            "volume_size": self.volume_size,
+            "volume_affine": self.volume_affine.tolist(),
+            "source_files": source_files,
+            "num_components_used": self.num_components_used,
+            "motion_multiplier": self.motion_multiplier,
+            "attenuation_transition": self.attenuation_transition,
+            "centerline_constraint_enabled": self.centerline_constraint_enabled,
+            "feather_width": self.feather_width,
+            "contrast_simulator": self.contrast_simulator.meta if self.contrast_simulator is not None else None,
+            "artifact_manager": self.artifact_manager.config.meta if self.artifact_manager is not None else None,
+        }
+
 def generate_pericardium(cavity_data: np.ndarray, coronary_data: np.ndarray, padding_voxel: float=5.0) -> tuple[pv.PolyData, np.ndarray]:
     """
     使用 PyVista 提取并平滑心包包络
@@ -529,7 +554,7 @@ def generate_pericardium(cavity_data: np.ndarray, coronary_data: np.ndarray, pad
 
     points = cavity_all_mesh.points
     normals = cavity_all_mesh.point_normals
-    offset_points = points + normals * padding_voxel
+    offset_points = points + padding_voxel * np.array(normals)
 
     pericardium_mesh = pv.PolyData(offset_points)\
         .delaunay_3d()\

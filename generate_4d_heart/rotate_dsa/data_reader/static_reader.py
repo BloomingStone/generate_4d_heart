@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Any
 
 import torch
 import numpy as np
@@ -97,6 +97,21 @@ class StaticVolumeReader(DataReader):
     def rca_centering_affine(self) -> np.ndarray:
         return self._data.rca.centering_affine
 
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "n_phases": self.n_phases,
+            "centering_mode": self.centering_mode,
+            "volume_size": self.volume_size,
+            "volume_affine": self.volume_affine.tolist(),
+            "source_files": {
+                "volume_nii": str(self.volume_nii),
+                "cavity_nii": str(self.cavity_nii),
+                "coronary_nii": str(self.coronary_nii),
+            },
+            "contrast_simulator": self.contrast_simulator.meta if self.contrast_simulator is not None else None,
+        }
+
 
 class StaticLabelReader(StaticVolumeReader):
     def __init__(
@@ -151,4 +166,18 @@ class StaticLabelReader(StaticVolumeReader):
         self._origin_volume_affine = cavity_affine
         
         self.n_phases: int = 1
+    
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "n_phases": self.n_phases,
+            "centering_mode": self.centering_mode,
+            "volume_size": self.volume_size,
+            "volume_affine": self.volume_affine.tolist(),
+            "source_files": {
+                "cavity_nii": str(self.cavity_nii),
+                "coronary_nii": str(self.coronary_nii),
+            },
+            "contrast_simulator": self.contrast_simulator.meta if self.contrast_simulator is not None else None,
+        }
         

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Any
 import logging
 
 import torch
@@ -44,6 +44,9 @@ class VolumesReader(DataReader):
         # default contrast simulator: identity
         self.contrast_simulator = contrast_simulator
         self.centering_mode = centering_mode
+        self.image_dir = image_dir
+        self.cavity_dir = cavity_dir
+        self.coronary_dir = coronary_dir
         image_file_list = sorted(image_dir.glob("*.nii*"))
         cavity_file_list = sorted(cavity_dir.glob("*.nii*"))
         coronary_file_list = sorted(coronary_dir.glob("*.nii*"))
@@ -186,4 +189,19 @@ class VolumesReader(DataReader):
     @property
     def rca_centering_affine(self) -> np.ndarray:
         return self.data[0].rca.centering_affine
+
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "n_phases": self.n_phases,
+            "centering_mode": self.centering_mode,
+            "volume_size": self.volume_size,
+            "volume_affine": self.volume_affine.tolist(),
+            "source_files": {
+                "image_dir": str(self.image_dir),
+                "cavity_dir": str(self.cavity_dir),
+                "coronary_dir": str(self.coronary_dir),
+            },
+            "contrast_simulator": self.contrast_simulator.meta if self.contrast_simulator is not None else None,
+        }
 

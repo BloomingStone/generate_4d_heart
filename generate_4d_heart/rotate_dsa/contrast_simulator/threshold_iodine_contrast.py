@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 import numpy as np
 
@@ -28,6 +29,20 @@ class ThresholdIodineContrast(ContrastSimulator):
         self.bone_alpha = bone_alpha
         self.coronary_alpha = coronary_alpha
         self.mu_water = mu_water
+
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "type": self.__class__.__name__,
+            "lung_threshold": self.lung_threshold,
+            "heart_threshold": self.heart_threshold,
+            "bone_threshold": self.bone_threshold,
+            "lung_alpha": self.lung_alpha,
+            "heart_alpha": self.heart_alpha,
+            "bone_alpha": self.bone_alpha,
+            "coronary_alpha": self.coronary_alpha,
+            "mu_water": self.mu_water,
+        }
     
     def preprocess(
         self,
