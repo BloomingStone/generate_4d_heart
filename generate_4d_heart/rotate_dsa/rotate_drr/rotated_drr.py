@@ -1,25 +1,49 @@
 from dataclasses import dataclass, asdict
 from math import radians
-from typing import Protocol, TypeVar
+from typing import Protocol, Literal
 
 import torch
 import numpy as np
 
 from ...types import *
 from ...med_image import MedImage, Centering
-from ..cardiac_phase import CardiacPhase
 
 
 @dataclass
 class CArmGeometry:
-    sdd: MM = 1200             # Source to detector distance
-    sod: MM = 760             # Source to object distance
-    height: Pixel = 512           # Height of image
-    width: Pixel = 512    # Width of image, default to height
-    delx: MMPerPixel = 0.368           # Pixel size in x direction
-    dely: MMPerPixel = 0.368   # Pixel size in y direction, default to delx
-    x0: MM = 0.0             # detector principal point x-offset
-    y0: MM = 0.0             # detector principal point y-offset
+    sdd: MM = 1200
+    """Source to detector distance (mm)"""
+    
+    sod: MM = 760
+    """Source to object distance (mm)"""
+    
+    height: Pixel = 512
+    """Height of image"""
+    
+    width: Pixel = 512
+    """Width of image"""
+    
+    delx: MMPerPixel = 0.368
+    """Pixel size in x direction (mm/pixel)"""
+    
+    dely: MMPerPixel = 0.368
+    """Pixel size in y direction (mm/pixel)"""
+    
+    x0: MM = 0.0
+    """Detector principal point x-offset (mm)"""
+    
+    y0: MM = 0.0
+    """Detector principal point y-offset (mm)"""
+    
+    
+    orientation_type: Literal["AP", "PA"] = "PA"
+    """
+    Orientation type of the C-arm. 
+    "AP" means Anterior-Posterior, where the X-ray source is initially in front of the patient, 
+    and the detector is behind the patient, so the camera is looking from front to back. 
+    "PA" means Posterior-Anterior, where the X-ray source is behind the patient. 
+    "PA" is the default orientation as in DSA C-Arm.
+    """
 
     def to_dict(self) -> dict:
         return asdict(self)

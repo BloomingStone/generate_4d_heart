@@ -76,8 +76,8 @@ def test_kdtree_rbf_supports_phase_interpolation_and_cached_points() -> None:
 
     expected = torch.tensor(
         [
-            [0.5, 0.0, 0.0],
-            [0.5, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
         ],
         dtype=torch.float32,
         device=direct_motion.device,

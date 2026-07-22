@@ -223,9 +223,9 @@ def test_integ_artifacts_pig_drr_chest_background(
         centering_mode = "image_center"
     )
 
-    dsa = RotateDSA(reader=reader, drr=pig_data_drr)
+    dsa = RotateDSA(reader=reader, drr=pig_data_drr, multi_threads=False)
 
-    output_dir = output_root_dir / "intergration" / "artifacts" / f"chest_background_{simulator_name}_LCA"
+    output_dir = output_root_dir / "intergration" / "artifacts" / f"pig_drr_chest_background_{simulator_name}_LCA"
     if output_dir.exists():
         shutil.rmtree(output_dir)
     dsa.run_and_save(output_dir=output_dir, coronary_type="LCA", gif_fps=10)

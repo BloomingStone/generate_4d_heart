@@ -214,7 +214,7 @@ def test_rbf_reader_static_data_chest(
     artifact_manager: ArtifactManager,
     output_root_dir: Path,
     simulator_name: SimulatorName = SimulatorName.STATIC_IODINE_CONTRAST,
-    data_with_background_dir: Path = TEST_DATA_ROOT_DIR / "chest_data" / "cta_from_chest",
+    data_with_background_dir: Path = TEST_DATA_ROOT_DIR / "chest_data",
     name: str = "chest_static_data"
 ):
     """

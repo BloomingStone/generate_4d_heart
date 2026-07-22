@@ -52,8 +52,8 @@ def artifact_manager() -> ArtifactManager:
     """ArtifactManager with guide wire + markers + stent."""
     return ArtifactManager(ArtifactManagerConfig(
         guide_wire=GuideWireConfig(radius_mm=0.3),
-        markers=MarkerConfig(distance_mm=8.0, radius_mm=0.4, margin_ratio=0.8),
-        stent=StentConfig(radius_mm=1., strut_radius_mm=0.15, n_wires=6),
+        markers=MarkerConfig(distance_mm=19.0, radius_mm=0.4, margin_ratio=0.8),
+        stent=StentConfig(radius_mm=1.5, strut_radius_mm=0.15, n_wires=6),
     ))
 
 

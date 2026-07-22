@@ -43,6 +43,7 @@ def test_R_T():
         )
     )
     
+    orientation_type = drr.c_arm_cfg.orientation_type
     alpha, beta, _ = drr.rotate_cfg.get_rotaiton_radian_at_frame(0)
     sod = drr.c_arm_cfg.sod
     
@@ -53,7 +54,12 @@ def test_R_T():
     R_z_alpha = _axis_angle_rotation("Z", torch.tensor(-alpha))
     R_x_beta = _axis_angle_rotation("X", torch.tensor(-beta))
     translate = torch.eye(4)
-    translate[:3, 3] = torch.tensor([0.0, sod, 0.0])
+    if orientation_type == "AP":
+        translate[:3, 3] = torch.tensor([0.0, sod, 0.0])
+    elif orientation_type == "PA":
+        translate[:3, 3] = torch.tensor([0.0, -sod, 0.0])
+    else:
+        raise ValueError(f"orientation_type must be either AP or PA, but got {orientation_type}")
     reorient = drr.reorient
     
     # internal rotation (zxy) can translate to external rotation with oppisite order (YXZ), so here first rotate around X_world, then Y_world

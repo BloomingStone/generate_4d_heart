@@ -14,11 +14,28 @@ from ... import MU_WATER
 
 
 def get_reorientation(
-        orientation_type: Optional[Literal["AP", "PA"]] = "AP"
+        orientation_type: Optional[Literal["AP", "PA"]] = "PA"
 ) -> torch.Tensor:
-    # Frame-of-reference change
+    """
+    Get the reorientation matrix for different X-ray orientations.
+    
+    DiffDRR's "camera" uses a coordinate system where:
+    - The Z-axis points forward (towards the X-ray source).
+    - The Y-axis points upward.
+    - The X-axis points to the left.
+    
+    Args:
+        orientation_type: The desired orientation type ("AP" or "PA").
+            "AP" means Anterior-Posterior, where the X-ray source is initially in front of the patient, and the detector is behind the patient, so the camera is looking from front to back.
+            "PA" means Posterior-Anterior, where the X-ray source is behind the patient, and the detector is in front of the patient, so the camera is looking from back to front.
+            "PA" is the default orientation as in DSA C-Arm.
+    Returns:
+        A 4x4 reorientation matrix as a torch tensor.
+    """
+    
     if orientation_type == "AP":
-        # Rotates the C-arm about the x-axis by 90 degrees
+        # Initially, the source is in front of the patient, and the detector is behind the patient, so the camera is looking from front to back.
+        # Rotates 90 degrees around the x-axis
         reorient = torch.tensor(
             [
                 [1, 0, 0, 0],
@@ -29,11 +46,11 @@ def get_reorientation(
             dtype=torch.float32,
         )
     elif orientation_type == "PA":
-        # Rotates the C-arm about the x-axis by 90 degrees
-        # Reverses the direction of the y-axis
+        # Initially, the source is behind the patient, and the detector is in front of the patient, so the camera is looking from back to front.
+        # Rotates 90 degrees around the x-axis and then 180 degrees around the y-axis
         reorient = torch.tensor(
             [
-                [1, 0, 0, 0],
+                [-1, 0, 0, 0],
                 [0, 0, 1, 0],
                 [0, 1, 0, 0],
                 [0, 0, 0, 1],
@@ -62,21 +79,24 @@ class TorchDRR(RotateDRR):
         c_arm_cfg: CArmGeometry = CArmGeometry(),
         rotate_cfg: RotatedParameters = RotatedParameters(),
         patch_size: int = 256,
-        orientation_type: Optional[Literal["AP", "PA"]] = "AP",
     ):
         self.c_arm_cfg = c_arm_cfg
         self.rotate_cfg = rotate_cfg
         self.patch_size = patch_size
-        self.orientation_type = orientation_type
         self.diff_drr: DRR | None = None
         if torch.cuda.is_available():
             self._device = torch.device("cuda:0")
         else:
             raise RuntimeError("No CUDA device available for TorchDRR")
-        self.reorient = get_reorientation(self.orientation_type)
+        self.reorient = get_reorientation(c_arm_cfg.orientation_type)
         sod = self.c_arm_cfg.sod
-        self.translations = torch.tensor([[0.0, sod, 0.0]], device=self.device)
-        
+        if c_arm_cfg.orientation_type == "AP":
+            self.translations = torch.tensor([[0.0, sod, 0.0]], device=self.device)
+        elif c_arm_cfg.orientation_type == "PA":
+            # PA, source is behind the patient, so the translation is negative along the Y-axis
+            self.translations = torch.tensor([[0.0, -sod, 0.0]], device=self.device)
+        else:
+            raise ValueError(f"orientation_type must be either AP or PA, but got {c_arm_cfg.orientation_type}")
 
 
     def _setup(
@@ -224,7 +244,6 @@ class TorchDRR(RotateDRR):
     def get_additional_config(self) -> dict:
         return {
             "patch_size": self.patch_size,
-            "orientation_type": self.orientation_type,
             "reorient": self.reorient.tolist()
         }
     

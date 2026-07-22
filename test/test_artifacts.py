@@ -285,7 +285,7 @@ class TestArtifactManagerStent:
             stent=StentConfig(),
         )
         manager = ArtifactManager(config)
-        with pytest.raises(ValueError, match="StentConfig requires"):
+        with pytest.raises(ValueError, match="ArtifactManager: Cannot generate stent without markers. Set markers in ArtifactManagerConfig."):
             manager.generate_or_load(
                 coronary_label=lca_data["lca_label"],
                 cavity_label=lca_data["cavity_label"],
@@ -299,7 +299,7 @@ class TestArtifactManagerStent:
             stent=StentConfig(),
         )
         manager = ArtifactManager(config)
-        with pytest.raises(ValueError, match="requires a guide wire"):
+        with pytest.raises(ValueError, match="ArtifactManager: Cannot generate markers or stent without a guide wire. Set guide_wire in ArtifactManagerConfig."):
             manager.generate_or_load(
                 coronary_label=lca_data["lca_label"],
                 cavity_label=lca_data["cavity_label"],
@@ -345,7 +345,7 @@ class TestArtifactManager:
             markers=MarkerConfig(),
         )
         manager = ArtifactManager(config)
-        with pytest.raises(ValueError, match="requires a guide wire"):
+        with pytest.raises(ValueError, match="ArtifactManager: Cannot generate markers or stent without a guide wire. Set guide_wire in ArtifactManagerConfig."):
             manager.generate_or_load(
                 coronary_label=lca_data["lca_label"],
                 cavity_label=lca_data["cavity_label"],
