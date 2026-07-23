@@ -20,7 +20,7 @@ from generate_4d_heart.roi import ROI
 from generate_4d_heart.med_image import MedImage, Original, Centering
 from generate_4d_heart.rotate_dsa.data_reader.data_reader import (
     DataReader, DataReaderResult, Coronary, CenteringMode,
-    load_nifti, apply_affine
+    load_nifti, apply_affine, cleanup_gpu_memory
 )
 from generate_4d_heart.ssm import SSMReader, Landmark
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
@@ -109,9 +109,11 @@ class RBFReader(DataReader):
         self.roi = ROI.get_from_cavity_np(cavity_np, affine, padding=20)
         self.cropped_data = self.origin_data.crop_by_roi(self.roi)
         
-        # Pre-move cropped tensors to GPU to avoid per-frame .to(device) in warp_and_recover
-        self.origin_data = self.origin_data
-        self.cropped_data = self.cropped_data
+        # Only cropped_data needs to be on GPU for per-frame warp + render.
+        # origin_data is kept on CPU to avoid wasting ~1 GB+ GPU memory:
+        #   - get_static_data() clones volume data (CPU→GPU on demand in RotateDSA.run())
+        #   - get_dynamic_data() accesses mesh_original (CPU pyvista)
+        self.cropped_data = self.cropped_data.to_device(self.device)
         
         print("Generating pericardium mask and attenuation mask...")
         _, pericardium_mask = generate_pericardium(cavity_np, coronary.squeeze().cpu().numpy())
@@ -172,14 +174,34 @@ class RBFReader(DataReader):
         
         print("RBFReader initialized successfully.")
 
+    def cleanup(self) -> None:
+        """Release GPU resources held by this reader. Safe to call multiple times."""
+        # Move GPU tensors to CPU so they are freed from GPU memory
+        if hasattr(self, 'cropped_data') and self.cropped_data is not None:
+            try:
+                self.cropped_data = self.cropped_data.to_device(torch.device('cpu'))
+            except Exception:
+                pass
+        if hasattr(self, 'coords_zoomed') and self.coords_zoomed is not None:
+            self.coords_zoomed = self.coords_zoomed.cpu()
+        if hasattr(self, 'attenuation_mask') and self.attenuation_mask is not None:
+            self.attenuation_mask = self.attenuation_mask.cpu()
+        if hasattr(self, 'affine_crop') and self.affine_crop is not None:
+            self.affine_crop = self.affine_crop.cpu()
+        if hasattr(self, 'affine_crop_inv') and self.affine_crop_inv is not None:
+            self.affine_crop_inv = self.affine_crop_inv.cpu()
+        cleanup_gpu_memory()
+
+    def __del__(self) -> None:
+        """Defensive cleanup when the reader is garbage collected."""
+        self.cleanup()
+
     @torch.no_grad()
     def _load_background(
         self,
         origin_data: DataReader._Data,
         affine: np.ndarray,
     ) -> None:
-        mempool = cp.get_default_memory_pool()
-        pinned_mem_pool = cp.get_default_pinned_memory_pool()
         """
         Load and process the optional background CT, and apply inward feathering to the volume.
 
@@ -189,11 +211,13 @@ class RBFReader(DataReader):
           3. Applies **inward feathering** to *volume* (attenuates near the AABB boundary)
           4. Zeroes the AABB interior in the background and applies **outward feathering**
              (cosine ramp) so the background smoothly fades out at the boundary.
-
         """
         self._background_img: MedImage[Original] | None = None
         if self.background_nii is None:
             return
+        
+        mempool = cp.get_default_memory_pool()
+        pinned_mem_pool = cp.get_default_pinned_memory_pool()
 
         print(f"Loading background from {self.background_nii}...")
         bg_vol, bg_affine = load_nifti(self.background_nii)  # (1,1,D,H,W)
@@ -218,121 +242,111 @@ class RBFReader(DataReader):
 
         feather = self.feather_width  # voxels in background space
 
-        # ── Inward feathering on the volume ──
-        #
-        # Goal: attenuate volume voxels near the AABB boundary so that the
-        # volume smoothly blends into the background at the seam.
-        #
-        # Key insight: the feathering distance is defined in background voxel
-        # space (feather=10 bg-voxels), so we must evaluate the distance from
-        # each volume voxel to the AABB *in that same background space*.
-        #
-        # Coordinate transformation chain (applied per volume voxel):
-        #   vol_voxel (i,j,k) ──affine──→ world (x,y,z) ──inv_bg──→ bg_voxel (u,v,w)
-        #
-        # The AABB [bg_vox_min, bg_vox_max] is the bounding box of the volume
-        # in background voxel space. For a voxel inside this box, the distance
-        # to the nearest AABB face (L_inf norm, in bg-voxel units) tells us
-        # how far it is from the seam. Voxels within `feather` bg-voxels of
-        # any face get attenuated; voxels deeper inside are left untouched.
-        # Both LCA and RCA volumes share the same spatial dimensions (clones of the
-        # same preprocessed volume); pick any to read the shape.
-        sample_vol = next(iter(origin_data.coronary.values())).volume.data
-        D_vol, H_vol, W_vol = sample_vol.shape[-3:]
+        # Initialize CuPy/torch variables before try so finally can safely del them
+        vol_grid = vol_flat = vol_h = world_pts = bg_pts = None
+        bg_data = bg_original = aabb_mask = outward_mask = None
+        feather_mask = dist = dist_cp = w = w_cos = None
 
-        # Step 1–5: CuPy-accelerated grid → bg-voxel distance computation
-        i = cp.arange(D_vol)
-        j = cp.arange(H_vol)
-        k = cp.arange(W_vol)
-        vol_grid = cp.stack(cp.meshgrid(i, j, k, indexing='ij'), axis=-1)  # (D, H, W, 3)
+        try:
+            # ── Inward feathering on the volume ──
+            sample_vol = next(iter(origin_data.coronary.values())).volume.data
+            D_vol, H_vol, W_vol = sample_vol.shape[-3:]
 
-        # Step 2: flatten to (N, 3) and add homogeneous coordinate
-        vol_flat = vol_grid.reshape(-1, 3).astype(cp.float32)
-        vol_h = cp.pad(vol_flat, ((0, 0), (0, 1)), constant_values=1)  # (N, 4)
+            # Step 1–5: CuPy-accelerated grid → bg-voxel distance computation
+            i = cp.arange(D_vol)
+            j = cp.arange(H_vol)
+            k = cp.arange(W_vol)
+            vol_grid = cp.stack(cp.meshgrid(i, j, k, indexing='ij'), axis=-1)  # (D, H, W, 3)
 
-        # Step 3: vol_voxel → world → bg_voxel
-        affine_cp = cp.asarray(affine)
-        inv_bg_cp = cp.asarray(inv_bg)
-        world_pts = vol_h @ affine_cp.T
-        bg_pts = world_pts @ inv_bg_cp.T
-        bg_pts = bg_pts[:, :3]
+            # Step 2: flatten to (N, 3) and add homogeneous coordinate
+            vol_flat = vol_grid.reshape(-1, 3).astype(cp.float32)
+            vol_h = cp.pad(vol_flat, ((0, 0), (0, 1)), constant_values=1)  # (N, 4)
 
-        # Step 4: distance from each point to the nearest AABB face
-        bg_vox_min_cp = cp.asarray(bg_vox_min)
-        bg_vox_max_cp = cp.asarray(bg_vox_max)
-        d_min = bg_pts - bg_vox_min_cp[None, :]
-        d_max = bg_vox_max_cp[None, :] - bg_pts
-        d_face = cp.minimum(d_min, d_max)
-        d_boundary = d_face.min(axis=-1)
-        d_boundary = cp.maximum(d_boundary, 0)
+            # Step 3: vol_voxel → world → bg_voxel
+            affine_cp = cp.asarray(affine)
+            inv_bg_cp = cp.asarray(inv_bg)
+            world_pts = vol_h @ affine_cp.T
+            bg_pts = world_pts @ inv_bg_cp.T
+            bg_pts = bg_pts[:, :3]
 
-        # Step 5: cosine inward ramp — 0 at the boundary, 1 at `feather` or deeper
-        w = cp.clip(d_boundary / feather, 0, 1).astype(cp.float32)
-        atten_cos = 0.5 * (1.0 - cp.cos(cp.pi * w))
-        atten = cp.asnumpy(atten_cos.reshape(D_vol, H_vol, W_vol))
+            # Step 4: distance from each point to the nearest AABB face
+            bg_vox_min_cp = cp.asarray(bg_vox_min)
+            bg_vox_max_cp = cp.asarray(bg_vox_max)
+            d_min = bg_pts - bg_vox_min_cp[None, :]
+            d_max = bg_vox_max_cp[None, :] - bg_pts
+            d_face = cp.minimum(d_min, d_max)
+            d_boundary = d_face.min(axis=-1)
+            d_boundary = cp.maximum(d_boundary, 0)
 
-        # Step 6: apply inward attenuation directly in mu space, in-place.
-        for cor in origin_data.coronary.values():
-            cor.volume.data[0, 0] *= torch.from_numpy(atten)
+            # Step 5: cosine inward ramp — 0 at the boundary, 1 at `feather` or deeper
+            w = cp.clip(d_boundary / feather, 0, 1).astype(cp.float32)
+            atten_cos = 0.5 * (1.0 - cp.cos(cp.pi * w))
+            atten = cp.asnumpy(atten_cos.reshape(D_vol, H_vol, W_vol))
 
-        # ── Process background: zero AABB interior + outward feathering ──
-        #
-        # Complement to the inward volume feathering above.
-        #
-        # Key: the background zeroing region is the volume's AABB CONTRACTED by
-        # `feather` voxels on each side.  This makes the two cosine ramps
-        # complementary → vol + bg = 1 everywhere in the transition zone:
-        #
-        #   contracted AABB                    original AABB
-        #   ──────────●────────────────────────●─────────────
-        #      inner ←│     ← feather →        │→ outer 
-        #   vol:  1───┘                        └─0  (inward cosine)
-        #   bg:   0───┐                        ┌─1  (outward cosine)
-        #   total:    1                        1
-        bg_zero_min = np.maximum(bg_vox_min + feather, 0).astype(int)
-        bg_zero_max = np.minimum(bg_vox_max - feather, bg_shape).astype(int)
-        for axis in range(3):
-            if bg_zero_max[axis] <= bg_zero_min[axis]:
-                bg_zero_min[axis] = bg_vox_min[axis]
-                bg_zero_max[axis] = bg_vox_min[axis] + 1
+            # Step 6: apply inward attenuation directly in mu space, in-place.
+            for cor in origin_data.coronary.values():
+                cor.volume.data[0, 0] *= torch.from_numpy(atten)
 
-        bg_data = bg_vol.squeeze()
-        bg_original = bg_data.clone()
+            # ── Process background: zero AABB interior + outward feathering ──
+            #
+            # Complement to the inward volume feathering above.
+            #
+            # Key: the background zeroing region is the volume's AABB CONTRACTED by
+            # `feather` voxels on each side.  This makes the two cosine ramps
+            # complementary → vol + bg = 1 everywhere in the transition zone:
+            #
+            #   contracted AABB                    original AABB
+            #   ──────────●────────────────────────●─────────────
+            #      inner ←│     ← feather →        │→ outer 
+            #   vol:  1───┘                        └─0  (inward cosine)
+            #   bg:   0───┐                        ┌─1  (outward cosine)
+            #   total:    1                        1
+            bg_zero_min = np.maximum(bg_vox_min + feather, 0).astype(int)
+            bg_zero_max = np.minimum(bg_vox_max - feather, bg_shape).astype(int)
+            for axis in range(3):
+                if bg_zero_max[axis] <= bg_zero_min[axis]:
+                    bg_zero_min[axis] = bg_vox_min[axis]
+                    bg_zero_max[axis] = bg_vox_min[axis] + 1
 
-        bg_data[bg_zero_min[0]:bg_zero_max[0],
-                bg_zero_min[1]:bg_zero_max[1],
-                bg_zero_min[2]:bg_zero_max[2]] = 0.0
+            bg_data = bg_vol.squeeze()
+            bg_original = bg_data.clone()
 
-        aabb_mask = torch.zeros(bg_shape.tolist(), dtype=torch.bool)
-        aabb_mask[bg_zero_min[0]:bg_zero_max[0],
-                  bg_zero_min[1]:bg_zero_max[1],
-                  bg_zero_min[2]:bg_zero_max[2]] = True
-        outward_mask = ~aabb_mask  # True = outside contracted AABB → outward EDT
-        # CuPy-accelerated distance transform on GPU
-        with cp.cuda.Device(self.device.index):
-            dist_cp = ndimage.distance_transform_edt(cp.asarray(outward_mask.numpy()))
-            dist = torch.from_numpy(cp.asnumpy(dist_cp))
-        feather_mask = (dist > 0) & (dist <= feather)  # voxels outside contracted AABB, ≤feather away
-        w = dist[feather_mask] / feather
-        w_cos = (0.5 * (1 - torch.cos(np.pi * w))).to(bg_data.dtype)
-        bg_data[feather_mask] = bg_original[feather_mask] * w_cos
+            bg_data[bg_zero_min[0]:bg_zero_max[0],
+                    bg_zero_min[1]:bg_zero_max[1],
+                    bg_zero_min[2]:bg_zero_max[2]] = 0.0
 
-        bg_volume = bg_data[None, None].to(torch.float32).cpu()
+            aabb_mask = torch.zeros(bg_shape.tolist(), dtype=torch.bool)
+            aabb_mask[bg_zero_min[0]:bg_zero_max[0],
+                    bg_zero_min[1]:bg_zero_max[1],
+                    bg_zero_min[2]:bg_zero_max[2]] = True
+            outward_mask = ~aabb_mask
+            # CuPy-accelerated distance transform on GPU
+            with cp.cuda.Device(self.device.index):
+                dist_cp = ndimage.distance_transform_edt(cp.asarray(outward_mask.numpy()))
+                dist = torch.from_numpy(cp.asnumpy(dist_cp))
+            feather_mask = (dist > 0) & (dist <= feather)
+            w = dist[feather_mask] / feather
+            w_cos = (0.5 * (1 - torch.cos(np.pi * w))).to(bg_data.dtype)
+            bg_data[feather_mask] = bg_original[feather_mask] * w_cos
 
-        self._background_img = MedImage(
-            data=bg_volume,
-            affine=bg_affine.copy(),
-            coord=Original(),
-        )
+            bg_volume = bg_data[None, None].to(torch.float32).cpu()
 
-        print(f"Background: shape={bg_vol.shape[-3:]}, "
-              f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
-        
-        del bg_vol, bg_data, bg_original, aabb_mask, outward_mask, feather_mask, dist, dist_cp, w, w_cos,\
-            world_pts, bg_pts, vol_h, vol_flat, vol_grid
-        mempool.free_all_blocks()
-        pinned_mem_pool.free_all_blocks()
-        torch.cuda.empty_cache()
+            self._background_img = MedImage(
+                data=bg_volume,
+                affine=bg_affine.copy(),
+                coord=Original(),
+            )
+
+            print(f"Background: shape={bg_vol.shape[-3:]}, "
+                    f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
+        finally:
+            # Clean up CuPy memory to avoid OOM in subsequent tests
+            del vol_grid, vol_flat, vol_h, world_pts, bg_pts
+            del bg_data, bg_original, aabb_mask, outward_mask
+            del feather_mask, dist, dist_cp, w, w_cos
+            mempool.free_all_blocks()
+            pinned_mem_pool.free_all_blocks()
+            torch.cuda.empty_cache()
 
     @torch.no_grad()
     def _warp_for_phase(

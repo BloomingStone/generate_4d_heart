@@ -11,6 +11,7 @@ from generate_4d_heart.rotate_dsa.artifacts import (
     ArtifactManager, ArtifactManagerConfig, GuideWireConfig, MarkerConfig,
 )
 from generate_4d_heart.rotate_dsa.data_reader import RBFReader
+from generate_4d_heart.rotate_dsa.data_reader.data_reader import cleanup_gpu_memory
 from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 
 from utils import reader_factory, ReaderName, SimulatorName, TEST_DATA_ROOT_DIR, simulator_factory
@@ -145,6 +146,7 @@ def test_integ_artifacts(
     comment: str = ""
 ):
     """RBFReader with artifact_manager + RotateDSA integration."""
+    cleanup_gpu_memory()
     reader = RBFReader(
         volume_nii=volume_dvf_dir / "image.nii.gz",
         cavity_nii=volume_dvf_dir / "cavity.nii.gz",
@@ -210,6 +212,10 @@ def test_integ_artifacts_pig_drr_chest_background(
     artifact_manager: ArtifactManager,
 ):
     """Integration test with chest CTA data + background CT, using pig_data_drr."""
+    # Clean up GPU memory from any previous test failure that may have leaked.
+    # This prevents CuPy OOM when this test allocates large background volumes.
+    cleanup_gpu_memory()
+
     chest_dir = TEST_DATA_ROOT_DIR / "chest_data"
     assert chest_dir.exists(), f"chest_data directory not found: {chest_dir}"
 

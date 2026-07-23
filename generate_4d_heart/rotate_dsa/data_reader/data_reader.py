@@ -80,7 +80,6 @@ def separate_coronary(coronary: Tensor, device: torch.device) -> tuple[Tensor, T
         lca (Tensor): LCA segmentation, dtype: torch.bool
         rca (Tensor): RCA segmentation, dtype: torch.bool
     """
-    
     mempool = cp.get_default_memory_pool()
     pinned_mem_pool = cp.get_default_pinned_memory_pool()
     
@@ -88,34 +87,49 @@ def separate_coronary(coronary: Tensor, device: torch.device) -> tuple[Tensor, T
     coronary = coronary.squeeze()
     assert coronary.ndim == 3, "Coronary tensor after squeeze must be in shape (D, H, W)"
     
-    with cp.cuda.Device(device.index):
-        coronary = cp.array(coronary.to(device))
-        labeled_array, num_features = label(coronary.astype(cp.int8))  # type: ignore
+    try:
+        with cp.cuda.Device(device.index):
+            coronary = cp.array(coronary.to(device))
+            labeled_array, num_features = label(coronary.astype(cp.int8))  # type: ignore
+            
+            if num_features <= 1:
+                raise ValueError("Coronary segmentation must have at least 2 components")
+            
+            assert labeled_array is not None
+            component_sizes = cp.bincount(labeled_array.ravel())[1:]  # Skip background (0)
+            
+            largest_indices = cp.argsort(component_sizes)[-2:][::-1] + 1
+            
+            region_0 = (labeled_array == largest_indices[0]).astype(cp.bool_)
+            region_1 = (labeled_array == largest_indices[1]).astype(cp.bool_)
+            
+            center_0 = center_of_mass(region_0.astype(cp.float16))
+            center_1 = center_of_mass(region_1.astype(cp.float16))
+            
+            region_0 = torch.tensor(region_0).reshape(shape).to(torch.bool)
+            region_1 = torch.tensor(region_1).reshape(shape).to(torch.bool)
         
-        if num_features <= 1:
-            raise ValueError("Coronary segmentation must have at least 2 components")
-        
-        assert labeled_array is not None
-        component_sizes = cp.bincount(labeled_array.ravel())[1:]  # Skip background (0)
-        
-        largest_indices = cp.argsort(component_sizes)[-2:][::-1] + 1
-        
-        region_0 = (labeled_array == largest_indices[0]).astype(cp.bool_)
-        region_1 = (labeled_array == largest_indices[1]).astype(cp.bool_)
-        
-        center_0 = center_of_mass(region_0.astype(cp.float16))  # use float16 for fast computation
-        center_1 = center_of_mass(region_1.astype(cp.float16))
-        
-        region_0 = torch.tensor(region_0).reshape(shape).to(torch.bool)
-        region_1 = torch.tensor(region_1).reshape(shape).to(torch.bool)
-    
         if center_0[0] > center_1[0]:
             return region_0, region_1
         else:
             return region_1, region_0
-    
+    finally:
+        mempool.free_all_blocks()
+        pinned_mem_pool.free_all_blocks()
+
+
+def cleanup_cupy_memory() -> None:
+    """Free all CuPy memory pool blocks to prevent GPU OOM across tests."""
+    mempool = cp.get_default_memory_pool()
+    pinned_mem_pool = cp.get_default_pinned_memory_pool()
     mempool.free_all_blocks()
     pinned_mem_pool.free_all_blocks()
+
+
+def cleanup_gpu_memory() -> None:
+    """Free both PyTorch and CuPy GPU memory. Safe to call at any point."""
+    torch.cuda.empty_cache()
+    cleanup_cupy_memory()
 
 
 CenteringMode = Literal["coronary_center", "image_center"]
@@ -622,14 +636,14 @@ class DataReader(Protocol):
         
         def _resample(img: MedImage, is_label: bool = False) -> Tensor:
             return resample(
-                img.data.squeeze(),
+                img.data.cpu().squeeze(),
                 img.affine,
                 combined_affine,
                 combined_shape,
                 is_label=is_label
             ).reshape(final_shape)
         
-        combined_volume = static_layers[0].data
+        combined_volume = static_layers[0].data.cpu()
         combined_affine = static_layers[0].affine
         combined_shape = combined_volume.shape[-3:]  # (W, H, D)
         for img in static_layers[1:]:
@@ -766,6 +780,14 @@ def resample(
         data_5d = data
     else:
         raise ValueError(f"Unsupported data dim: {data.dim()}")
+
+    # ── 4.5 Cast to float32 if needed ──
+    # PyTorch CPU grid_sampler_3d does not support Byte (uint8) / bool input.
+    # Convert to float32, run grid_sample, then cast back to original dtype.
+    input_dtype = data_5d.dtype
+    if input_dtype in (torch.uint8, torch.bool, torch.int16, torch.int32, torch.int64):
+        data_5d = data_5d.to(torch.float32)
+
     data_permuted = data_5d.permute(0, 1, 4, 3, 2)  # (1, 1, D_old, H_old, W_old)
 
     # ── 5. grid_sample ──
@@ -781,6 +803,13 @@ def resample(
         padding_mode="zeros",
         align_corners=True,
     )  # (1, 1, D_new, H_new, W_new)
+
+    # ── 5.5 Cast back to original dtype ──
+    if input_dtype in (torch.uint8, torch.bool, torch.int16, torch.int32, torch.int64):
+        if is_label:
+            sampled = sampled.round().to(input_dtype)
+        else:
+            sampled = sampled.to(input_dtype)
 
     # ── 6. 恢复轴序: (1, 1, W_new, H_new, D_new) ──
     sampled = sampled.permute(0, 1, 4, 3, 2)  # (1, 1, W, H, D)

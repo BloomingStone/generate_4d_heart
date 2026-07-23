@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-from generate_4d_heart.rotate_dsa.data_reader.data_reader import DataReader, get_mesh_in_world, CoronaryType
+from generate_4d_heart.rotate_dsa.data_reader.data_reader import DataReader, get_mesh_in_world, CoronaryType, cleanup_gpu_memory
 from generate_4d_heart.rotate_dsa.artifacts import (
     ArtifactManager, ArtifactManagerConfig, GuideWireConfig, MarkerConfig, StentConfig
 )
@@ -220,6 +220,7 @@ def test_rbf_reader_static_data_chest(
     """
     Save get_static_data() layers for chest CTA + background CT.
     """
+    cleanup_gpu_memory()
     chest_dir = data_with_background_dir
     assert chest_dir.exists(), f"chest_data not found: {chest_dir}"
 
