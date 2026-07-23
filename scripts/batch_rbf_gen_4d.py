@@ -122,7 +122,7 @@ class BatchDVFToDSA:
                 save_cor_mesh(output_path, data.coronary.mesh_centering)
             if OutputMode3D.CAVITY_LABEL in self.output_mode_3d:
                 output_path = output_case_dir / f"{case_name}_cavity-label" / f"phase_{phase_str}.nii.gz"
-                save_cavity_label(output_path, data.cavity_label, affine)
+                save_cavity_label(output_path, data.cavity.data, affine)
             if OutputMode3D.VOLUME in self.output_mode_3d:
                 output_path = output_case_dir / f"{case_name}_volume" / f"phase_{phase_str}.nii.gz"
                 save_volume(output_path, data.coronary.volume, affine)
@@ -153,7 +153,7 @@ class BatchDVFToDSA:
             for phase_index in tqdm(range(self.output_3d_num), desc=f"Generating 4D data - {case_name} - {coronary_type}"):
                 cardiac_phase = CardiacPhase.from_index(phase_index, self.output_3d_num)
                 phase_str = cardiac_phase.to_str(precision=2, has_decimal_point=False)
-                data = reader.get_data(cardiac_phase, coronary_type)
+                data = reader.get_dynamic_data(cardiac_phase, coronary_type)
                 affine = reader.volume_affine
                 save_buffer.put((phase_str, data, affine))
 

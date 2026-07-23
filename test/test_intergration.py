@@ -29,7 +29,7 @@ def test_integ(
     coronary_type: Literal["LCA", "RCA"],
 ):
     """测试完整的 RotateDSA 集成流程"""
-    _, reader = reader_factory(SimulatorName(simulator_name), ReaderName(reader_name))
+    _, reader = reader_factory(SimulatorName(simulator_name), ReaderName(reader_name), cororonary_need_load=coronary_type)
     
     # 创建 RotateDSA 实例
     dsa = RotateDSA(
@@ -115,7 +115,7 @@ def test_integ_full(
     coronary_type: Literal["LCA", "RCA"],
 ):
     """测试完整的 RotateDSA 集成流程 并生成完整数据"""
-    _, reader = reader_factory(SimulatorName(simulator_name), ReaderName(reader_name))
+    _, reader = reader_factory(SimulatorName(simulator_name), ReaderName(reader_name), cororonary_need_load=coronary_type)
     
     dsa = RotateDSA(
         reader=reader,
@@ -223,7 +223,7 @@ def test_integ_artifacts_pig_drr_chest_background(
         centering_mode = "image_center"
     )
 
-    dsa = RotateDSA(reader=reader, drr=pig_data_drr, multi_threads=False)
+    dsa = RotateDSA(reader=reader, drr=pig_data_drr)
 
     output_dir = output_root_dir / "intergration" / "artifacts" / f"pig_drr_chest_background_{simulator_name}_LCA"
     if output_dir.exists():

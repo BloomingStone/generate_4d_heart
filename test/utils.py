@@ -1,7 +1,7 @@
 from pathlib import Path
 from enum import StrEnum
-from functools import lru_cache
-import warnings
+
+from typing import Literal
 
 
 from generate_4d_heart.rotate_dsa.data_reader import (
@@ -13,6 +13,7 @@ from generate_4d_heart.rotate_dsa.contrast_simulator import (
     Hu2MuContrast, ContrastSimulator, FlowContrast, ClMarkerSimulator,
     CtaResetContrast
 )
+from generate_4d_heart.types import CoronaryType
 
 
 TEST_ROOT_DIR = Path(__file__).parent
@@ -66,7 +67,8 @@ def simulator_factory(
 def reader_factory(
     simulator_name: SimulatorName,
     reader_name: ReaderName,
-    data_root_dir: Path = TEST_DATA_ROOT_DIR
+    data_root_dir: Path = TEST_DATA_ROOT_DIR,
+    cororonary_need_load: set[CoronaryType]|Literal["LCA", "RCA"]|None = None
 ) -> tuple[ContrastSimulator, DataReader]:
     volumes_dir = data_root_dir / "volumes"
     volume_dvf_dir = data_root_dir / "volume_with_dvf"
@@ -113,7 +115,11 @@ def reader_factory(
             )
         case _:
             raise ValueError(f"Unsupported reader name: {reader_name}")
-        
+    
+    if cororonary_need_load is not None:
+        if isinstance(cororonary_need_load, str):
+            cororonary_need_load = {CoronaryType(cororonary_need_load)}
+        reader.coronary_need_load = cororonary_need_load
     return simulator, reader
 
 

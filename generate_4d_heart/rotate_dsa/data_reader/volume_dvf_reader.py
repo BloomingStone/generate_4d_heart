@@ -261,9 +261,7 @@ class VolumeDVFReader(DataReader):
             cavity = cavity,
             coronary = coronary,
             affine = affine,
-            running_device = self.device,
-            contrast_simulator = self.contrast_simulator,
-            centering_mode = self.centering_mode
+            reader = self
         )
 
         self._origin_volume_size = volume.shape[2:]   #type: ignore
@@ -328,7 +326,7 @@ class VolumeDVFReader(DataReader):
             ).to(self.device)
     
     
-    def get_data(
+    def get_dynamic_data(
         self,
         phase: CardiacPhase,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
@@ -362,7 +360,7 @@ class VolumeDVFReader(DataReader):
         )
     
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        return self.get_data(CardiacPhase(0), coronary_type)
+        return self.get_dynamic_data(CardiacPhase(0), coronary_type)
     
      
     def save_roi(self, output_dir: Path):

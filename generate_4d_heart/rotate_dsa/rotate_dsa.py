@@ -2,25 +2,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Any
 import json
-import math
 import threading
 import queue
 from concurrent.futures import ProcessPoolExecutor
 
 from tqdm import tqdm
-import pyvista as pv
 import numpy as np
 import torch
-from pytorch3d.renderer import (
-    FoVPerspectiveCameras,
-    RasterizationSettings,
-    MeshRasterizer
-)
-from pytorch3d.structures import Meshes
+
 
 from .data_reader import DataReader, DataReaderResult
-from .contrast_simulator import ContrastSimulator
-from .rotate_drr import RotateDRR, CArmGeometry
+from .rotate_drr import RotateDRR
 from ..med_image import MedImage
 from ..types import Sec
 from .cardiac_phase import CardiacPhase
@@ -86,11 +78,10 @@ class RotateDSA:
         artifacts_proj = np.zeros((total_frame, w, h), dtype=np.float32)
 
         # ── Stage 1: Batch-render all static layers ──
-        static_layers = self.reader.get_static_data(coronary_type)
-        for vol_img, _roi_aabb in static_layers:
+        for vol_img in self.reader.get_static_data(coronary_type):
             layer_frames = self.drr.get_projections_at_frames(
                 list(range(total_frame)),
-                volume=vol_img,
+                volume=vol_img.to(device=device),
                 coronary=MedImage(
                     data=torch.zeros_like(vol_img.data, dtype=torch.bool),
                     affine=vol_img.affine,
@@ -144,7 +135,7 @@ class RotateDSA:
                     for f in range(total_frame):
                         phase = self._get_phase_at_frame(f)
                         time = f / self.drr.rotate_cfg.fps
-                        read_res = self.reader.get_data(phase, coronary_type, time)
+                        read_res = self.reader.get_dynamic_data(phase, coronary_type, time)
                         task_queue.put((f, read_res))
                 except Exception as e:
                     task_queue.put(e)
@@ -168,7 +159,7 @@ class RotateDSA:
             for f in tqdm(range(total_frame), desc="Generating Rotate DSA (single-thread)..."):
                 phase = self._get_phase_at_frame(f)
                 time = f / self.drr.rotate_cfg.fps
-                read_res = self.reader.get_data(phase, coronary_type, time)
+                read_res = self.reader.get_dynamic_data(phase, coronary_type, time)
                 _render_one_frame(f, read_res)
 
         # Beer-Lambert: line integral → intensity
@@ -222,7 +213,7 @@ class RotateDSA:
                 try:
                     for f in range(total_frame):
                         phase = self._get_phase_at_frame(f)
-                        read_res = self.reader.get_data(phase, coronary_type)
+                        read_res = self.reader.get_dynamic_data(phase, coronary_type)
                         task_queue.put((f, read_res))
                 except Exception as e:
                     task_queue.put(e)
@@ -245,7 +236,7 @@ class RotateDSA:
         else:
             for f in tqdm(range(total_frame), desc="Generating Rotate DSA without DRR (single-thread)..."):
                 phase = self._get_phase_at_frame(f)
-                read_res = self.reader.get_data(phase, coronary_type)
+                read_res = self.reader.get_dynamic_data(phase, coronary_type)
                 _render_one_frame_no_drr(f, read_res)
 
         return labels, depth_maps

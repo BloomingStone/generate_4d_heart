@@ -43,9 +43,7 @@ class StaticVolumeReader(DataReader):
             cavity=cavity,
             coronary=coronary,
             affine=affine,
-            running_device=self.device,
-            contrast_simulator=self.contrast_simulator,
-            centering_mode=self.centering_mode
+            reader=self
         )
 
         self._origin_volume_size = volume.shape[2:]   #type: ignore
@@ -54,7 +52,7 @@ class StaticVolumeReader(DataReader):
         self.n_phases: int = 1
 
     
-    def get_data(
+    def get_dynamic_data(
         self,
         phase: CardiacPhase,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
@@ -87,7 +85,7 @@ class StaticVolumeReader(DataReader):
         )
 
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        return self.get_data(CardiacPhase(0), coronary_type)
+        return self.get_dynamic_data(CardiacPhase(0), coronary_type)
 
     @property
     def lca_centering_affine(self) -> np.ndarray:
@@ -143,9 +141,7 @@ class StaticLabelReader(StaticVolumeReader):
             cavity=cavity,
             coronary=coronary,
             affine=cavity_affine,
-            running_device=self.device,
-            contrast_simulator=None,
-            centering_mode=self.centering_mode
+            reader=self
         )
         if not self.contrast_simulator.contrast_change_over_time:
             print("Applying STATIC contrast simulation to original volume for StaticLabelReader...")

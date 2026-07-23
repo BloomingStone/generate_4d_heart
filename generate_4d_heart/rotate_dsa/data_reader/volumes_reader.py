@@ -81,9 +81,7 @@ class VolumesReader(DataReader):
                 cavity=cavity_label,
                 coronary=coronary_label,
                 affine=affine,
-                running_device=self.device,
-                contrast_simulator=self.contrast_simulator,
-                centering_mode=self.centering_mode
+                reader=self,
             ))
         
         # Align coronary centering coord across phases (centering affine is computed property)
@@ -124,7 +122,7 @@ class VolumesReader(DataReader):
             )
         )
 
-    def get_data(
+    def get_dynamic_data(
         self,
         phase: CardiacPhase,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],

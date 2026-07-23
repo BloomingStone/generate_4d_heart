@@ -96,7 +96,7 @@ class BatchDVFToDSA:
         phase_0_data = reader.get_phase_0_data(coronary_type)
         save_nii(
             output_case_dir / f"{coronary_type}_label.nii.gz",
-            phase_0_data.coronary.label,
+            phase_0_data.coronary.label.data,
             affine=phase_0_data.coronary.centering_affine,
             is_label=True
         )

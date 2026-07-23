@@ -48,10 +48,22 @@ class CoordinateSystem:
 
 
 class Original(CoordinateSystem):
-    """原始世界坐标系，原点在 (0,0,0)，无平移。"""
+    """原始世界坐标系，原点在 (0,0,0)，无平移。
+
+    单例：所有 Original() 调用返回同一实例。
+    """
+    _instance: Original | None = None
+
+    def __new__(cls) -> Original:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        super().__init__("WORLD")
-        self.translation = np.array([0.0, 0.0, 0.0])
+        if not hasattr(self, '_initialized'):
+            super().__init__("ORIGINAL")
+            self.translation = np.array([0.0, 0.0, 0.0])
+            self._initialized = True
 
 
 class Centering(CoordinateSystem):
@@ -60,15 +72,27 @@ class Centering(CoordinateSystem):
     通过 cor_type 区分 LCA/RCA，方便根据输入选择：
         Centering(CoronaryType.LCA, translation)
         Centering(CoronaryType.RCA, translation)
+
+    多例（Multiton）：相同 (cor_type, translation) 参数返回同一实例。
     """
     translation: np.ndarray  # (3,)
     cor_type: CoronaryType
+    _instances: dict[tuple[CoronaryType, tuple[float, ...]], Centering] = {}
+
+    def __new__(cls, cor_type: CoronaryType, translation: np.ndarray) -> Centering:
+        key = (cor_type, tuple(translation))
+        if key not in cls._instances:
+            cls._instances[key] = super().__new__(cls)
+        return cls._instances[key]
 
     def __init__(self, cor_type: CoronaryType, translation: np.ndarray):
+        if hasattr(self, '_initialized'):
+            return
         assert translation.shape == (3,), f"Expected (3,), got {translation.shape}"
         super().__init__(f"{cor_type.value}_CENTERING")
         self.cor_type = cor_type
         self.translation = translation.copy()
+        self._initialized = True
 
 
 # ─── TypeVar ───

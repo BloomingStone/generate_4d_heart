@@ -97,8 +97,7 @@ class RBFReader(DataReader):
         
         print("Initializing origin data...")
         self.origin_data = self._Data.init_from_volume(
-            volume, cavity, coronary, affine, self.device, self.contrast_simulator,
-            self.artifact_manager, centering_mode=self.centering_mode
+            volume, cavity, coronary, affine, self
         )
         
         # ── Load and preprocess optional background, apply inward feathering to volume ──
@@ -111,8 +110,8 @@ class RBFReader(DataReader):
         self.cropped_data = self.origin_data.crop_by_roi(self.roi)
         
         # Pre-move cropped tensors to GPU to avoid per-frame .to(device) in warp_and_recover
-        self.origin_data = self.origin_data.to_device(self.device)
-        self.cropped_data = self.cropped_data.to_device(self.device)
+        self.origin_data = self.origin_data
+        self.cropped_data = self.cropped_data
         
         print("Generating pericardium mask and attenuation mask...")
         _, pericardium_mask = generate_pericardium(cavity_np, coronary.squeeze().cpu().numpy())
@@ -192,9 +191,7 @@ class RBFReader(DataReader):
              (cosine ramp) so the background smoothly fades out at the boundary.
 
         """
-        self._background_volume: Tensor | None = None
-        self._background_affine: np.ndarray | None = None
-        self._background_roi_aabb: np.ndarray | None = None
+        self._background_img: MedImage[Original] | None = None
         if self.background_nii is None:
             return
 
@@ -320,12 +317,13 @@ class RBFReader(DataReader):
         w_cos = (0.5 * (1 - torch.cos(np.pi * w))).to(bg_data.dtype)
         bg_data[feather_mask] = bg_original[feather_mask] * w_cos
 
-        bg_volume = bg_data[None, None].to(torch.float32).to(self.device)
-        bg_roi_aabb = np.stack([bg_vox_min, bg_vox_max], axis=1)
+        bg_volume = bg_data[None, None].to(torch.float32).cpu()
 
-        self._background_volume = bg_volume
-        self._background_affine = bg_affine.copy()
-        self._background_roi_aabb = bg_roi_aabb
+        self._background_img = MedImage(
+            data=bg_volume,
+            affine=bg_affine.copy(),
+            coord=Original(),
+        )
 
         print(f"Background: shape={bg_vol.shape[-3:]}, "
               f"volume AABB bg-voxel: {bg_vox_min}→{bg_vox_max}")
@@ -406,49 +404,38 @@ class RBFReader(DataReader):
     def get_static_data(
         self,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
-    ) -> list[tuple[MedImage[Centering], np.ndarray]]:
+    ) -> list[MedImage[Centering]]:
         """
-        Return list of (MedImage[Centering], roi_aabb) for layered batch DRR rendering.
-        roi_aabb 标记该层占用的体素包围盒 ((x0,x1),(y0,y1),(z0,z1))，用于拼接有效性判断.
-        Layers are rendered front-to-back.
+        输出多层静态volume(背景、心腔等)。每层都将下一层占据的区域置为零（或在边缘增加羽化，以处理分辨率不同导致的边缘无法对其问题）
+        因为 X射线投影/DRR 是线性积分， 所以可以将每层的投影结果相加，得到最终的投影结果。
+        返回结果应当在 Centering 坐标下。
         """
         cor_type = CoronaryType(coronary_type)
-        layers: list[tuple[MedImage[Centering], np.ndarray]] = []
+        cor = self.origin_data.coronary[cor_type]  # before cropping, match static volume
+        
+        layers: list[MedImage[Centering]] = []
 
         # ── Layer 1: Background (if available) ──
-        if self._background_volume is not None:
-            assert self._background_affine is not None
-            assert self._background_roi_aabb is not None
-            
-            img_world = MedImage(
-                data=self._background_volume,
-                affine=self._background_affine.copy(),
-                coord=Original(),
+        if self._background_img is not None:
+            layers.append(
+                self._background_img.to_coord(cor.centering_coord)
             )
-            layers.append((
-                img_world.to_coord(self.cropped_data.coronary[cor_type].centering_coord),
-                self._background_roi_aabb,
-            ))
 
         # ── Layer 2: Static heart (dynamic ROI zeroed) ──
-        cor = self.origin_data.coronary[cor_type]  # before cropping, match static volume
         (x0, x1), (y0, y1), (z0, z1) = self.roi.crop_box
         heart_vol = cor.volume.data.clone()
         heart_vol[..., x0:x1, y0:y1, z0:z1] = 0.0
-        heart_roi_aabb = np.array([[x0, x1], [y0, y1], [z0, z1]])
-        layers.append((
+        layers.append(
             MedImage(
                 data=heart_vol,
                 affine=cor.centering_affine,
                 coord=cor.centering_coord,
-            ),
-            heart_roi_aabb,
-        ))
+            ))
 
         return layers
 
     @torch.no_grad()
-    def get_data(
+    def get_dynamic_data(
         self,
         phase: CardiacPhase,
         coronary_type: CoronaryType | Literal["LCA", "RCA"],
@@ -491,7 +478,7 @@ class RBFReader(DataReader):
     
     @torch.no_grad()
     def get_phase_0_data(self, coronary_type: CoronaryType | Literal["LCA", "RCA"]) -> DataReaderResult:
-        return self.get_data(CardiacPhase(0), coronary_type)
+        return self.get_combined_data(CardiacPhase(0), coronary_type)
 
     @property
     def lca_centering_affine(self) -> np.ndarray:

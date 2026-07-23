@@ -117,7 +117,7 @@ class BatchDVFToDSA:
         if self.output_mode_3d == "null":
             return
         
-        data_3d = reader.get_data(self.output_phase_3d, coronary_type)
+        data_3d = reader.get_dynamic_data(self.output_phase_3d, coronary_type)
         
         for mode in self.output_mode_3d:
             match mode:
