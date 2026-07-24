@@ -164,7 +164,7 @@ def save_video(
     vmin: float | None = None,
     vmax: float | None = None,
 ) -> None:
-    """Save frames as an MP4 video using OpenCV.
+    """Save frames as an MP4 video using imageio-ffmpeg (H.264).
 
     Frames are normalized to [0, 255] uint8 using the provided vmin/vmax
     (or auto-scaled from data min/max if not given).
@@ -177,26 +177,21 @@ def save_video(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if vmin is None:
-        vmin = np.min(frames_np)
-    if vmax is None:
-        vmax = np.max(frames_np)
+    vmin_ = np.min(frames_np) if vmin is None else vmin
+    vmax_ = np.max(frames_np) if vmax is None else vmax
 
-    h, w = frames_np.shape[1], frames_np.shape[2]
+    # Normalize to [0, 255] uint8
+    if vmax_ - vmin_ > 1e-8:
+        frames_uint8 = np.clip((frames_np - vmin_) / (vmax_ - vmin_) * 255, 0, 255).astype(np.uint8)
+    else:
+        frames_uint8 = np.zeros_like(frames_np, dtype=np.uint8)
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(str(output_path), fourcc, fps, (w, h), isColor=True)
+    # Convert to 3-channel RGB for compatibility
+    if frames_uint8.ndim == 3:
+        frames_uint8 = frames_uint8[..., None].repeat(3, axis=-1)
 
-    for i in range(frames_np.shape[0]):
-        frame = frames_np[i]
-        if vmax - vmin > 1e-8:
-            frame_norm = np.clip((frame - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
-        else:
-            frame_norm = np.zeros_like(frame, dtype=np.uint8)
-        # Write as 3-channel BGR to avoid chroma-subsampling quality loss on grayscale
-        out.write(cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR))
-
-    out.release()
+    # Write with imageio (uses ffmpeg backend, H.264 codec, compatible with VS Code)
+    iio.imwrite(output_path, frames_uint8, fps=fps, codec='libx264')
 
 
 def save_deepthmap_video(
