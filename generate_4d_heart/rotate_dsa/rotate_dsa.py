@@ -282,7 +282,7 @@ class RotateDSA:
             # phase_0_data.save() 含 torch 张量，在当前进程运行，与子进程池并行
             phase_0_meta = phase_0_data.save(
                 output_dir,
-                save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
+                save_nii_type=["coronary"], save_mesh=True, save_central_line=True, save_artifacts=True,
                 coordinate_system="centering"
             )
             for f in futures:
@@ -329,7 +329,7 @@ class RotateDSA:
             # phase_0_data.save() 含 torch 张量，在当前进程运行
             meta = phase_0_data.save(
                 output_dir,
-                save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
+                save_nii_type=["coronary"], save_mesh=True, save_central_line=True, save_artifacts=True,
                 coordinate_system="centering"
             )
             for f in futures:

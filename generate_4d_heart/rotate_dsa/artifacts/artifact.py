@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Final
 
 import pyvista as pv
 import numpy as np
@@ -12,11 +13,14 @@ class Artifact:
     mesh: pv.PolyData
     """The mesh representation of the artifact in world coordinates."""
 
-    mu: float
+    mu: Final[float]
     """The linear attenuation coefficient of the artifact (mm^-1)."""
 
-    name: str = ""
+    name: Final[str] = ""
     """Optional identifier for the artifact."""
+    
+    def __post_init__(self):
+        self.mesh.point_data["mu"] = np.full(self.mesh.n_points, self.mu, dtype=np.float32)
 
     def translate(self, vec: np.ndarray) -> "Artifact":
         """Return a new Artifact with the mesh translated by ``vec``."""

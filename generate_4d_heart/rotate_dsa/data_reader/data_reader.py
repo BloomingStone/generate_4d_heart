@@ -317,6 +317,18 @@ class Coronary:
         if self.artifacts_original is None:
             return None
         return [a.translate(self.T_original_to_centering) for a in self.artifacts_original]
+
+    @property
+    def artifacts_in_voxel(self) -> list[Artifact] | None:
+        """ artifacts in voxel coordinate """
+        if self.artifacts_original is None:
+            return None
+        inv_affine = np.linalg.inv(self.original_affine)
+        return [Artifact(
+            mesh=a.mesh.copy().transform(inv_affine, inplace=False),  # type: ignore
+            mu=a.mu,
+            name=a.name
+        ) for a in self.artifacts_original]
     
 @dataclass
 class DataReaderResult:
@@ -352,6 +364,7 @@ class DataReaderResult:
         *,
         save_nii_type: list[Literal["cavity", "volume", "coronary"]] | None = None,
         save_mesh: bool = False,
+        save_artifacts: bool = False,
         save_central_line: bool = False,
         save_meta: bool = False,
         coordinate_system: Literal["world", "voxel", "centering"] = "centering"
@@ -363,6 +376,7 @@ class DataReaderResult:
             output_dir (Path): directory to save the data
             save_nii_type (list[Literal["cavity", "volume", "coronary"]]|None): which nifti files to save, if None, no nifti will be saved
             save_mesh (bool): whether to save coronary mesh as .vtp file
+            save_artifacts (bool): whether to save artifacts (each as .vtp + meta json) in an ``artifacts/`` subdirectory
             save_central_line (bool): whether to save coronary central line as .npz file
             save_meta (bool): whether to save meta information as json file
             coordinate_system (Literal["world", "voxel", "centering"]): coordinate system for saved data
@@ -388,16 +402,19 @@ class DataReaderResult:
                 vol_img = self.coronary.volume
                 label_img = self.coronary.label
                 mesh = self.coronary.mesh_original
+                artifacts = self.coronary.artifacts_original
             case "voxel":
                 cavity_img = MedImage(self.cavity.data, np.eye(4), Original())
                 vol_img = MedImage(self.coronary.volume.data, np.eye(4), Original())
                 label_img = MedImage(self.coronary.label.data, np.eye(4), Original())
                 mesh = self.coronary.mesh_in_voxel
+                artifacts = self.coronary.artifacts_in_voxel
             case "centering":
                 cavity_img = self.cavity.to_coord(self.coronary.centering_coord)
                 vol_img = self.coronary.volume_centering
                 label_img = self.coronary.label_centering
                 mesh = self.coronary.mesh_centering
+                artifacts = self.coronary.artifacts_centering
             case _:
                 raise ValueError(f"Invalid coordinate system: {coordinate_system}")
 
@@ -419,6 +436,22 @@ class DataReaderResult:
         if save_central_line:
             cl = self.coronary.get_coronary_central_line(coordinate_system)
             np.savez_compressed(output_dir / "central_line.npz", cl)
+
+        if save_artifacts and artifacts is not None:
+            import json
+            artifacts_dir = output_dir / "artifacts"
+            artifacts_dir.mkdir(exist_ok=True)
+            artifacts_meta = []
+            for i, artf in enumerate(artifacts):
+                name = artf.name or f"artifact_{i}"
+                artf.mesh.save(artifacts_dir / f"{name}.vtp", binary=True)
+                artifacts_meta.append({
+                    "name": artf.name,
+                    "mu": artf.mu,
+                    "file": f"{name}.vtp",
+                })
+            with open(artifacts_dir / "artifacts_meta.json", "w") as f:
+                json.dump(artifacts_meta, f, indent=2)
 
         return meta
 
