@@ -14,7 +14,7 @@ from ... import MU_WATER
 
 
 def get_reorientation(
-        orientation_type: Optional[Literal["AP", "PA"]] = "PA"
+        orientation_type: Optional[Literal["AP", "PA"]] = "AP"
 ) -> torch.Tensor:
     """
     Get the reorientation matrix for different X-ray orientations.
@@ -28,7 +28,6 @@ def get_reorientation(
         orientation_type: The desired orientation type ("AP" or "PA").
             "AP" means Anterior-Posterior, where the X-ray source is initially in front of the patient, and the detector is behind the patient, so the camera is looking from front to back.
             "PA" means Posterior-Anterior, where the X-ray source is behind the patient, and the detector is in front of the patient, so the camera is looking from back to front.
-            "PA" is the default orientation as in DSA C-Arm.
     Returns:
         A 4x4 reorientation matrix as a torch tensor.
     """
@@ -147,8 +146,9 @@ class TorchDRR(RotateDRR):
         assert D == 3
         
         def do_drr(rots: torch.Tensor, trans: torch.Tensor) -> torch.Tensor:
+            # [Positioner Primary Angle Attribute – DICOM Standard Browser](https://dicom.innolitics.com/ciods/x-ray-angiographic-image/xa-positioner/00181510)
             res = drr(
-                - rots.to(self.device),     # here has negtived
+                rots.to(self.device),     # here has negtived
                 trans.to(self.device), 
                 parameterization=self.rotate_cfg.parameterization, 
                 convention=self.rotate_cfg.convention,
@@ -209,8 +209,9 @@ class TorchDRR(RotateDRR):
         # the convert of R, T, angles and camera to world matrix can be found at test/test_R_T.py
         rotation = self.rotate_cfg.get_rotaiton_radian_at_frame(frame)
         rotations = torch.tensor([rotation], device=self.device)
+        # [Positioner Primary Angle Attribute – DICOM Standard Browser](https://dicom.innolitics.com/ciods/x-ray-angiographic-image/xa-positioner/00181510)
         rot = convert(
-            - rotations.cpu(), # here has negtived
+            rotations.cpu(), # here has negtived
             self.translations.cpu(), 
             parameterization=self.rotate_cfg.parameterization, 
             convention=self.rotate_cfg.convention

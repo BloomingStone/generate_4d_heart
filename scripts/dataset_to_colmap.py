@@ -88,7 +88,7 @@ def build_w2c_from_json(meta: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray,
 	beta = np.array([float(f["beta_degree"]) for f in frames], dtype=np.float64) * math.pi / 180.0
 
 	# Match project parser: negate alpha/beta for RAS and DSA definition.
-	angles = np.stack((-alpha, -beta, np.zeros(n, dtype=np.float64)), axis=-1)
+	angles = np.stack((alpha, beta, np.zeros(n, dtype=np.float64)), axis=-1)
 	r_motion = euler_angles_to_matrix(angles, convention)
 
 	# COLMAP-like camera orientation correction from project parser.

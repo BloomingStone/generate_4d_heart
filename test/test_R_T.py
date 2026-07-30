@@ -39,7 +39,7 @@ def test_R_T():
     drr = TorchDRR(
         rotate_cfg=RotatedParameters(
             alpha_start=60,
-            beta_start=30
+            beta_start=0
         )
     )
     
@@ -47,12 +47,10 @@ def test_R_T():
     alpha, beta, _ = drr.rotate_cfg.get_rotaiton_radian_at_frame(0)
     sod = drr.c_arm_cfg.sod
     
-    # in DiffDrr, X Y Z coreesponding to R A S, the primary rotation is around Z axis 
-    # and the secondary rotation is around X axis. And as the primary rotation is from 
-    # Anterior(Y) to Right(X), alpha should be negative. Similarly, as the secondary 
-    # rotation is from Anterior(Y) to Inferior(-Z), beta should be negative.
-    R_z_alpha = _axis_angle_rotation("Z", torch.tensor(-alpha))
-    R_x_beta = _axis_angle_rotation("X", torch.tensor(-beta))
+    # [Positioner Primary Angle Attribute – DICOM Standard Browser](https://dicom.innolitics.com/ciods/x-ray-angiographic-image/xa-positioner/00181510)
+    # XCA 中，从RAO到患者前方（AP）为正角度
+    R_z_alpha = _axis_angle_rotation("Z", torch.tensor(alpha))
+    R_x_beta = _axis_angle_rotation("X", torch.tensor(beta))
     translate = torch.eye(4)
     if orientation_type == "AP":
         translate[:3, 3] = torch.tensor([0.0, sod, 0.0])

@@ -36,13 +36,12 @@ class CArmGeometry:
     """Detector principal point y-offset (mm)"""
     
     
-    orientation_type: Literal["AP", "PA"] = "PA"
+    orientation_type: Literal["AP", "PA"] = "AP"
     """
     Orientation type of the C-arm. 
     "AP" means Anterior-Posterior, where the X-ray source is initially in front of the patient, 
     and the detector is behind the patient, so the camera is looking from front to back. 
     "PA" means Posterior-Anterior, where the X-ray source is behind the patient. 
-    "PA" is the default orientation as in DSA C-Arm.
     """
 
     def to_dict(self) -> dict:
