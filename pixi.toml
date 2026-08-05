@@ -35,6 +35,7 @@ pytorch3d = "*"
 jupyter-server-proxy = ">=4.4.0,<5"
 
 cyclopts = ">=4.10.2,<5"
+pydicom = ">=3.0.2,<4"
 
 
 [pypi-dependencies]
