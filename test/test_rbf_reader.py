@@ -1,4 +1,8 @@
+from pathlib import Path
+import shutil
+
 import numpy as np
+import nibabel as nib
 import pyvista as pv
 import pytest
 import torch
@@ -6,6 +10,14 @@ import torch
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
 from generate_4d_heart.rotate_dsa.data_reader.rbf_reader import KDTreeRBF, invert_displacement_field
 from generate_4d_heart.ssm import Landmark
+from generate_4d_heart.rotate_dsa.artifacts import ArtifactManager
+from generate_4d_heart.rotate_dsa.data_reader import RBFReader
+from generate_4d_heart.rotate_dsa.data_reader.data_reader import cleanup_gpu_memory
+
+
+from utils import SimulatorName, TEST_DATA_ROOT_DIR, simulator_factory
+
+
 
 
 def _build_landmark_for_rbf() -> Landmark:
@@ -98,3 +110,75 @@ def test_kdtree_rbf_rejects_unsupported_points_type() -> None:
 
     with pytest.raises(TypeError, match="Unsupported type"):
         rbf(CardiacPhase.from_time(10, cardiac_cycle_time=1.0), points="bad points")  # type: ignore[arg-type]
+
+
+
+# TODO FIX: coronary 输出为 空
+@pytest.mark.parametrize("simulator_name", (
+    SimulatorName.HU2MU_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.CTA_RESET_CONTRAST, SimulatorName.FLOW_CONTRAST
+))
+def test_reader_and_save_artifacts_pig_drr_chest_background(
+    output_root_dir: Path,
+    simulator_name: SimulatorName,
+    artifact_manager: ArtifactManager,
+):
+    """Integration test with chest CTA data + background CT, using pig_data_drr."""
+    # Clean up GPU memory from any previous test failure that may have leaked.
+    # This prevents CuPy OOM when this test allocates large background volumes.
+    cleanup_gpu_memory()
+
+    chest_dir = TEST_DATA_ROOT_DIR / "chest_data"
+    assert chest_dir.exists(), f"chest_data directory not found: {chest_dir}"
+
+    reader = RBFReader(
+        volume_nii=chest_dir / "image.nii.gz",
+        cavity_nii=chest_dir / "cavity.nii.gz",
+        coronary_nii=chest_dir / "coronary.nii.gz",
+        contrast_simulator=simulator_factory(simulator_name),
+        artifact_manager=artifact_manager,
+        background_nii=chest_dir / "background.nii.gz",
+        centering_mode = "image_center"
+    )
+
+    output_dir = output_root_dir / "readers_output" / "rbf_reader_full_save" / f"pig_drr_chest_background_{simulator_name}_LCA"
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    result = reader.get_phase_0_data("LCA")
+    result.save(
+        output_dir,
+        save_nii_type=["cavity", "coronary", "volume"],
+        save_artifacts=True,
+        save_central_line=True,
+        save_mesh=True,
+        save_meta = True,
+        coordinate_system="world",
+    )
+
+    # ── Regression guard: exported NIfTI files must contain non-empty values ──
+    # The combined volume (static layers in Centering space) must align with the
+    # resampled dynamic cavity/coronary labels; otherwise labels come out empty.
+    from nibabel.nifti1 import Nifti1Image
+
+    def _load_arr(path: Path) -> np.ndarray:
+        img = nib.load(path)
+        assert isinstance(img, Nifti1Image)
+        return np.asanyarray(img.dataobj)
+
+    for nii_name in ("cavity_label.nii.gz", "coronary_label.nii.gz", "volume_with_contrast.nii.gz"):
+        nii_path = output_dir / nii_name
+        assert nii_path.exists(), f"Expected {nii_name} to be saved"
+        arr = _load_arr(nii_path)
+        assert arr.size > 0
+        assert float(arr.max()) > 0, f"{nii_name} is empty (max value = 0)"
+
+    cav = _load_arr(output_dir / "cavity_label.nii.gz")
+    cor = _load_arr(output_dir / "coronary_label.nii.gz")
+    vol = _load_arr(output_dir / "volume_with_contrast.nii.gz")
+    assert (cav > 0).sum() > 0, "cavity_label.nii.gz has no foreground voxels"
+    assert (cor > 0).sum() > 0, "coronary_label.nii.gz has no foreground voxels"
+    # Coronary label must coincide with volume foreground (labels & volume aligned)
+    assert (vol[cor > 0] > 0).any(), "coronary label does not overlap any volume foreground voxel"
+    
+    

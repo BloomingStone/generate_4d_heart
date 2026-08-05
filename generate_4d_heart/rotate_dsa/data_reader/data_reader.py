@@ -358,6 +358,11 @@ class DataReaderResult:
             self.coronary.to_device(device)
         )
 
+    @property
+    def cavity_centering(self) -> MedImage[Centering]:
+        """ cavity in centering coordinate (data unchanged, affine shifted). """
+        return self.cavity.to_coord(self.coronary.centering_coord)  # type: ignore[return-value]
+
     def save(
         self,
         output_dir: Path,
@@ -667,7 +672,8 @@ class DataReader(Protocol):
         shape_dynamic = dynamic_data.coronary.volume.data.shape
         final_shape = (*shape_dynamic[:-3], *shape_static[-3:])
         
-        def _resample(img: MedImage, is_label: bool = False) -> Tensor:
+        def _resample(img: MedImage[Centering], is_label: bool = False) -> Tensor:
+            """ MUST in the same world coordinate: Centering """
             return resample(
                 img.data.cpu().squeeze(),
                 img.affine,
@@ -682,14 +688,15 @@ class DataReader(Protocol):
         for img in static_layers[1:]:
             combined_volume += _resample(img)
         
-        combined_volume += _resample(
-            dynamic_data.coronary.volume
+        combined_volume += _resample(dynamic_data.coronary.volume_centering)
+        
+        cavity_data = _resample(
+            dynamic_data.cavity_centering,
+            is_label=True
         )
         
-        cavity_data = _resample(dynamic_data.cavity, is_label=True)
-        
         coronary_label_data = _resample(
-            dynamic_data.coronary.label,
+            dynamic_data.coronary.label_centering,
             is_label=True
         )
         
