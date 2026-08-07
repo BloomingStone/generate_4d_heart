@@ -7,7 +7,7 @@ from enum import StrEnum
 import numpy as np
 
 from generate_4d_heart.rotate_dsa.contrast_simulator import StaticIodineContrast, FlowContrast
-from generate_4d_heart.rotate_dsa.data_reader import RBFReader, StaticVolumeReader, DataReader
+from generate_4d_heart.rotate_dsa.data_reader import RBFReader, StaticVolumeReader, DataReader, DataReaderResult
 from generate_4d_heart.rotate_dsa.rotate_drr import TorchDRR, RotatedParameters
 from generate_4d_heart.rotate_dsa import RotateDSA
 from generate_4d_heart.rotate_dsa.cardiac_phase import CardiacPhase
@@ -48,15 +48,13 @@ class BatchDVFToDSA:
         run_random: bool = True,
         skip_existing: bool = False,
         output_mode_2d: OutputMode2D = OutputMode2D.DRR,
-        output_mode_3d: list[OutputMode3D]|None = None,
+        output_mode_3d: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
         output_phase_3d: float = 0.0,
         output_phase_3d_num: int = 1,
         reader_type: Literal["rbf", "static"] = "rbf",
         contrast_type: Literal["static", "flow"] = "static",
         dryrun: bool = False,
     ): 
-        if output_mode_3d is None:
-            output_mode_3d = [OutputMode3D.COR_LABEL, OutputMode3D.COR_MESH]
             
         self.image_dir = image_dir
         self.coronary_dir = coronary_dir
@@ -66,8 +64,7 @@ class BatchDVFToDSA:
         self.dataset_name = dataset_name
         self.run_random = run_random
         self.output_mode_2d = OutputMode2D(output_mode_2d)
-        output_model_3d = set(OutputMode3D(m) for m in output_mode_3d)
-        self.output_mode_3d = output_model_3d
+        self.output_mode_3d = output_mode_3d
         self.output_phase_3d = CardiacPhase.from_time(output_phase_3d, 1.0)
         self.otuput_phase_3d_str = self.output_phase_3d.to_str(precision=2, has_decimal_point=False)
         self.output_phase_3d_num = output_phase_3d_num
@@ -113,39 +110,13 @@ class BatchDVFToDSA:
         
         return rot_params
 
-    def _output_3d_one_phase(self, reader: DataReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
-        if self.output_mode_3d == "null":
+    def _output_3d(self, reader: DataReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
+        if self.output_mode_3d == ():
             return
         
         data_3d = reader.get_dynamic_data(self.output_phase_3d, coronary_type)
         
-        for mode in self.output_mode_3d:
-            match mode:
-                case OutputMode3D.VOLUME:
-                    save_nii(
-                        output_case_dir / f"{self.otuput_phase_3d_str}_image.nii.gz",
-                        data_3d.coronary.volume,        # 注意这里是已经经过了contrast simulator的处理, 冠脉区域强度增强的volume
-                        affine=data_3d.coronary.affine,
-                        is_label=False
-                    )
-                case OutputMode3D.CAVITY_LABEL:
-                    save_nii(
-                        output_case_dir / f"{self.otuput_phase_3d_str}_cavity_label.nii.gz",
-                        data_3d.cavity_label,
-                        affine=data_3d.coronary.affine,
-                        is_label=True
-                    )
-                case OutputMode3D.COR_LABEL:
-                     save_nii(
-                        output_case_dir / f"{coronary_type}_{self.otuput_phase_3d_str}_label.nii.gz",
-                        data_3d.coronary.label,
-                        affine=data_3d.coronary.centering_affine,
-                        is_label=True
-                    )
-                case OutputMode3D.COR_MESH:
-                    data_3d.coronary.mesh_centering.save(output_case_dir / f"{coronary_type}_{self.otuput_phase_3d_str}_mesh.vtk")
-                case _:
-                    raise ValueError(f"output_mode_3d {mode} not supported")
+        data_3d.save(output_case_dir/self.otuput_phase_3d_str , save_types=self.output_mode_3d, coordinate_system="centering")
 
     
     def _output_2d(self, reader: DataReader, case_name: str, coronary_type: Literal["LCA", "RCA"], output_case_dir: Path):
@@ -155,12 +126,13 @@ class BatchDVFToDSA:
         dsa = RotateDSA(reader=reader, drr=self.torch_drr)
         
         match self.output_mode_2d:
+            # donnot save phase_0_data here as there is _output_3d_one_phase() which will save phase_0_data if output_phase_3d_num > 1
             case OutputMode2D.DRR:
-                dsa.run_and_save(output_case_dir, coronary_type)
+                dsa.run_and_save(output_case_dir, coronary_type, phase_0_save_types=())
             case OutputMode2D.ONLY_LABEL:
-                dsa.run_and_save_no_drr(output_case_dir, coronary_type)
+                dsa.run_and_save_no_drr(output_case_dir, coronary_type, phase_0_save_types=())
             case OutputMode2D.ONLY_INFO:
-                dsa.save_no_run(output_case_dir, coronary_type)
+                dsa.save_no_run(output_case_dir, coronary_type, phase_0_save_types=())
             case _:
                 raise ValueError(f"out_type_2d {self.output_mode_2d} not supported")
 
@@ -173,13 +145,7 @@ class BatchDVFToDSA:
         case_name = f"{self.dataset_name}__{case_name}__{coronary_type}"
         output_case_dir = self.output_root / case_name
         output_case_dir.mkdir(parents=True, exist_ok=True)
-        if self.output_phase_3d_num == 1:
-            self._output_3d_one_phase(reader, case_name, coronary_type, output_case_dir)
-        elif self.output_phase_3d_num > 1:
-            # TODO
-            raise NotImplementedError("output_phase_3d_num > 1 is not implemented yet")    
-        else:
-            raise ValueError(f"output_phase_3d_num should be greater than or equal to 1, but got {self.output_phase_3d_num}")
+        self._output_3d(reader, case_name, coronary_type, output_case_dir)
         self._output_2d(reader, case_name, coronary_type, output_case_dir)
             
 
@@ -259,7 +225,7 @@ def main(
     random_seed: int = 42,
     use_random_seed: bool = True,
     output_mode_2d: OutputMode2D = OutputMode2D.DRR,
-    output_mode_3d: list[OutputMode3D] = [],
+    output_mode_3d: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
     output_phase_3d: float = 0.0,
     output_phase_3d_num: int = 1,
     reader_type: Literal["rbf", "static"] = "rbf",

@@ -363,28 +363,30 @@ class DataReaderResult:
         """ cavity in centering coordinate (data unchanged, affine shifted). """
         return self.cavity.to_coord(self.coronary.centering_coord)  # type: ignore[return-value]
 
+    SupportedSaveType = Literal["cavity", "volume", "coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"]
+    SupportedSaveCoordinate = Literal["world", "voxel", "centering"]
+    
     def save(
         self,
         output_dir: Path,
         *,
-        save_nii_type: list[Literal["cavity", "volume", "coronary"]] | None = None,
-        save_mesh: bool = False,
-        save_artifacts: bool = False,
-        save_central_line: bool = False,
-        save_meta: bool = False,
-        coordinate_system: Literal["world", "voxel", "centering"] = "centering"
+        save_types: tuple[SupportedSaveType, ...],
+        coordinate_system: SupportedSaveCoordinate = "centering"
     ) -> dict[str, Any]:
         """
         Save data to the specified directory
         
         Args:
             output_dir (Path): directory to save the data
-            save_nii_type (list[Literal["cavity", "volume", "coronary"]]|None): which nifti files to save, if None, no nifti will be saved
-            save_mesh (bool): whether to save coronary mesh as .vtp file
-            save_artifacts (bool): whether to save artifacts (each as .vtp + meta json) in an ``artifacts/`` subdirectory
-            save_central_line (bool): whether to save coronary central line as .npz file
-            save_meta (bool): whether to save meta information as json file
-            coordinate_system (Literal["world", "voxel", "centering"]): coordinate system for saved data
+            save_types (tuple[SupportedSaveType, ...]): which data to save, include:
+                - "cavity": save cavity label as nifti
+                - "volume": save volume with contrast as nifti
+                - "coronary": save coronary label as nifti
+                - "cor-mesh": save coronary mesh as .vtp
+                - "cor-artifacts": save coronary artifacts as .vtp
+                - "central-line": save coronary central line as .npz
+                - "meta": save meta information as json file
+            coordinate_system (SupportedSaveCoordinate): coordinate system for saved data, include:
                 - "world": world coordinate, xyz = nii_volume_affine @ voxel_coordinate, affine will be the original affine of the nii volume
                 - "voxel": voxel coordinate, affine will be identity matrix
                 - "centering": coronary centering coordinate that put the coronary at the ordinate of the world coordinate, 
@@ -423,26 +425,25 @@ class DataReaderResult:
             case _:
                 raise ValueError(f"Invalid coordinate system: {coordinate_system}")
 
-        if save_meta:
+        if "meta" in save_types:
             with open(output_dir / "meta.json", "w") as f:
                 json.dump(meta, f, indent=2)
 
-        if save_nii_type:
-            if "cavity" in save_nii_type:
-                save_nii(output_dir / "cavity_label.nii.gz", cavity_img.data, cavity_img.affine, is_label=True)
-            if "volume" in save_nii_type:
-                save_nii(output_dir / "volume_with_contrast.nii.gz", vol_img.data, vol_img.affine)
-            if "coronary" in save_nii_type:
-                save_nii(output_dir / "coronary_label.nii.gz", label_img.data, label_img.affine, is_label=True)
+        if "cavity" in save_types:
+            save_nii(output_dir / "cavity_label.nii.gz", cavity_img.data, cavity_img.affine, is_label=True)
+        if "volume" in save_types:
+            save_nii(output_dir / "volume_with_contrast.nii.gz", vol_img.data, vol_img.affine)
+        if "coronary" in save_types:
+            save_nii(output_dir / "coronary_label.nii.gz", label_img.data, label_img.affine, is_label=True)
 
-        if save_mesh:
+        if "cor-mesh" in save_types:
             mesh.save(output_dir / "mesh.vtp", binary=True)
 
-        if save_central_line:
+        if "cor-artifacts" in save_types and artifacts is not None:
             cl = self.coronary.get_coronary_central_line(coordinate_system)
             np.savez_compressed(output_dir / "central_line.npz", cl)
 
-        if save_artifacts and artifacts is not None:
+        if "artifacts" in save_types and artifacts is not None:
             import json
             artifacts_dir = output_dir / "artifacts"
             artifacts_dir.mkdir(exist_ok=True)

@@ -2,7 +2,7 @@ from pathlib import Path
 from enum import StrEnum
 from typing import Literal
 from pathlib import Path
-import shutil
+import json
 from dataclasses import dataclass
 
 from cyclopts import run
@@ -99,9 +99,9 @@ def main(
     """RBFReader with artifact_manager + RotateDSA integration as pigdata settings."""
     output_dir = output / f"{simulator_name}_{coronary_type}"
     if output_dir.exists():
-        ans = input("output_dir exists, overwrite it? (Y/n)")
+        ans = input(f"output_dir {output_dir} exists, overwrite it? (Y/n)")
         if ans.lower() != "y" and ans != "":
-            raise ValueError("Output directory already exists and user chose not to overwrite it.")
+            raise ValueError(f"Output directory {output_dir} already exists and user chose not to overwrite it.")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     reader = RBFReader(
@@ -116,7 +116,9 @@ def main(
 
     dsa = RotateDSA(reader=reader, drr=simple_drr)
 
-    dsa.run_and_save(output_dir=output_dir, coronary_type=coronary_type)
+    dsa.run_and_save(output_dir=output_dir, coronary_type=coronary_type, 
+                     phase_0_save_types=("coronary", "volume", "cavity", "cor-mesh", "cor-artifacts", "central-line", "meta"))
+    
 
 if __name__ == "__main__":
     run(main)

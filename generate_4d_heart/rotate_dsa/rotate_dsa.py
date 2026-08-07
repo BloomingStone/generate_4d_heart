@@ -246,11 +246,12 @@ class RotateDSA:
         self, 
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
-        gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
+        gif_fps: int = 30,   # gif may not support too high fps (like fps=60 may cause gif slow)
+        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
+        phase_0_save_coordinate: DataReaderResult.SupportedSaveCoordinate = "centering",
     ) -> RotateDsaOutput:
         output = self.run(coronary_type)
         
-        phase_0_data = self.reader.get_phase_0_data(coronary_type)
         video_fps = self.drr.rotate_cfg.fps
         total_frame = self.drr.rotate_cfg.total_frame
 
@@ -279,12 +280,18 @@ class RotateDSA:
                     executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", output.depth_maps, gif_fps),
                     executor.submit(save_gif, output_dir / "artifacts_proj.gif", output.artifacts_proj, gif_fps),
                 ])
+            
             # phase_0_data.save() 含 torch 张量，在当前进程运行，与子进程池并行
-            phase_0_meta = phase_0_data.save(
-                output_dir,
-                save_nii_type=["coronary"], save_mesh=True, save_central_line=True, save_artifacts=True,
-                coordinate_system="centering"
-            )
+            if phase_0_save_types:
+                phase_0_data = self.reader.get_phase_0_data(coronary_type)
+                phase_0_meta = phase_0_data.save(
+                    output_dir,
+                    save_types=phase_0_save_types,
+                    coordinate_system=phase_0_save_coordinate
+                )
+            else:
+                phase_0_meta = {}
+            
             for f in futures:
                 f.result()
         
@@ -302,7 +309,9 @@ class RotateDSA:
         self, 
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
-        gif_fps: int = 30   # gif may not support too high fps (like fps=60 may cause gif slow)
+        gif_fps: int = 30,   # gif may not support too high fps (like fps=60 may cause gif slow)
+        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
+        phase_0_save_coordinate: DataReaderResult.SupportedSaveCoordinate = "centering"
     ) -> tuple[np.ndarray, np.ndarray]:
         labels, depth_maps = self.run_no_drr(coronary_type)
         phase_0_data = self.reader.get_phase_0_data(coronary_type)
@@ -326,17 +335,22 @@ class RotateDSA:
                     executor.submit(save_gif, output_dir / "label.gif", labels * 255, gif_fps, cmap='gray'),
                     executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", depth_maps, gif_fps),
                 ])
+            
             # phase_0_data.save() 含 torch 张量，在当前进程运行
-            meta = phase_0_data.save(
-                output_dir,
-                save_nii_type=["coronary"], save_mesh=True, save_central_line=True, save_artifacts=True,
-                coordinate_system="centering"
-            )
+            if phase_0_save_types:
+                phase_0_meta = phase_0_data.save(
+                    output_dir,
+                    save_types=phase_0_save_types,
+                    coordinate_system=phase_0_save_coordinate
+                )
+            else:
+                phase_0_meta = {}
+            
             for f in futures:
                 f.result()
         
         json_data = self.get_geometry_json(coronary_type)
-        json_data["phase_0_save_meta"] = meta
+        json_data["phase_0_save_meta"] = phase_0_meta
         json_data["reader_meta"] = self.reader.meta
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(json_data, f, indent=2)
@@ -347,17 +361,21 @@ class RotateDSA:
         self, 
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
+        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
+        phase_0_save_coordinate: DataReaderResult.SupportedSaveCoordinate = "centering",
     ) -> None:
-        phase_0_data = self.reader.get_phase_0_data(coronary_type)
-        
-        meta = phase_0_data.save(
-            output_dir, 
-            save_nii_type=["coronary"], save_mesh=True, save_central_line=True,
-            coordinate_system="centering"
-        )
+        if phase_0_save_types:
+            phase_0_data = self.reader.get_phase_0_data(coronary_type)
+            phase_0_meta = phase_0_data.save(
+                output_dir, 
+                save_types=phase_0_save_types,
+                coordinate_system=phase_0_save_coordinate
+            )
+        else:
+            phase_0_meta = {}
         
         json_data = self.get_geometry_json(coronary_type)
-        json_data["phase_0_save_meta"] = meta
+        json_data["phase_0_save_meta"] = phase_0_meta
         json_data["reader_meta"] = self.reader.meta
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(json_data, f, indent=2)

@@ -148,7 +148,7 @@ def test_reader_and_save_artifacts_pig_drr_chest_background(
     result = reader.get_phase_0_data("LCA")
     result.save(
         output_dir,
-        save_nii_type=["cavity", "coronary", "volume"],
+        save_nii_type=("cavity", "coronary", "volume"),
         save_artifacts=True,
         save_central_line=True,
         save_mesh=True,
