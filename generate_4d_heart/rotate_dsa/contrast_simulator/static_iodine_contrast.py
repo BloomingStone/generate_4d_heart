@@ -72,9 +72,7 @@ class StaticIodineContrast(ContrastSimulator):
 
 class CtaResetContrast(ContrastSimulator):
     """
-    A simple contrast simulator that only preprocesses the input volume by mapping HU values in cavity and threshold regions to attenuation coefficients, 
-    without adding any contrast effect. 
-    This can be used to verify the effect of preprocessing alone.
+    Remove original CTA contrast and reset the cavity region to water baseline, without adding any contrast effect.
     """
     def __init__(
         self, 
@@ -102,20 +100,29 @@ class CtaResetContrast(ContrastSimulator):
         affine: np.ndarray,
     ) -> torch.Tensor:
         """
-        Convert HU image to baseline attenuation map and normalize cavity/threshold regions to water baseline.
+        Convert HU image to baseline attenuation map and reset CTA contrast to water.
+
+        Only iodinated blood-pool voxels *inside* ``cavity_label > 0`` (estimated from 
+        the LA-enhanced HU range) are reset to ``mu_water``; the myocardium and an 
+        unlabeled aorta keep their original attenuation.
         """
         res = ori_volume.clone()
         res = res / 1000.0 * self.mu_water_dsa + self.mu_water_dsa  # HU -> attenuation
 
         assert cavity_label.dtype == torch.uint8
 
-        # Use left atrium region to estimate typical enhanced range
+        # Use left atrium region to estimate typical enhanced range;
+        # fall back to the whole cavity region if LA is not labeled.
         masked_volume = ori_volume.squeeze()[cavity_label.squeeze() == CavityLabel.LA]
+        if masked_volume.numel() == 0:
+            masked_volume = ori_volume.squeeze()[cavity_label.squeeze() > 0]
         if masked_volume.numel() > 0:
             v_min = torch.quantile(masked_volume, 0.1 / 100)
             v_max = torch.quantile(masked_volume, 99.9 / 100)
-            threshold_mask = (ori_volume > v_min) & (ori_volume < v_max)
-            res[(cavity_label > 0) | threshold_mask] = self.mu_water_dsa
+            # Reset ONLY enhanced voxels that fall inside the cavity label.
+            # No global threshold -> bone / other high-HU tissue is preserved.
+            enhanced_in_cavity = (cavity_label > 0) & (ori_volume > v_min) & (ori_volume < v_max)
+            res[enhanced_in_cavity] = self.mu_water_dsa
 
         # Invalid HU values -> zero attenuation
         res[ori_volume < -2000] = 0.0
@@ -130,8 +137,11 @@ class CtaResetContrast(ContrastSimulator):
     ) -> torch.Tensor:
         # CtaResetContrast is static by design
         assert self.contrast_change_over_time == False, "CtaResetContrast does not support contrast change over time"
-        # `ori_volume` is expected to be a preprocessed attenuation-like baseline
-        return ori_volume
+        res = ori_volume.clone()
+        # Reset cavity and coronary regions to water mu, As sometimes the coronary region may have remaining contrast after preprocessing, 
+        # we also reset it to water baseline. This is to ensure that the output volume does not contain any contrast effect.
+        res[(coronary_label > 0)] = self.mu_water_dsa
+        return res
 
     
     def simulate_with_time(

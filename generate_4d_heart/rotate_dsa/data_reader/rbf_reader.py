@@ -222,6 +222,12 @@ class RBFReader(DataReader):
         print(f"Loading background from {self.background_nii}...")
         bg_vol, bg_affine = load_nifti(self.background_nii)  # (1,1,D,H,W)
         dummy_cavity = torch.zeros_like(bg_vol, dtype=torch.uint8)
+        # The background CT has no cavity label (it is not aligned with
+        # volume_nii), so an all-zero dummy cavity is passed. Contrast
+        # simulators that reset CTA contrast based on the cavity label (e.g.
+        # CtaResetContrast) then naturally skip the label-based reset and only
+        # apply the label-free HU->mu conversion, which is the desired
+        # behaviour for the background.
 
         bg_vol = self.contrast_simulator.preprocess(bg_vol, dummy_cavity, bg_affine)
 
