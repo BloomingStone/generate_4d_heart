@@ -291,7 +291,7 @@ class Coronary:
     ) -> ndarray:
         match coordinate_system:
             case "world":
-                img = self.volume
+                img = self.label
             case "voxel":
                 img = MedImage(self.label.data, np.eye(4), Original())
             case "centering":
@@ -439,11 +439,11 @@ class DataReaderResult:
         if "cor-mesh" in save_types:
             mesh.save(output_dir / "mesh.vtp", binary=True)
 
-        if "cor-artifacts" in save_types and artifacts is not None:
+        if "central-line" in save_types:
             cl = self.coronary.get_coronary_central_line(coordinate_system)
             np.savez_compressed(output_dir / "central_line.npz", cl)
 
-        if "artifacts" in save_types and artifacts is not None:
+        if "cor-artifacts" in save_types and artifacts is not None:
             import json
             artifacts_dir = output_dir / "artifacts"
             artifacts_dir.mkdir(exist_ok=True)
@@ -663,7 +663,9 @@ class DataReader(Protocol):
         shape and affine are consistent with static_layers[0] if static_layers is not empty.
         if static_layers is empty, return dynamic_data only.
         """
-        static_layers = self.get_static_data(coronary_type)
+        static_layers: list[MedImage[Original]] = [
+            layer.to_coord(Original()) for layer in self.get_static_data(coronary_type)
+        ]
         dynamic_data = self.get_dynamic_data(phase, coronary_type, global_time)
         
         if len(static_layers) == 0:
@@ -673,8 +675,7 @@ class DataReader(Protocol):
         shape_dynamic = dynamic_data.coronary.volume.data.shape
         final_shape = (*shape_dynamic[:-3], *shape_static[-3:])
         
-        def _resample(img: MedImage[Centering], is_label: bool = False) -> Tensor:
-            """ MUST in the same world coordinate: Centering """
+        def _resample(img: MedImage[Original], is_label: bool = False) -> Tensor:
             return resample(
                 img.data.cpu().squeeze(),
                 img.affine,
@@ -684,24 +685,24 @@ class DataReader(Protocol):
             ).reshape(final_shape)
         
         combined_volume = static_layers[0].data.cpu()
-        combined_affine = static_layers[0].affine
+        combined_affine = static_layers[0].affine   # MUST in the same world coordinate: Original
         combined_shape = combined_volume.shape[-3:]  # (W, H, D)
         for img in static_layers[1:]:
             combined_volume += _resample(img)
         
-        combined_volume += _resample(dynamic_data.coronary.volume_centering)
+        combined_volume += _resample(dynamic_data.coronary.volume)
         
         cavity_data = _resample(
-            dynamic_data.cavity_centering,
+            dynamic_data.cavity,
             is_label=True
         )
         
         coronary_label_data = _resample(
-            dynamic_data.coronary.label_centering,
+            dynamic_data.coronary.label,
             is_label=True
         )
         
-        def _to_img(data: Tensor) -> MedImage:
+        def _to_img(data: Tensor) -> MedImage[Original]:
             return MedImage(data=data, affine=combined_affine, coord=Original())
         
         return DataReaderResult(
