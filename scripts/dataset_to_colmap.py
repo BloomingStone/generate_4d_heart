@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+"""
+Convert a rotated DSA dataset to a COLMAP binary model (sparse/0 + images/ + transforms.json).
+
+CAMERA CONVENTION (fixed): this converter always writes poses in the COLMAP / OpenCV
+camera convention (+X right, +Y down, +Z forward; camera looks along +Z), which is what
+COLMAP and downstream tools expect. The reorient used here is the COLMAP-convention
+counterpart of the DRR renderer's pose (the renderer uses PyTorch3D / DiffDRR:
++X left, +Y up, +Z forward), see scripts/get_proj_matric.py::get_reorientation(
+orientation_type, "colmap").
+"""
+
 import argparse
 import json
 import math
@@ -83,27 +94,50 @@ def build_w2c_from_json(meta: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray,
 	cx = width / 2.0
 	cy = height / 2.0
 
-	convention = meta["rotate_parameters"]["convention"]
 	alpha = np.array([float(f["alpha_degree"]) for f in frames], dtype=np.float64) * math.pi / 180.0
 	beta = np.array([float(f["beta_degree"]) for f in frames], dtype=np.float64) * math.pi / 180.0
 
-	# Match project parser: negate alpha/beta for RAS and DSA definition.
-	angles = np.stack((alpha, beta, np.zeros(n, dtype=np.float64)), axis=-1)
-	r_motion = euler_angles_to_matrix(angles, convention)
-
-	# COLMAP-like camera orientation correction from project parser.
-	r_colmap_orient = euler_angles_to_matrix(np.array([math.pi / 2.0, math.pi, 0.0]), "XZY")[0]
-
-	m_colmap_orient = np.eye(4, dtype=np.float64)
-	m_colmap_orient[:3, :3] = r_colmap_orient
+	# Follow the exact geometry of scripts/get_proj_matric.py::get_view_matrix(s):
+	#   m_c2w = R_zxy(alpha, beta, 0) @ translate(0, +/-sod, 0) @ reorient
+	#   m_w2c = inv(m_c2w)
+	#
+	# CAMERA CONVENTION: fixed to COLMAP / OpenCV (+X right, +Y down, +Z forward).
+	# The reorient equals get_proj_matric.get_reorientation(orientation_type, "colmap"):
+	# derived from the z-up camera (x=right, y=front, z=up) with front = beam direction
+	# (AP -> -Y, PA -> +Y), then right-multiplied by the colmap convention rotation.
+	# Translation sign follows the C-arm orientation_type (AP -> +sod, PA -> -sod).
+	orientation_type = meta["c_arm_geometry"].get("orientation_type", "AP")
+	if orientation_type == "AP":
+		reorient = np.array([
+			[-1, 0, 0, 0],
+			[0, 0, -1, 0],
+			[0, -1, 0, 0],
+			[0, 0, 0, 1],
+		], dtype=np.float64)
+		sod_sign = 1.0
+	elif orientation_type == "PA":
+		reorient = np.array([
+			[1, 0, 0, 0],
+			[0, 0, 1, 0],
+			[0, -1, 0, 0],
+			[0, 0, 0, 1],
+		], dtype=np.float64)
+		sod_sign = -1.0
+	else:
+		raise ValueError(
+			f"orientation_type must be either AP or PA, but got {orientation_type}"
+		)
 
 	m_translation = np.eye(4, dtype=np.float64)
-	m_translation[:3, 3] = np.array([0.0, sod, 0.0], dtype=np.float64)
+	m_translation[:3, 3] = np.array([0.0, sod_sign * sod, 0.0], dtype=np.float64)
 
+	r_motion = euler_angles_to_matrix(
+		np.stack((alpha, beta, np.zeros(n, dtype=np.float64)), axis=-1), "ZXY"
+	)
 	m_rotation = np.repeat(np.eye(4, dtype=np.float64)[None, ...], n, axis=0)
 	m_rotation[:, :3, :3] = r_motion
 
-	m_c2w = m_rotation @ m_translation @ m_colmap_orient
+	m_c2w = m_rotation @ m_translation @ reorient
 	m_w2c = np.linalg.inv(m_c2w)
 
 	r_w2c = m_w2c[:, :3, :3]

@@ -19,10 +19,12 @@ def get_reorientation(
     """
     Get the reorientation matrix for different X-ray orientations.
     
+    ***** ATTNTION: "CAMERA/SOURCE" COORDIANATE SYSTEM *****
     DiffDRR's "camera" uses a coordinate system where:
     - The Z-axis points forward (towards the X-ray source).
     - The Y-axis points upward.
     - The X-axis points to the left.
+    which is different from OpenGL or COLMAP.  Similar to Pytorch3D
     
     Args:
         orientation_type: The desired orientation type ("AP" or "PA").
@@ -245,7 +247,6 @@ class TorchDRR(RotateDRR):
     def get_additional_config(self) -> dict:
         return {
             "patch_size": self.patch_size,
-            "reorient": self.reorient.tolist()
         }
     
     @property

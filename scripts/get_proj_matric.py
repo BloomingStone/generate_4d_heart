@@ -10,7 +10,10 @@
 # 基于 C-arm 几何参数和旋转角度 (alpha, beta) 生成 3D→2D 投影矩阵。
 # 坐标系约定：
 #   - 世界坐标系: RAS 坐标系， X指向患者右方 , Y 指向患者前方 , Z 指向患者头部
-#   - 相机坐标系: OpenGL 约定, 相机看向 -Z 方向
+#   - 相机坐标系: 由 camera_convention 参数决定, 默认 "pytorch3d" (= DiffDRR/PyTorch3D:
+#     +X 左, +Y 上, +Z 前), 与 DRR 渲染一致, 可复用渲染器的 R/T。
+#     内部投影数学为 OpenGL 风格 (相机看向 -Z), 外参 reorient 先按 z-up 相机
+#     (x右, y前, z上, 前=射线方向) 推导, 再右乘约定旋转得到目标相机约定。
 #   - 图像坐标系: DICOM/OpenCV 约定, 原点在左上角, u 向右, v 向下
 #
 # 投影公式：
@@ -136,29 +139,203 @@ def euler_angles_to_matrix(convention: str, euler_angles: np.ndarray) -> np.ndar
     # return functools.reduce(torch.matmul, matrices)
     return np.matmul(np.matmul(matrices[0], matrices[1]), matrices[2])
 
+# Physical camera pose in the canonical "z-up" camera frame (x=right, y=front, z=up),
+# expressed in world (RAS) coordinates. "front" is the X-ray beam direction:
+#   AP: source in front of the patient (+Y), beam anterior -> posterior => front = -Y
+#   PA: source behind the patient (-Y),  beam posterior -> anterior   => front = +Y
+# up = +Z (head) always; right = front x up (right-handed camera).
+_ORIENTATION_POSE = {
+    # orientation -> {right, front, up} as world-axis specs ("+X", "-Z", ...)
+    "AP": {"right": "-X", "front": "-Y", "up": "+Z"},
+    "PA": {"right": "+X", "front": "+Y", "up": "+Z"},
+}
+
+# Camera convention rotations: columns are the target-convention camera axes (X, Y, Z)
+# expressed in the z-up camera basis (x=right, y=front, z=up). They are right-multiplied
+# into the reorientation/projection matrix:
+#   reorient = reorient_zup @ R_conv
+# geometric meaning: first align the world to the z-up camera, then relabel its axes.
+#   - PyTorch3D / DiffDRR : +X 左, +Y 上, +Z 前   (Z = forward)
+#   - OpenGL / NeRF       : +X 右, +Y 上, -Z 前   (Z = -forward)
+#   - COLMAP / OpenCV / GS: +X 右, +Y 下, +Z 前   (Y = -up, Z = forward)
+CONVENTION_ROTATIONS = {
+    "pytorch3d": np.array([
+        [-1, 0, 0],
+        [0, 0, 1],
+        [0, 1, 0],
+    ]),
+    "diffdrr": np.array([
+        [-1, 0, 0],
+        [0, 0, 1],
+        [0, 1, 0],
+    ]),
+    "opengl": np.array([
+        [1, 0, 0],
+        [0, 0, -1],
+        [0, 1, 0],
+    ]),
+    "nerf": np.array([
+        [1, 0, 0],
+        [0, 0, -1],
+        [0, 1, 0],
+    ]),
+    "colmap": np.array([
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, -1, 0],
+    ]),
+    "opencv": np.array([
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, -1, 0],
+    ]),
+    "gs": np.array([
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, -1, 0],
+    ]),
+}
+
+
+def _axis_vec(axis_spec: str) -> np.ndarray:
+    """Convert a world-axis spec such as "+X" or "-Z" into a unit vector."""
+    axis_spec = axis_spec.strip()
+    sign = -1.0 if axis_spec.startswith("-") else 1.0
+    letter = axis_spec.lstrip("+-")
+    if letter not in "XYZ":
+        raise ValueError(f"Invalid world axis spec: {axis_spec!r}")
+    vec = np.zeros(3)
+    vec["XYZ".index(letter)] = sign
+    return vec
+
+
+_ZUP_BASIS = {
+    "right": np.array([1.0, 0.0, 0.0]),
+    "front": np.array([0.0, 1.0, 0.0]),
+    "up": np.array([0.0, 0.0, 1.0]),
+}
+
+
+def _resolve_convention_rotation(camera_convention: "str | dict[str, str]") -> np.ndarray:
+    """Resolve a camera-convention spec into the convention rotation R_conv (4x4).
+
+    R_conv columns are the target-convention camera axes (X, Y, Z) expressed in the
+    z-up camera basis. Accepts a convention name, or an explicit dict mapping each
+    camera axis to a signed direction among "right", "front", "up".
+    """
+    if isinstance(camera_convention, str):
+        name = camera_convention.lower()
+        if name not in CONVENTION_ROTATIONS:
+            raise ValueError(
+                f"Unknown camera convention {camera_convention!r}; choose from "
+                f"{sorted(CONVENTION_ROTATIONS)} or pass an explicit axis mapping."
+            )
+        rot3 = CONVENTION_ROTATIONS[name]
+    elif isinstance(camera_convention, dict):
+        if set(camera_convention) != {"x", "y", "z"}:
+            raise ValueError("camera_convention dict must have exactly keys x/y/z")
+        cols = []
+        for axis in ("x", "y", "z"):
+            expr = camera_convention[axis]
+            sign = -1.0 if expr.startswith("-") else 1.0
+            base = expr.lstrip("+-")
+            if base not in _ZUP_BASIS:
+                raise ValueError(
+                    f"Unknown direction {base!r}; expected right/front/up"
+                )
+            cols.append(sign * _ZUP_BASIS[base])
+        rot3 = np.stack(cols, axis=1)
+    else:
+        raise TypeError(
+            "camera_convention must be a str (convention name) or a dict {x/y/z: ...}"
+        )
+    rot4 = np.eye(4)
+    rot4[:3, :3] = rot3
+    return rot4
+
+
+def _zup_reorientation(orientation_type: str) -> np.ndarray:
+    """Reorientation to the canonical z-up camera frame (x=right, y=front, z=up).
+
+    Rows are the z-up camera X/Y/Z axes expressed in world (RAS) coordinates.
+    """
+    pose = _ORIENTATION_POSE[orientation_type]
+    reorient = np.eye(4)
+    reorient[:3, :3] = np.stack([
+        _axis_vec(pose["right"]),
+        _axis_vec(pose["front"]),
+        _axis_vec(pose["up"]),
+    ])
+    return reorient
+
+
+def get_reorientation(
+    orientation_type: str = "AP",
+    camera_convention: "str | dict[str, str]" = "pytorch3d",
+) -> np.ndarray:
+    """
+    Get the 4x4 reorientation matrix (world -> camera axes) for a C-arm orientation
+    (AP/PA) and a camera coordinate convention.
+
+    The derivation is:
+      1. Build the reorientation to the canonical z-up camera frame
+         (x=right, y=front, z=up), where "front" is the X-ray beam direction
+         (AP -> -Y, PA -> +Y).
+      2. Right-multiply the convention rotation (align to the z-up camera first,
+         then relabel its axes into the target convention):
+             reorient = reorient_zup @ R_conv
+
+    camera_convention may be:
+      - a name: "pytorch3d" | "diffdrr" | "opengl" | "nerf" | "colmap" | "opencv" | "gs"
+      - an explicit dict {"x": ..., "y": ..., "z": ...} mapping each camera axis to a
+        signed direction among "right", "front", "up" (z-up basis),
+        e.g. {"x": "-right", "y": "up", "z": "front"}.
+
+    The default "pytorch3d" matches DiffDRR / PyTorch3D (+X left, +Y up, +Z forward),
+    so the produced R/T are identical to the DRR renderer's (reuse R/T).
+
+    Args:
+        orientation_type: "AP" (Anterior-Posterior) or "PA" (Posterior-Anterior).
+        camera_convention: camera coordinate convention, default "pytorch3d".
+
+    Returns:
+        reorient: (4, 4) reorientation matrix.
+    """
+    if orientation_type not in _ORIENTATION_POSE:
+        raise ValueError(
+            f"orientation_type must be either AP or PA, but got {orientation_type}"
+        )
+    reorient_zup = _zup_reorientation(orientation_type)
+    rot_conv = _resolve_convention_rotation(camera_convention)
+    return reorient_zup @ rot_conv  # right-multiply: z-up alignment, then relabel axes
+
+
 def get_view_matrix(
     alpha: float,
     beta: float,
     sod: float,
+    orientation_type: str = "AP",
+    camera_convention: "str | dict[str, str]" = "pytorch3d",
 ) -> np.ndarray:
     """
-    Camera follows OpenGL convention, where the camera looks down the negative Z-axis,
-    with the Y-axis pointing up and the X-axis pointing to the right.
+    Build the world-to-camera view matrix (m_c2w = rot @ translate @ reorient, then
+    invert). The camera axes (extrinsics) follow the given camera convention; the
+    default "pytorch3d" (= DiffDRR/PyTorch3D) matches the DRR renderer so R/T can be
+    reused directly.
     Args:
         alpha: float: rotation angle around Z-axis in radians
         beta: float: rotation angle around X-axis in radians
         sod: float: source to object distance in world coordinate system
+        orientation_type: str: "AP" or "PA" C-arm orientation, default "AP"
+        camera_convention: camera coordinate convention (see get_reorientation),
+            default "pytorch3d"
     Returns:
         View Matrix: (N, 4, 4) array of view matrices [R, T; 0, 1] in world coordinate system
     """
-    reorient = np.array([
-        [-1, 0, 0, 0],
-        [0, 0, 1, 0],
-        [0, 1, 0, 0],
-        [0, 0, 0, 1],
-    ])
+    reorient = get_reorientation(orientation_type, camera_convention)
     translate = np.eye(4)
-    translate[:3, 3] = np.array([0.0, sod, 0.0])
+    sod_sign = 1.0 if orientation_type == "AP" else -1.0
+    translate[:3, 3] = np.array([0.0, sod_sign * sod, 0.0])
     rot = euler_angles_to_matrix("ZXY", np.array([alpha, beta, 0.0]))
     m_c2w = rot @ translate @ reorient  # [R_c2w, T_c2w; 0, 1]
     m_w2c = np.linalg.inv(m_c2w)        # [R_c2w^T, -R_c2w^T*T_c2w; 0, 1]
@@ -169,6 +346,8 @@ def get_view_matrixs(
     alphas: np.ndarray,
     betas: np.ndarray,
     sod: float,
+    orientation_type: str = "AP",
+    camera_convention: "str | dict[str, str]" = "pytorch3d",
 ) -> np.ndarray:
     """
     Get the view matrices for a batch of camera poses.
@@ -177,18 +356,17 @@ def get_view_matrixs(
         alphas: (N,) array of rotation angles around Z-axis in radians
         betas: (N,) array of rotation angles around X-axis in radians
         sod: float: source to object distance in world coordinate system
+        orientation_type: str: "AP" or "PA" C-arm orientation, default "AP"
+        camera_convention: camera coordinate convention (see get_reorientation),
+            default "pytorch3d"
 
     Returns:
         view_matrices: (N, 4, 4) array of view matrices [R, T; 0, 1] in world coordinate system
     """
-    reorient = np.array([
-        [-1, 0, 0, 0],
-        [0, 0, 1, 0],
-        [0, 1, 0, 0],
-        [0, 0, 0, 1],
-    ])
+    reorient = get_reorientation(orientation_type, camera_convention)
     translate = np.eye(4)
-    translate[:3, 3] = np.array([0.0, sod, 0.0])
+    sod_sign = 1.0 if orientation_type == "AP" else -1.0
+    translate[:3, 3] = np.array([0.0, sod_sign * sod, 0.0])
     rot = euler_angles_to_matrix("ZXY", np.stack([alphas, betas, np.zeros_like(alphas)], axis=-1))
     m_c2w = rot @ translate @ reorient  # [R_c2w, T_c2w; 0, 1]
     m_w2c = np.linalg.inv(m_c2w)        # [R_c2w^T, -R_c2w^T*T_c2w; 0, 1]
@@ -241,6 +419,8 @@ class Projector:
     dely: float
     x0: float = 0.0
     y0: float = 0.0
+    orientation_type: str = "AP"
+    camera_convention: "str | dict[str, str]" = "pytorch3d"
 
     def __post_init__(self):
         self.intrinsic_matrix = get_intrinsic_matrix(
@@ -267,7 +447,7 @@ class Projector:
             If return_depth=True, returns ((N, 2), (N,)) tuple of (uv, depth).
         """
         # Get projection matrix View in world coordinate system
-        view_matrix = get_view_matrix(alpha, beta, self.sod)    # (4, 4)
+        view_matrix = get_view_matrix(alpha, beta, self.sod, self.orientation_type, self.camera_convention)    # (4, 4)
         # Project 3D points to 2D points in homogeneous coordinates
         point_3d_h = np.concatenate([points_3d, np.ones((points_3d.shape[0], 1))], axis=1)  # (N, 4)
         point_2d_h = (self.intrinsic_matrix @ view_matrix @ point_3d_h.T).T  # (N, 4)  (x, y, z, w=1)
@@ -343,7 +523,9 @@ class Projector:
             delx=c_arm_geom["delx"],
             dely=c_arm_geom["dely"],
             x0=c_arm_geom.get("x0", 0.0),
-            y0=c_arm_geom.get("y0", 0.0)
+            y0=c_arm_geom.get("y0", 0.0),
+            orientation_type=c_arm_geom.get("orientation_type", "AP"),
+            camera_convention=data.get("camera_convention", "pytorch3d")
         )
 
 
@@ -359,7 +541,7 @@ class Projector:
             alpha: float: rotation angle around Z-axis in radians
             beta: float: rotation angle around X-axis in radians
         """
-        M = self.intrinsic_matrix @ get_view_matrix(alpha, beta, self.sod)  # (4, 4)
+        M = self.intrinsic_matrix @ get_view_matrix(alpha, beta, self.sod, self.orientation_type, self.camera_convention)  # (4, 4)
         return M[:3, :]  # (3, 4)
 
     def get_projection_matrices(
@@ -374,7 +556,7 @@ class Projector:
             alphas: (N,) array of rotation angles around Z-axis in radians
             betas: (N,) array of rotation angles around X-axis in radians
         """
-        view_matrices = get_view_matrixs(alphas, betas, self.sod)  # (N, 4, 4)
+        view_matrices = get_view_matrixs(alphas, betas, self.sod, self.orientation_type, self.camera_convention)  # (N, 4, 4)
         M = self.intrinsic_matrix @ view_matrices  # (N, 4, 4)
         return M[:, :3, :]  # (N, 3, 4)
 
@@ -401,7 +583,9 @@ def data_json_to_projection_metrics(json_path: Path) -> np.ndarray:
         delx=c_arm_geom["delx"],
         dely=c_arm_geom["dely"],
         x0=c_arm_geom.get("x0", 0.0),
-        y0=c_arm_geom.get("y0", 0.0)
+        y0=c_arm_geom.get("y0", 0.0),
+        orientation_type=c_arm_geom.get("orientation_type", "AP"),
+        camera_convention=data.get("camera_convention", "pytorch3d")
     )
 
     frames = data.get("frames", [])

@@ -57,7 +57,7 @@ class Torch3DLabelRenderer:
         faces = torch.from_numpy(faces_np).long()
         mesh = Meshes([verts.to(self.device)], [faces.to(self.device)])
 
-        
+        # pytorch 3D has uses the same camera convention as DiffDRR, so we can directly use R_c2w and T_c2w without any conversion
         R = R.squeeze()
         T = T.squeeze()
         cameras = FoVPerspectiveCameras(
