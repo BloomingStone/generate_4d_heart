@@ -19,14 +19,18 @@
 # 投影公式：
 #   p = K @ View @ P_w                 (齐次坐标, 4×4)
 #   u = p[0] / p[2],  v = p[1] / p[2]   (透视除法)
-#   v = height - v                       (Y 轴翻转 → DICOM)
+#   (相机 X/Y/Z 的符号约定已编码进内参 K, 无需再额外翻转)
 #
-# 内参矩阵 K (4×4)：
-#   K = [[fx,  0, -cx,  0],
-#        [ 0, fy, -cy,  0],
-#        [ 0,  0,  -1,  0],
-#        [ 0,  0,   0,  1]]
-#   其中 fx = sdd/delx, fy = sdd/dely, cx = width/2, cy = height/2
+# 内参矩阵 K (4×4, 与 camera_convention 相关):
+#   设 (right, down, forward) 为该约定的图像轴(目标相机坐标), 则
+#   K = [[ fx*right + cx*forward ],
+#        [ fy*down  + cy*forward ],
+#        [ forward ],
+#        [ 0 0 0 1 ]]
+#   fx = sdd/delx, fy = sdd/dely, cx = width/2, cy = height/2
+#   图像轴由 CONVENTION_ROTATIONS 推导: right=R[0,:], down=-R[2,:], forward=R[1,:]
+#   (reorient = reorient_zup @ R_conv, 故目标相机坐标下的图像轴为 R 的行).
+#   对标准约定与 z-up 约定 (R=I) 均适用.
 #
 # 外参矩阵 View (4×4, world-to-camera)：
 #   view = rot_zxy(alpha, beta, 0) @ translate @ reorient
@@ -194,8 +198,8 @@ CONVENTION_ROTATIONS = {
         [0, 0, 1],
         [0, -1, 0],
     ]),
+    "zup": np.eye(3),  # z-up 相机: x右, y前, z上 (R_conv = I)
 }
-
 
 def _axis_vec(axis_spec: str) -> np.ndarray:
     """Convert a world-axis spec such as "+X" or "-Z" into a unit vector."""
@@ -245,6 +249,10 @@ def _resolve_convention_rotation(camera_convention: "str | dict[str, str]") -> n
                 )
             cols.append(sign * _ZUP_BASIS[base])
         rot3 = np.stack(cols, axis=1)
+        if not np.isclose(np.linalg.det(rot3), 1.0):
+            raise ValueError(
+                "camera_convention axis mapping must be a proper rotation (det = +1)"
+            )
     else:
         raise TypeError(
             "camera_convention must be a str (convention name) or a dict {x/y/z: ...}"
@@ -252,6 +260,24 @@ def _resolve_convention_rotation(camera_convention: "str | dict[str, str]") -> n
     rot4 = np.eye(4)
     rot4[:3, :3] = rot3
     return rot4
+
+
+def _resolve_image_axes(camera_convention: "str | dict[str, str]") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Derive the convention's image axes (right, down, forward) in the target
+    camera frame, from its rotation matrix R_conv.
+
+    The z-up camera frame is x=right, y=front, z=up, so the physical image axes in
+    the z-up basis are right = +x, down = -z, forward = +y. Since the reorientation
+    is `reorient = reorient_zup @ R_conv`, the image axes in the TARGET frame are
+    the rows of R_conv (R_conv maps z-up coords -> target coords):
+      right   = R_conv[0, :]
+      down    = -R_conv[2, :]
+      forward = R_conv[1, :]
+    This works for any convention rotation, including the z-up convention itself
+    (R_conv = identity) and conventions whose +Z points backward (e.g. OpenGL).
+    """
+    rot = _resolve_convention_rotation(camera_convention)[:3, :3]
+    return rot[0, :], -rot[2, :], rot[1, :]
 
 
 def _zup_reorientation(orientation_type: str) -> np.ndarray:
@@ -380,11 +406,22 @@ def get_intrinsic_matrix(
     delx: float,
     dely: float,
     x0: float = 0.0,
-    y0: float = 0.0
+    y0: float = 0.0,
+    camera_convention: "str | dict[str, str]" = "pytorch3d",
 ) -> np.ndarray:
     """
-    Camera follows OpenGL convention, where the camera looks down the negative Z-axis,
-    with the Y-axis pointing up and the X-axis pointing to the right.
+    Build the convention-aware intrinsic matrix K.
+
+    K encodes the camera convention's image axes so that `u = p0/p2, v = p1/p2`
+    directly yields DICOM/OpenCV pixels (u right, v down, top-left origin) with
+    p2 = depth > 0 for points in front of the camera:
+      K = [[ fx*right + cx*forward ],
+           [ fy*down  + cy*forward ],
+           [ forward ],
+           [ 0 0 0 1 ]]
+    where (right, down, forward) are the convention's image axes in the target
+    camera frame (see _resolve_image_axes): u = cx + fx*(P.right)/(P.forward),
+    v = cy + fy*(P.down)/(P.forward), depth = P.forward.
 
     Args:
         sdd: float: source to detector distance
@@ -394,6 +431,8 @@ def get_intrinsic_matrix(
         dely: float: pixel size in y direction
         x0: float: x coordinate of the principal point in pixels
         y0: float: y coordinate of the principal point in pixels
+        camera_convention: camera coordinate convention (see get_reorientation),
+            default "pytorch3d"
     Returns:
         intrinsic_matrix: (4, 4) array of intrinsic matrix K in world coordinate system
     """
@@ -401,11 +440,15 @@ def get_intrinsic_matrix(
     fy = sdd / dely
     cx = width / 2.0 + x0
     cy = height / 2.0 + y0
+    right, down, forward = _resolve_image_axes(camera_convention)
+    # K rows = [fx*right + cx*forward, fy*down + cy*forward, forward]
+    row_u = fx * right + cx * forward
+    row_v = fy * down + cy * forward
     return np.array([
-        [fx, 0, -cx, 0],
-        [0, fy, -cy, 0],
-        [0, 0,  -1,  0],     # object is in the negative Z direction in world coordinate system, so we need to flip the sign of z
-        [0, 0,   0,  1]
+        [row_u[0], row_u[1], row_u[2], 0.0],
+        [row_v[0], row_v[1], row_v[2], 0.0],
+        [forward[0], forward[1], forward[2], 0.0],
+        [0.0, 0.0, 0.0, 1.0],
     ])
 
 
@@ -425,7 +468,7 @@ class Projector:
     def __post_init__(self):
         self.intrinsic_matrix = get_intrinsic_matrix(
             self.sdd, self.width, self.height, self.delx, self.dely,
-            self.x0, self.y0
+            self.x0, self.y0, self.camera_convention
         )   # (4, 4)
 
     def project(
@@ -451,13 +494,15 @@ class Projector:
         # Project 3D points to 2D points in homogeneous coordinates
         point_3d_h = np.concatenate([points_3d, np.ones((points_3d.shape[0], 1))], axis=1)  # (N, 4)
         point_2d_h = (self.intrinsic_matrix @ view_matrix @ point_3d_h.T).T  # (N, 4)  (x, y, z, w=1)
-        # depth = point_2d_h[:, 2] = -Z_camera (positive for points in front of camera)
+        # depth = point_2d_h[:, 2]; positive for points in front of the camera
+        # (the sign of Z is encoded in the convention-aware intrinsic matrix)
         depth = point_2d_h[:, 2]
-        # Convert to pixel coordinates, u = x / z, v = y / z
+        # Convert to pixel coordinates, u = x / z, v = y / z.
+        # The camera convention's X/Y/Z sign is baked into K, so no extra flip is
+        # needed to reach DICOM/OpenCV pixels (u right, v down, top-left origin).
         u = point_2d_h[:, 0] / depth
         v = point_2d_h[:, 1] / depth
 
-        v = self.height - v  # Flip v to match DICOM/OpenCV convention
         uv = np.stack([u, v], axis=1)  # (N, 2)
         if return_depth:
             return uv, depth
@@ -561,12 +606,20 @@ class Projector:
         return M[:, :3, :]  # (N, 3, 4)
 
 
-def data_json_to_projection_metrics(json_path: Path) -> np.ndarray:
+def data_json_to_projection_metrics(
+    json_path: Path,
+    orientation_type: "str | None" = None,
+    camera_convention: "str | dict[str, str] | None" = None,
+) -> np.ndarray:
     """
     Get the projection matrices K * View in world coordinate system from a JSON file.
 
     Args:
         json_path: Path to the JSON file containing the camera parameters and poses.
+        orientation_type: optional override for the C-arm orientation (AP/PA); if
+            None, read from the JSON (c_arm_geometry.orientation_type, default "AP").
+        camera_convention: optional override for the camera convention; if None, read
+            from the JSON ("camera_convention", default "pytorch3d").
     Returns:
         projection_matrices: (N, 3, 4) array of projection matrices K * View in world coordinate system
     """
@@ -584,8 +637,8 @@ def data_json_to_projection_metrics(json_path: Path) -> np.ndarray:
         dely=c_arm_geom["dely"],
         x0=c_arm_geom.get("x0", 0.0),
         y0=c_arm_geom.get("y0", 0.0),
-        orientation_type=c_arm_geom.get("orientation_type", "AP"),
-        camera_convention=data.get("camera_convention", "pytorch3d")
+        orientation_type=orientation_type or c_arm_geom.get("orientation_type", "AP"),
+        camera_convention=camera_convention or data.get("camera_convention", "pytorch3d")
     )
 
     frames = data.get("frames", [])
@@ -600,7 +653,7 @@ def data_json_to_projection_metrics(json_path: Path) -> np.ndarray:
 def test_projector(
     labe_nii_path: Path = Path(r"test_label.nii.gz"),
     json_path: Path = Path(r"rotate_dsa.json"),
-    out_dir: Path = Path(r"temp_opengl"),
+    out_dir: Path = Path(r"temp"),
     n_max: int = 30,
     down_sample_stride: int = 50,
     frame_stride: int = 10
@@ -684,6 +737,8 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Project 3D mesh to 2D images using camera parameters from JSON.")
     parser.add_argument("--json_path", type=Path, required=True, help="Path to the JSON file containing camera parameters and poses.")
     parser.add_argument("--output", "-o", type=Path, required=True, help="Path to save matric as npy or json.")
+    parser.add_argument("--orientation", type=str, default="AP", choices=["AP", "PA"], help="C-arm orientation type (AP or PA).")
+    parser.add_argument("--camera_convention", type=str, default="pytorch3d", help="Camera coordinate convention, including pytorch3d, opencv, diffdrr, nerfstudio, gs (default: pytorch3d).")
 
     args = parser.parse_args()
     json_path = args.json_path
@@ -691,10 +746,16 @@ if __name__ == "__main__":
 
     # Load projector from JSON
     projector = Projector.from_json(json_path)
+    projector.orientation_type = args.orientation
+    projector.camera_convention = args.camera_convention
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    projection_matrices = data_json_to_projection_metrics(json_path)
+    projection_matrices = data_json_to_projection_metrics(
+        json_path,
+        orientation_type=args.orientation,
+        camera_convention=args.camera_convention,
+    )
     if output_path.suffix == ".npy":
         # Save projection matrices to .npy file
         np.save(output_path, projection_matrices)
