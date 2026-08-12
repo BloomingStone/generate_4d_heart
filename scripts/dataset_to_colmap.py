@@ -240,9 +240,12 @@ def write_colmap_binary_model(
 		)
 
 	# COLMAP binary model layout follows read_write_model.py.
+	# Camera header is "iiQQ": (camera_id, model_id, width, height).
+	# PINHOLE = model_id 0, with 4 params (fx, fy, cx, cy).
 	with cameras_bin.open("wb") as f:
 		_write_bytes(f, "Q", 1)
-		_write_bytes(f, "i", 1)
+		_write_bytes(f, "i", 1)  # camera_id
+		_write_bytes(f, "i", 0)  # model_id = PINHOLE
 		_write_bytes(f, "Q", width)
 		_write_bytes(f, "Q", height)
 		_write_bytes(f, "d", fx)

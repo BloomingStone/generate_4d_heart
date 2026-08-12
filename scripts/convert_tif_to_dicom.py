@@ -12,8 +12,25 @@ import tifffile
 import pydicom
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, XRayAngiographicImageStorage, generate_uid
+from pydicom.datadict import add_private_dict_entry
+from pydicom.valuerep import VR
 
 PIXEL_SPACING = [0.616, 0.616]
+
+# --- Private tag for the per-frame cardiac phase array ---
+# Creator must be a unique institution string; element offset within the block
+# resolves to the full tag (0x0071, offset) and is registered for correct VR.
+PHASE_PRIVATE_CREATOR = "YOUR_INSTITUTION_PHASE_1.0"
+PHASE_PRIVATE_GROUP = 0x0071
+PHASE_PRIVATE_ELEMENT = 0x10  # block offset -> (0x0071, 0x10) in this block
+PHASE_PRIVATE_TAG = 0x00711010
+# Register so reading the file back shows VR=FL instead of UN (run once per process)
+try:
+    add_private_dict_entry(
+        PHASE_PRIVATE_CREATOR, PHASE_PRIVATE_TAG, "FL", "Cardiac Phase Array"
+    )
+except ValueError:
+    pass  # already registered in this process
 
 REF_MEAN = 7218.3694
 REF_STD = 15221.4602
@@ -200,6 +217,25 @@ def make_xa(arr, json_data=None, spacing=None):
         ds.PositionerSecondaryAngle = f"{secondary_angles[0]:.2f}"
         print(f"  Angles: primary={primary_angles[0]:.2f}..{primary_angles[-1]:.2f}")
         print(f"          secondary={secondary_angles[0]:.2f}..{secondary_angles[-1]:.2f}")
+
+        # --- Cardiac phase array as a private tag (float32, one per frame) ---
+        phases = np.asarray([float(frm["phase"]) for frm in frame_list], dtype=np.float32)
+        if len(phases) != frames:
+            print(
+                f"  Warning: phase array length ({len(phases)}) != frames ({frames}); trimming",
+                file=sys.stderr,
+            )
+            if len(phases) > frames:
+                phases = phases[:frames]
+            else:
+                phases = np.pad(phases, (0, frames - len(phases)))
+        block = ds.private_block(PHASE_PRIVATE_GROUP, PHASE_PRIVATE_CREATOR, create=True)
+        block.add_new(PHASE_PRIVATE_ELEMENT, VR.FL, phases.tolist())
+        print(
+            f"  Private tag {PHASE_PRIVATE_GROUP:04X}{PHASE_PRIVATE_ELEMENT:04X} "
+            f"(Cardiac Phase): {len(phases)} float32, "
+            f"range [{phases.min():.4f}, {phases.max():.4f}]"
+        )
     else:
         ds.FrameTimeVector = "0"
 
