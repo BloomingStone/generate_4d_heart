@@ -247,7 +247,7 @@ class RotateDSA:
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
         gif_fps: int = 30,   # gif may not support too high fps (like fps=60 may cause gif slow)
-        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
+        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line"),
         phase_0_save_coordinate: DataReaderResult.SupportedSaveCoordinate = "centering",
     ) -> RotateDsaOutput:
         output = self.run(coronary_type)
@@ -310,7 +310,7 @@ class RotateDSA:
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
         gif_fps: int = 30,   # gif may not support too high fps (like fps=60 may cause gif slow)
-        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
+        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line"),
         phase_0_save_coordinate: DataReaderResult.SupportedSaveCoordinate = "centering"
     ) -> tuple[np.ndarray, np.ndarray]:
         labels, depth_maps = self.run_no_drr(coronary_type)
@@ -361,7 +361,7 @@ class RotateDSA:
         self, 
         output_dir: Path,
         coronary_type: Literal["LCA", "RCA"],
-        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line", "meta"),
+        phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line"),
         phase_0_save_coordinate: DataReaderResult.SupportedSaveCoordinate = "centering",
     ) -> None:
         if phase_0_save_types:

@@ -148,12 +148,8 @@ def test_reader_and_save_artifacts_pig_drr_chest_background(
     result = reader.get_phase_0_data("LCA")
     result.save(
         output_dir,
-        save_nii_type=("cavity", "coronary", "volume"),
-        save_artifacts=True,
-        save_central_line=True,
-        save_mesh=True,
-        save_meta = True,
-        coordinate_system="world",
+        save_types=("cavity", "coronary", "volume", "cor-mesh", "cor-artifacts", "central-line", "meta"),
+        coordinate_system="centering"
     )
 
     # ── Regression guard: exported NIfTI files must contain non-empty values ──

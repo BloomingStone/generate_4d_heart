@@ -425,6 +425,8 @@ class DataReaderResult:
             case _:
                 raise ValueError(f"Invalid coordinate system: {coordinate_system}")
 
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
         if "meta" in save_types:
             with open(output_dir / "meta.json", "w") as f:
                 json.dump(meta, f, indent=2)
