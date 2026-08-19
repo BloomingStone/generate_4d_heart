@@ -1,4 +1,4 @@
-from generate_4d_heart import generate_4d_dvf
+from generate_4d_heart import predict_dvf
 from cyclopts import run
 
 import logging
@@ -11,4 +11,4 @@ logging.basicConfig(
 )
 
 if __name__ == '__main__':
-    run(generate_4d_dvf)
+    run(predict_dvf)

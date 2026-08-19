@@ -19,7 +19,7 @@ from generate_4d_heart.rotate_dsa.artifacts import (
 from generate_4d_heart.rotate_dsa.data_reader import RBFReader
 
 
-def pig_data_geom() -> CArmGeometry:
+def full_data_geom() -> CArmGeometry:
     return CArmGeometry(
         sdd=1200.0,
         sod=760.0,
@@ -30,8 +30,8 @@ def pig_data_geom() -> CArmGeometry:
     )
 
 
-def pig_data_drr(
-    pig_data_geom: CArmGeometry
+def full_data_drr(
+    full_data_geom: CArmGeometry
 ) -> TorchDRR:
     rotate_cfg = RotatedParameters.from_alpha_range(
         total_frame=402,
@@ -44,15 +44,15 @@ def pig_data_drr(
         convention="ZXY"
     )
     return TorchDRR(
-        c_arm_cfg=pig_data_geom,
+        c_arm_cfg=full_data_geom,
         rotate_cfg=rotate_cfg
     )
 
 def artifact_manager() -> ArtifactManager:
     """ArtifactManager with guide wire + markers + stent."""
     return ArtifactManager(ArtifactManagerConfig(
-        guide_wire=GuideWireConfig(radius_mm=0.3),
-        markers=MarkerConfig(distance_mm=19.0, radius_mm=0.4, margin_ratio=0.8),
+        guide_wire=GuideWireConfig(radius_mm=0.4),
+        markers=MarkerConfig(distance_mm=19.0, radius_mm=0.5, margin_ratio=0.8),
         stent=StentConfig(radius_mm=1.5, strut_radius_mm=0.15, n_wires=6),
     ))
 
@@ -94,9 +94,11 @@ def main(
     coronary_type: Literal["LCA", "RCA"] = "LCA",
     simulator_name: SimulatorName = SimulatorName.CTA_RESET_CONTRAST,
     artifact_manager: ArtifactManager = artifact_manager(),
-    simple_drr: TorchDRR = pig_data_drr(pig_data_geom()),
+    simple_drr: TorchDRR = full_data_drr(full_data_geom()),
 ):
-    """RBFReader with artifact_manager + RotateDSA integration as pigdata settings."""
+    """
+    RBFReader with artifact_manager + RotateDSA integration as fulldata settings.
+    """
     output_dir = output / f"{simulator_name}_{coronary_type}"
     if output_dir.exists():
         ans = input(f"output_dir {output_dir} exists, overwrite it? (Y/n)")

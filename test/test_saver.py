@@ -215,40 +215,40 @@ class TestSavePngs:
 class TestSaveGif:
     def test_save_gif_uint8(self, random_frames_uint8, tmp_path):
         path = tmp_path / "anim.gif"
-        save_gif(path, random_frames_uint8, fps_gif=10, cmap="gray")
+        save_gif(path, random_frames_uint8, fps=10, cmap="gray")
         assert path.exists()
         assert path.stat().st_size > 100
 
     def test_save_gif_float(self, random_frames_float, tmp_path):
         path = tmp_path / "anim_float.gif"
-        save_gif(path, random_frames_float, fps_gif=10, cmap="gray")
+        save_gif(path, random_frames_float, fps=10, cmap="gray")
         assert path.exists()
 
     def test_save_gif_with_vrange(self, random_frames_float, tmp_path):
         path = tmp_path / "anim_vrange.gif"
-        save_gif(path, random_frames_float, fps_gif=10, cmap="gray", vmin=0, vmax=1)
+        save_gif(path, random_frames_float, fps=10, cmap="gray", vmin=0, vmax=1)
         assert path.exists()
 
     def test_single_frame_2d(self, single_frame_float, tmp_path):
         path = tmp_path / "single_frame.gif"
-        save_gif(path, single_frame_float, fps_gif=10, cmap="gray")
+        save_gif(path, single_frame_float, fps=10, cmap="gray")
         assert path.exists()
 
     def test_torch_input(self, random_frames_float, tmp_path):
         path = tmp_path / "torch.gif"
-        save_gif(path, torch.from_numpy(random_frames_float), fps_gif=10, cmap="gray")
+        save_gif(path, torch.from_numpy(random_frames_float), fps=10, cmap="gray")
         assert path.exists()
 
     def test_constant_frames(self, tmp_path):
         """All-zero and all-constant frames should not crash."""
         const = np.ones((5, 32, 32), dtype=np.float32) * 0.5
         path = tmp_path / "const.gif"
-        save_gif(path, const, fps_gif=10, cmap="gray")
+        save_gif(path, const, fps=10, cmap="gray")
         assert path.exists()
 
     def test_creates_parent_dir(self, tmp_path):
         path = tmp_path / "deep" / "nested" / "test.gif"
-        save_gif(path, np.random.rand(3, 16, 16).astype(np.float32), fps_gif=10)
+        save_gif(path, np.random.rand(3, 16, 16).astype(np.float32), fps=10)
         assert path.exists()
 
 
@@ -258,26 +258,26 @@ class TestSaveGif:
 class TestSaveDeepthmapGif:
     def test_save_depth(self, depth_maps, tmp_path):
         path = tmp_path / "depth.gif"
-        save_deepthmap_gif(path, depth_maps, fps_gif=10)
+        save_deepthmap_gif(path, depth_maps, fps=10)
         assert path.exists()
 
     def test_torch_input(self, depth_maps, tmp_path):
         path = tmp_path / "depth_torch.gif"
-        save_deepthmap_gif(path, torch.from_numpy(depth_maps), fps_gif=10)
+        save_deepthmap_gif(path, torch.from_numpy(depth_maps), fps=10)
         assert path.exists()
 
     def test_all_nan_depth(self, tmp_path):
         """Entirely-nan depth map should not crash."""
         all_nan = np.full((5, 32, 32), np.nan, dtype=np.float32)
         path = tmp_path / "all_nan.gif"
-        save_deepthmap_gif(path, all_nan, fps_gif=10)
+        save_deepthmap_gif(path, all_nan, fps=10)
         assert path.exists()
 
     def test_single_frame_depth(self, tmp_path):
         dm = np.full((64, 64), np.nan, dtype=np.float32)
         dm[16:48, 16:48] = 150.0
         path = tmp_path / "single_depth.gif"
-        save_deepthmap_gif(path, dm, fps_gif=10)
+        save_deepthmap_gif(path, dm, fps=10)
         assert path.exists()
 
 
@@ -414,7 +414,7 @@ class TestCrossFormatConsistency:
         """Both gif and video should handle the same data without error."""
         gif_path = tmp_path / "cross.gif"
         mp4_path = tmp_path / "cross.mp4"
-        save_gif(gif_path, random_frames_uint8, fps_gif=10, cmap="gray", vmin=0, vmax=255)
+        save_gif(gif_path, random_frames_uint8, fps=10, cmap="gray", vmin=0, vmax=255)
         save_video(mp4_path, random_frames_uint8, fps=10.0, vmin=0, vmax=255)
         assert gif_path.exists()
         assert mp4_path.exists()
@@ -422,7 +422,7 @@ class TestCrossFormatConsistency:
     def test_depth_gif_and_video(self, depth_maps, tmp_path):
         gif_path = tmp_path / "depth_cross.gif"
         mp4_path = tmp_path / "depth_cross.mp4"
-        save_deepthmap_gif(gif_path, depth_maps, fps_gif=10)
+        save_deepthmap_gif(gif_path, depth_maps, fps=10)
         save_deepthmap_video(mp4_path, depth_maps, fps=10.0)
         assert gif_path.exists()
         assert mp4_path.exists()

@@ -17,11 +17,11 @@ from generate_4d_heart.rotate_dsa.contrast_simulator import IdentityContrast
 from utils import reader_factory, ReaderName, SimulatorName, TEST_DATA_ROOT_DIR, simulator_factory
 
 
-@pytest.mark.parametrize("reader_name", (ReaderName.RBF_READER, ReaderName.VOLUME_DVF_READER, ReaderName.VOLUMES_READER, ReaderName.STATIC_VOLUME_READER))
+@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 @pytest.mark.parametrize("simulator_name", (
     SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST, SimulatorName.HU2MU_CONTRAST
 ))
-@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
+@pytest.mark.parametrize("reader_name", tuple(map(str, ReaderName)))
 def test_integ(
     output_root_dir: Path,
     simple_drr: TorchDRR,
@@ -93,6 +93,10 @@ def test_integ_only_label(
     )
 
 
+@pytest.mark.parametrize("simulator_name", (
+    SimulatorName.STATIC_IODINE_CONTRAST, 
+    SimulatorName.FLOW_CONTRAST
+))
 @pytest.mark.parametrize(
     "reader_name, coronary_type",
     (
@@ -104,10 +108,6 @@ def test_integ_only_label(
         (ReaderName.STATIC_LABEL_READER, "LCA"),  # StaticLabelReader only has LCA data
     )
 )
-@pytest.mark.parametrize("simulator_name", (
-    SimulatorName.STATIC_IODINE_CONTRAST, 
-    SimulatorName.FLOW_CONTRAST
-))
 def test_integ_full(
     output_root_dir: Path,
     full_drr: TorchDRR,
@@ -132,10 +132,10 @@ def test_integ_full(
     )
 
 
+@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 @pytest.mark.parametrize("simulator_name", (
     SimulatorName.CTA_RESET_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST
 ))
-@pytest.mark.parametrize("coronary_type", ["LCA", "RCA"])
 def test_integ_artifacts(
     output_root_dir: Path,
     simple_drr: TorchDRR,
@@ -157,7 +157,7 @@ def test_integ_artifacts(
 
     dsa = RotateDSA(reader=reader, drr=simple_drr)
 
-    output_dir = output_root_dir / "intergration" / "artifacts" / f"rbf_reader_{simulator_name}_{coronary_type}{comment}"
+    output_dir = output_root_dir / "intergration_artifacts" / f"rbf_reader_{simulator_name}_{coronary_type}{comment}"
     if output_dir.exists():
         shutil.rmtree(output_dir)
     dsa.run_and_save(output_dir=output_dir, coronary_type=coronary_type, gif_fps=10)
@@ -177,10 +177,10 @@ def test_integ_artifacts(
         assert (output_dir / "depth_map.gif").exists()
 
 
+@pytest.mark.parametrize("coronary_type", ["LCA"])
 @pytest.mark.parametrize("simulator_name", (
     SimulatorName.CTA_RESET_CONTRAST, SimulatorName.STATIC_IODINE_CONTRAST, SimulatorName.FLOW_CONTRAST
 ))
-@pytest.mark.parametrize("coronary_type", ["LCA"])
 def test_integ_artifacts_pig_drr(
     output_root_dir: Path,
     pig_data_drr: TorchDRR,

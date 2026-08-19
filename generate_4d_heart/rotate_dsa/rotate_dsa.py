@@ -32,7 +32,7 @@ class RotateDsaOutput:
     vis_frames: np.ndarray
     labels: np.ndarray
     depth_maps: np.ndarray
-    artifacts_proj: np.ndarray
+    artifacts_proj: np.ndarray|None
     meta: dict[str, Any]
 
 
@@ -76,6 +76,7 @@ class RotateDSA:
         labels = np.zeros((total_frame, w, h), dtype=np.uint8)
         depth_maps = np.zeros((total_frame, w, h), dtype=np.float32)
         artifacts_proj = np.zeros((total_frame, w, h), dtype=np.float32)
+        has_artifacts = False
 
         # ── Stage 1: Batch-render all static layers ──
         for vol_img in self.reader.get_static_data(coronary_type):
@@ -124,8 +125,11 @@ class RotateDSA:
                 )
                 drr_res += torch.from_numpy(art_integral).to(drr_res.device)
                 artifacts_proj[f] += art_integral
+                nonlocal has_artifacts
+                has_artifacts = True
 
             frames[f] += drr_res
+
 
         if self.multi_threads:
             task_queue: queue.Queue = queue.Queue(maxsize=2)
@@ -152,7 +156,7 @@ class RotateDSA:
                 if isinstance(item, Exception):
                     raise item
                 f, read_res = item
-                _render_one_frame(f, read_res)
+                _render_one_frame(f, read_res)  # projector at main thread, data loading at producer thread
 
             prod_thread.join()
         else:
@@ -171,7 +175,7 @@ class RotateDSA:
             vis_frames=vis_frames.cpu().numpy().astype(np.uint8),
             labels=labels,
             depth_maps=depth_maps,
-            artifacts_proj=artifacts_proj,
+            artifacts_proj=artifacts_proj if has_artifacts else None,
             meta=post_process_meta
         )
 
@@ -255,6 +259,7 @@ class RotateDSA:
         video_fps = self.drr.rotate_cfg.fps
         total_frame = self.drr.rotate_cfg.total_frame
 
+        output_dir.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=4) as executor:
             futures = [
                 executor.submit(save_tif, output_dir / "rotate_dsa_raw.tif", output.raw_frames),
@@ -264,22 +269,29 @@ class RotateDSA:
                 executor.submit(np.savez_compressed, output_dir / "depth_map.npz", output.depth_maps),
             ]
 
+
             if total_frame > 60:
                 futures.extend([
                     executor.submit(save_video, output_dir / "rotate_dsa.mp4", output.vis_frames, video_fps, vmin=0, vmax=255),
                     executor.submit(save_video, output_dir / "rotate_dsa_raw.mp4", output.raw_frames, video_fps),
                     executor.submit(save_video, output_dir / "label.mp4", output.labels * 255, video_fps),
                     executor.submit(save_deepthmap_video, output_dir / "depth_map.mp4", output.depth_maps, video_fps),
-                    executor.submit(save_video, output_dir / "artifacts_proj.mp4", output.artifacts_proj, video_fps),
                 ])
+                if output.artifacts_proj is not None:
+                    futures.append(
+                        executor.submit(save_video, output_dir / "artifacts_proj.mp4", output.artifacts_proj, video_fps)
+                    )
             else:
                 futures.extend([
                     executor.submit(save_gif, output_dir / "rotate_dsa.gif", output.vis_frames, gif_fps, cmap='gray', vmin=0, vmax=255),
                     executor.submit(save_gif, output_dir / "rotate_dsa_raw.gif", output.raw_frames, gif_fps, cmap='gray'),
                     executor.submit(save_gif, output_dir / "label.gif", output.labels * 255, gif_fps, cmap='gray'),
-                    executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", output.depth_maps, gif_fps),
-                    executor.submit(save_gif, output_dir / "artifacts_proj.gif", output.artifacts_proj, gif_fps),
+                    executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", output.depth_maps, gif_fps, cmap='gray'),
                 ])
+                if output.artifacts_proj is not None:
+                    futures.append(
+                        executor.submit(save_gif, output_dir / "artifacts_proj.gif", output.artifacts_proj, gif_fps, cmap='gray')
+                    )
             
             # phase_0_data.save() 含 torch 张量，在当前进程运行，与子进程池并行
             if phase_0_save_types:
@@ -318,6 +330,7 @@ class RotateDSA:
         video_fps = self.drr.rotate_cfg.fps
         total_frame = self.drr.rotate_cfg.total_frame
 
+        output_dir.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=4) as executor:
             futures = [
                 executor.submit(save_pngs, output_dir / "label", labels * 255),

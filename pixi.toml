@@ -12,8 +12,6 @@ index-url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 
 
 [tasks]
-rbf_gen_4d = "python scripts/batch_rbf_gen_4d.py"
-output_full_pigdata = "python scripts/output_full_pigdata.py"
 
 [dependencies]
 # conda-forge 的 pytorch-gpu 包含了 CUDA 12.* 的支持

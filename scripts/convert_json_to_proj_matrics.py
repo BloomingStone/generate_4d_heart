@@ -649,22 +649,27 @@ def data_json_to_projection_metrics(
 
     return projector.get_projection_matrices(alphas, betas)  # (N, 3, 4)
 
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 def test_projector(
-    labe_nii_path: Path = Path(r"test_label.nii.gz"),
-    json_path: Path = Path(r"rotate_dsa.json"),
+    labe_nii_path: Path = PROJECT_ROOT / "test/test_data/rbf_reader_flow_contrast_LCA/coronary_label.nii.gz",
+    json_path: Path = PROJECT_ROOT / "test/test_data/rbf_reader_flow_contrast_LCA/rotate_dsa.json",
     out_dir: Path = Path(r"temp"),
     n_max: int = 30,
-    down_sample_stride: int = 50,
-    frame_stride: int = 10
+    down_sample_stride: int = 10,
+    frame_stride: int = 2
 ) -> None:
     """
     Test the Projector class by projecting a 3D mesh to 2D images and saving them as PNG files.
+    Test by: `uv run --no-project  pytest scripts/convert_json_to_proj_matrics.py`
 
     Args:
-        mesh_path: Path to the 3D mesh file in VTP format.
-        json_path: Path to the JSON file containing the camera parameters and poses.
-        out_dir: Directory to save the projected images as PNG files.
+        labe_nii_path: Path to the NIfTI file containing the 3D label (for show projected points).
+        json_path: Path to the JSON file containing camera parameters and poses.
+        out_dir: Path to the output directory where the projected images will be saved.
+        n_max: Maximum number of frames to project (default: 30).
+        down_sample_stride: Stride for down-sampling the label points (default: 50).
+        frame_stride: Stride for down-sampling the frames from the JSON (default: 10).
     """
     import nibabel as nib
 

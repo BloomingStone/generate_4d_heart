@@ -137,12 +137,16 @@ class StaticLabelReader(StaticVolumeReader):
         assert np.allclose(coronary_affine, cavity_affine)
 
         self._data = self._Data.init_from_volume(
-            volume=torch.zeros_like(cavity, dtype=torch.float32),  # StaticLabelReader does not use volume data, but we need to provide a dummy volume for contrast simulation
+            volume=torch.zeros_like(cavity, dtype=torch.float32),  # StaticLabelReader does not use volume data, we provide a dummy volume for contrast simulation
             cavity=cavity,
             coronary=coronary,
             affine=cavity_affine,
             reader=self
         )
+        # Initialize the volume data for LCA and RCA with zeros, as StaticLabelReader does not have actual volume data
+        self._data.lca.volume.data = torch.zeros_like(cavity, dtype=torch.float32)
+        self._data.rca.volume.data = torch.zeros_like(cavity, dtype=torch.float32)
+        
         if not self.contrast_simulator.contrast_change_over_time:
             print("Applying STATIC contrast simulation to original volume for StaticLabelReader...")
             self._data.lca.volume.data = self.contrast_simulator.simulate(

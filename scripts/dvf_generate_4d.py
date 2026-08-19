@@ -8,10 +8,10 @@ import numpy as np
 from monai.networks.blocks.warp import DVF2DDF, Warp
 import numpy as np
 
-from . import NUM_TOTAL_PHASE
-from .roi import ROI
-from .saver import save_nii
-from .rotate_dsa.data_reader.data_reader import load_and_zoom_dvf
+from generate_4d_heart import NUM_TOTAL_PHASE
+from generate_4d_heart.roi import ROI
+from generate_4d_heart.saver import save_nii
+from generate_4d_heart.rotate_dsa.data_reader.data_reader import load_and_zoom_dvf
 
 @torch.no_grad()
 def generate_4d_cta(
@@ -57,3 +57,21 @@ def generate_4d_cta(
             volume_affine,
             is_label=True
         )
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dvf_dir", type=Path, required=True)
+    parser.add_argument("--roi_json", type=Path, required=True)
+    parser.add_argument("--image_path", type=Path, required=True)
+    parser.add_argument("--coronary_path", type=Path, required=True)
+    parser.add_argument("--output_cta_path", type=Path, required=True)
+    args = parser.parse_args()
+    
+    generate_4d_cta(
+        dvf_dir=args.dvf_dir,
+        roi_json=args.roi_json,
+        image_path=args.image_path,
+        coronary_path=args.coronary_path,
+        output_cta_path=args.output_cta_path,
+    )

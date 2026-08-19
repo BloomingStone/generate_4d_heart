@@ -35,7 +35,7 @@ class VesselLabel(IntEnum):
 
 MU_WATER = 0.02     # mm^-1
 MU_IDODINE = 0.25   # mm^-1
-MU_GUIDE_WIRE = 0.5
+MU_GUIDE_WIRE = 0.6
 MU_MARKER = 1.0
 
-from .moving_dvf.dvf import generate_4d_dvf
+from .moving_dvf.dvf import predict_dvf

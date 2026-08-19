@@ -21,7 +21,7 @@ def read_nifti(path: Path) -> Nifti1Image:
     return image
 
 # TODO 提取分离主要处理逻辑和save逻辑
-def generate_4d_dvf(
+def predict_dvf(
     input_dir: Path,
     output_dir: Path,
     ckpt: Path = Path(__file__).parent / 'checkpoints' / 'ShapeMorph.pth',
@@ -135,4 +135,4 @@ The generated images will be stored as
 
 if __name__ == '__main__':
     from cyclopts import run
-    run(generate_4d_dvf)
+    run(predict_dvf)

@@ -85,7 +85,7 @@ def save_pngs(
 def save_gif(
     output_path: Path,
     frames: torch.Tensor | np.ndarray,
-    fps_gif: int = 30,
+    fps: int = 30,
     vmin: float | None = None,
     vmax: float | None = None,
     **imshow_kwargs
@@ -118,12 +118,12 @@ def save_gif(
     ani = animation.ArtistAnimation(
         fig,
         ims,
-        interval=1000 / fps_gif,
+        interval=1000 / fps,
         blit=True,
         repeat_delay=1000
     )
 
-    writer = animation.PillowWriter(fps=fps_gif)
+    writer = animation.PillowWriter(fps=fps)
     ani.save(
         output_path,
         writer=writer,
@@ -139,7 +139,8 @@ def save_gif(
 def save_deepthmap_gif(
     output_path: Path,
     depth_maps: torch.Tensor | np.ndarray,
-    fps_gif: int = 30
+    fps: int = 30,
+    cmap: str = 'gray'
 ) -> None:
     depth_maps = depth_maps.squeeze()
     depth_maps_np = depth_maps.cpu().numpy() if isinstance(depth_maps, torch.Tensor) else depth_maps
@@ -150,8 +151,8 @@ def save_deepthmap_gif(
     save_gif(
         output_path,
         depth_maps_np,
-        fps_gif=fps_gif,
-        cmap='gray',
+        fps=fps,
+        cmap=cmap,
         vmin=vmin,
         vmax=vmax
     )
