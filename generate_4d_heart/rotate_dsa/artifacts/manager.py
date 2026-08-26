@@ -27,10 +27,12 @@ class MarkerConfig:
     distance_mm: float = 13
     radius_mm: float = 0.5
     mu: float = MU_MARKER
-    margin_ratio: float = 0.8
+    
+    start_pos_mm: float = 30.0
     """
-    Margin ratio for marker placement along the guide wire centerline, 
-    to avoid placing markers too close to the ends of the centerline.
+    Starting position of the first marker along the guide wire centerline.
+    If None, the first marker will be placed at a random position along 
+    the centerline, with the second marker placed at distance_mm from the first.
     """
     
 
@@ -142,7 +144,7 @@ class ArtifactManager:
             marker_distance_mm=mk_cfg.distance_mm,
             marker_radius_mm=mk_cfg.radius_mm,
             mu=mk_cfg.mu,
-            margin_ratio=mk_cfg.margin_ratio,
+            start_pos_mm=mk_cfg.start_pos_mm,
         )
         artifacts.extend(marker_artifacts)
         marker_centers = [np.array(m.mesh.center) for m in marker_artifacts]

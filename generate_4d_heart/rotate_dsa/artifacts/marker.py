@@ -12,8 +12,7 @@ def generate_markers(
     marker_distance_mm: float = 6.0,
     marker_radius_mm: float = 0.5,
     mu: float = MU_MARKER,
-    margin_ratio: float = 0.9,
-    max_markers: int = 3,
+    start_pos_mm: float = 10.0,
 ) -> list[Artifact]:
     """Generate spherical marker artifacts along a guide wire centerline.
 
@@ -34,12 +33,10 @@ def generate_markers(
         Radius of each marker sphere (mm).
     mu : float
         Linear attenuation coefficient (mm^-1).
-    margin_ratio : float
-        Fraction of the centerline length that the first marker may be sampled
-        from.  ``margin_ratio = 0.9`` means the first marker is taken from the
-        middle 90 % of the centerline, leaving 5 % excluded at each end.
-    max_markers : int
-        Maximum number of markers to generate.
+    start_pos_mm : float | None
+        Starting position of the first marker along the guide wire centerline.
+        If None, the first marker will be placed at a random position along
+        the centerline, with the second marker placed at distance_mm from the first.
 
     Returns
     -------
@@ -55,26 +52,16 @@ def generate_markers(
     dx = float(np.median(np.linalg.norm(diffs, axis=1))) if n > 1 else 1.0
     dp = max(1, int(round(marker_distance_mm / dx)))
 
-    # 2. Margin: exclude `given_margin` points at each end, but at least dp*2
-    given_margin = int((1.0 - margin_ratio) / 2.0 * n)
-    margin = max(given_margin, dp * 2)
-    if margin >= n // 2:            # fallback if margin is unreasonably large
-        margin = max(1, n // 4)
-
-    # 3. Point 1: random index in [margin, n - margin - 1]
-    lo, hi = margin, n - margin - 1
-    if lo > hi:
-        lo, hi = 0, n - 1
-    idx1 = int(np.random.randint(lo, hi + 1))
+    assert start_pos_mm >= 0, "start_pos_mm must be non-negative"
+    diff_dist = np.linalg.norm(np.diff(centerline_world, axis=0), axis=1)
+    cum_dist = np.concatenate(([0.0], np.cumsum(diff_dist)))
+    idx1 = np.argmin(np.abs(cum_dist - start_pos_mm))
     point1 = centerline_world[idx1]
-
-    # 4. Point 2: one step backward (proximal direction) from point 1
-    idx2 = idx1 - dp
-    if idx2 < margin:
-        idx2 = margin
+    idx2 = idx1 + dp
+    if idx2 >= n:
+        raise ValueError(f"start_pos_mm={start_pos_mm} is too close to the distal end of the centerline to place a second marker at distance {marker_distance_mm} mm.")
     point2 = centerline_world[idx2]
 
-    # 5. Create sphere meshes
     artifacts: list[Artifact] = []
     for i, pos in enumerate([point1, point2]):
         sphere = pv.Sphere(

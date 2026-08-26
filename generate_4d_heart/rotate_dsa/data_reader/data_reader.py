@@ -497,8 +497,8 @@ class DataReader(Protocol):
             affine: np.ndarray,
             reader: DataReader,
         ) -> "DataReader._Data":
-            (running_device, centering_mode, contrast_simulator, artifact_manager, coronary_need_load) = (
-                reader.device, reader.centering_mode, reader.contrast_simulator, 
+            (running_device, centering_mode, transform_to_centering, contrast_simulator, artifact_manager, coronary_need_load) = (
+                reader.device, reader.centering_mode, reader.transform_to_centering, reader.contrast_simulator, 
                 reader.artifact_manager, reader.coronary_need_load
             )
             
@@ -523,13 +523,20 @@ class DataReader(Protocol):
                     volumes[cor_type] = contrast_simulator.simulate(volumes[cor_type], cavity, cor_labels[cor_type], affine)
 
             def _build_coronary(cor_t: CoronaryType, cor_vol: Tensor, cor_label: Tensor) -> Coronary:
+                centering_pos = get_centering_pos_in_origin_world(
+                    cor_label, affine, running_device, centering_mode
+                )
+                if transform_to_centering is not None:
+                    print(f"Applying transform_to_centering: {transform_to_centering} to centering position: {centering_pos}")
+                    centering_pos = centering_pos + transform_to_centering
+                
+                print(f"Centering position for {cor_t.value}: {centering_pos}")
+                
                 return Coronary(
                     type=cor_t,
                     volume=MedImage(data=cor_vol, affine=affine, coord=Original()),
                     label=MedImage(data=cor_label, affine=affine, coord=Original()),
-                    centering_coord=Centering(cor_t, get_centering_pos_in_origin_world(
-                        cor_label, affine, running_device, centering_mode
-                    )),
+                    centering_coord=Centering(cor_t, centering_pos),
                     mesh_original=get_mesh_in_world(cor_label, affine),
                     artifacts_original=artifact_manager.generate_or_load(
                         coronary_label=cor_label.squeeze().cpu().numpy().astype(bool),
@@ -619,11 +626,19 @@ class DataReader(Protocol):
     
     centering_mode: CenteringMode = "coronary_center"
     """
-    Determines how the centering affine is computed:
-        - "coronary_center": center based on the AABB of the coronary label (default).
-        - "image_center": center based on the geometric center of the image volume shape.
+    Determines the centering position (`center_pos`) in original world coordinates for projection. It can be either:
+        - "coronary_center": `center_pos` set to the AABB of the coronary label (default).
+        - "image_center": `center_pos` set to the geometric center of the image volume AABB.
+    
+    `center_pos` is then used to compute the centering affine: 
+    Follows affine_centering @ affine_original^{-1} @ center_pos[original] = (0, 0, 0) in world coordinate.
     """
     
+    transform_to_centering: ndarray|None = None
+    """
+    If provided, this (3,) vector (in original world coordinates) will be used to adjust the centering affine by applying a translation. This allows for fine-tuning the centering position beyond the default computed center.
+    centering_pos[original] = centering_pos[original] +  transform_to_centering[original]
+    """
     
     coronary_need_load: set[CoronaryType]|None = None
     """

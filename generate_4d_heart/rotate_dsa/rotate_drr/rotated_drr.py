@@ -67,7 +67,7 @@ class RotatedParameters:
     coordinate_system: str = "RAS"          # X is R, Y is A, Z is S
     parameterization: str = "euler_angles"  # representation of rotation
     convention: str = "ZXY"                 # rotation axis sequence, internal rotation
-    
+   
     def get_rotation_angle_at_frame(self, frame: int) -> Rot[Degree]:
         d_alpha = frame * self.angular_velocity / self.fps
         new_alpha = self.alpha_start + d_alpha
@@ -89,9 +89,13 @@ class RotatedParameters:
         beta_start: Degree = 0.0,
         coordinate_system: str = "RAS",
         parameterization: str = "euler_angles",
-        convention: str = "ZXY"
+        convention: str = "ZXY",
+        include_end: bool = True
     ) -> RotatedParameters:
-        angular_velocity = (alpha_end - alpha_start) * fps / total_frame
+        if include_end:
+            angular_velocity = (alpha_end - alpha_start) * fps / (total_frame - 1)
+        else:
+            angular_velocity = (alpha_end - alpha_start) * fps / total_frame
         return RotatedParameters(
             total_frame=total_frame,
             alpha_start=alpha_start,
@@ -100,8 +104,8 @@ class RotatedParameters:
             fps=fps,
             coordinate_system=coordinate_system,
             parameterization=parameterization,
-            convention=convention
-    )
+            convention=convention,
+        )
 
 
 class RotateDRR(Protocol):

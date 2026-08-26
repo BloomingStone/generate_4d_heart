@@ -51,6 +51,8 @@ class RBFReader(DataReader):
     
     centering_mode: CenteringMode = "coronary_center"
     
+    transform_to_centering: np.ndarray | None = None
+    
     centerline_constraint_enabled: bool = True
     """
     If True (default), the RBF control-point displacements are projected
