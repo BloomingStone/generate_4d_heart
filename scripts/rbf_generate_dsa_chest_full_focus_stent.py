@@ -27,8 +27,8 @@ def full_data_geom() -> CArmGeometry:
         sod=800.0,
         height=1024,
         width=1024,
-        delx=0.154,
-        dely=0.154,
+        delx=0.616,
+        dely=0.616,
     )
 
 
@@ -36,7 +36,7 @@ def full_data_drr(
     full_data_geom: CArmGeometry
 ) -> TorchDRR:
     rotate_cfg = RotatedParameters.from_alpha_range(
-        total_frame=402,
+        total_frame=3,
         alpha_start=-100.0,
         alpha_end=100.0,
         fps=80.0,
