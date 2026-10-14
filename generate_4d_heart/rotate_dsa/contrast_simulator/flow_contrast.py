@@ -59,9 +59,9 @@ class FlowContrast(ContrastSimulator):
     mu_idodine: float = MU_IDODINE
 
     # Time model parameters for rho(d, t)
-    velocity: float = 200   # mm/s  v0
-    t_in: float = 0.15
-    t_out: float = 2.7
+    velocity: float = 300   # mm/s  v0
+    t_in: float = 0.
+    t_out: float = 3.0
     alpha: float = 5.0
     beta: float = 1.5   # controls how velocity changes with vessel radius, v ~ (r/r0)^beta
     

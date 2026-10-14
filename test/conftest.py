@@ -134,8 +134,11 @@ def artifact_manager() -> ArtifactManager:
 @pytest.fixture(scope="session", autouse=True)
 def full_drr() -> TorchDRR:
     return TorchDRR(
-        rotate_cfg=RotatedParameters(
-            total_frame=120,
+        rotate_cfg=RotatedParameters.from_alpha_range(
+            total_frame=180,
+            alpha_start=-120,
+            alpha_end=120,
+            fps=60,
         )
     )
 

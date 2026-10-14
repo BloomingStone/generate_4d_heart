@@ -101,9 +101,15 @@ class BatchDVFToDSA:
     
     def _get_rotate_param(self):
         if self.run_random:
-            rot_params = RotatedParameters(
-                total_frame=120,    # 120 frames / 30 fps = 4s video
-                alpha_start=np.random.rand() * 180 - 90,        # -90 ~ 90
+            rot_params = RotatedParameters.from_alpha_range(
+                total_frame=180,
+                alpha_start=-120.0,
+                alpha_end=120.0,
+                fps=60.0,
+                beta_start=0.0,
+                coordinate_system="RAS",
+                parameterization="euler_angles",
+                convention="ZXY"
             )
         else:
             rot_params = RotatedParameters()
