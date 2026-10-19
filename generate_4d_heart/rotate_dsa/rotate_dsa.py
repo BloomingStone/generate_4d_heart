@@ -4,6 +4,7 @@ from typing import Literal, Any
 import json
 import threading
 import queue
+import warnings
 from concurrent.futures import ProcessPoolExecutor
 
 from tqdm import tqdm
@@ -259,6 +260,17 @@ class RotateDSA:
         video_fps = self.drr.rotate_cfg.fps
         total_frame = self.drr.rotate_cfg.total_frame
 
+        # 后端可选的辐射剂量估计（目前仅 xcist 后端实现；
+        # 未启用 dose_cfg 时 estimate_run_dose() 返回 None，无任何副作用）。
+        # 注意：剂量失败**不应**影响 DSA 图像落盘，因此只告警不抛。
+        dose_result = None
+        dose_estimator = getattr(self.drr, "estimate_run_dose", None)
+        if callable(dose_estimator):
+            try:
+                dose_result = dose_estimator()
+            except Exception as exc:            # noqa: BLE001
+                warnings.warn(f"剂量估计失败，已跳过剂量输出：{type(exc).__name__}: {exc}")
+
         output_dir.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=4) as executor:
             futures = [
@@ -268,6 +280,11 @@ class RotateDSA:
                 executor.submit(np.savez_compressed, output_dir / "label.npz", output.labels),
                 executor.submit(np.savez_compressed, output_dir / "depth_map.npz", output.depth_maps),
             ]
+            if dose_result is not None:
+                dose_arr = np.ascontiguousarray(dose_result["dose"], dtype=np.float32)
+                futures.append(executor.submit(np.save, output_dir / "dose.npy", dose_arr))
+                # 同时写 gecatsim 官方 .mGy（即 raw float32）
+                futures.append(executor.submit(dose_arr.tofile, output_dir / "dose.mGy"))
 
 
             if total_frame > 60:
@@ -311,6 +328,8 @@ class RotateDSA:
         json_data["postprocess_meta"] = output.meta
         json_data["phase_0_save_meta"] = phase_0_meta
         json_data["reader_meta"] = self.reader.meta
+        if dose_result is not None:
+            json_data["dose"] = dose_result["meta"]
         with open(output_dir / "rotate_dsa.json", "w") as f:
             json.dump(json_data, f, indent=2)
         

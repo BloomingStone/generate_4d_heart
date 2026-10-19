@@ -347,6 +347,52 @@ $$E(R) = \|\mathbf{p} - \mathbf{s}\|_2 \int_0^1 V\bigl(\mathbf{s} + \alpha(\math
 
 **旋转协议**：每帧投影几何按预设旋转采集协议设置（角增量、帧率、主/次角度范围），生成 $N_f$ 帧、相机参数精确已知的序列；逐帧角度记录在输出 `rotate_dsa.json` 的 `frames` 中。
 
+### XCIST 后端与辐射剂量（含与实测的偏差记录）
+
+除 DiffDRR 外，`generate_4d_heart/xcist/` 提供基于 [XCIST/gecatsim](https://github.com/xcist) 的平板多能投影后端 `XcistDRR`：
+
+- `mode="mono"`：与 `TorchDRR` 数值等价（真实 CTA 全角度 NCC 0.9998~0.9999），可直接替换；
+- `mode="poly"`：真实能谱 + 平板，非线积分可加，采用"静态层 + 动态层延迟融合"；
+- 可选剂量输出（`dose_cfg=DoseConfig(...)` / `CtdiConfig(...)`），随 `RotateDSA.run_and_save`
+  同步写出 `dose.npy` / `dose.mGy`，并把三套口径写进 `rotate_dsa.json["dose"]`：
+  `stats`（吸收剂量：整体 / 等中心 / ROI）、`ctdi`（16 cm 体模剂量指数）、
+  `kerma`（参考点空气比释动能 Ka,r 与 DAP）。
+
+#### 与设备剂量对账（90 kV、187 帧、200°、60 fps、16 cm PMMA 体模）
+
+| 参数 | 总 mAs | 我方 Ka,r | 我方 CTDI₁₆（200° 实拍累积） | 电离室实测 | 我方 CTDI₁₆（归一 360°） | 设备剂量报告 |
+|---|---|---|---|---|---|---|
+| 50 mA 0.1Cu 3.29 ms | 30.8 | 1.31 mGy | 2.03 | 1.80（**+13%**） | 3.65 | 3.92（**−7%**） |
+| 60 mA 0.1Cu 3.30 ms | 37.0 | 1.58 mGy | 2.44 | 2.04（**+20%**） | 4.40 | 4.45（**−1%**） |
+
+结论：**在同口径下（360° 归一的 CTDI₁₆）本仿真与设备剂量报告差 1–7%**；与电离室实拍差
++13~20%（本引擎无散射、体模按均匀 PMMA 近似）。
+
+#### 已知偏差与原因（当前无法完全消除，如实记录）
+
+1. **口径差异（最大，约 2.2 倍）**：设备"剂量报告"是**归一到一个 360° 旋转**的 CTDI 指数
+   （同一曝光下"胸模"与"CTDI_16cm"两行数值几乎相同 → 与体模无关），而电离室读到的是
+   **本次 200° 实拍的累积剂量**；两者比值恒为 `2.18 ≈ (360/200) × 1.21`（50/60 mA 完全一致）。
+   对比时必须换算到同一口径，否则会误判为"差 2 倍"。
+2. **铜滤过衰减偏弱**：我方 `0Cu/0.1Cu` 的 Ka,r 比为 1.52、CTDI 比为 1.35，设备为 1.86。
+   已排除实现 bug——用 CatSim 自带 μ 表 + 谱文件独立手算 `0.1 mm Cu` 的空气比释动能透射比
+   为 **0.662**，端到端仿真给出 **0.660**，二者一致；要把透射比压到设备对应的 0.538 需要
+   **约 0.163 mm Cu**。因此差异来自：真实滤过片的等效厚度/成分（标称 0.1 mm 的片子可能含
+   额外 Al 或实际更厚）、高 mA 下管电压跌落（谱变软 → Cu 削减更强）、以及设备剂量指数使用
+   自家能谱模型。**闭环需要实测能谱或滤过片实物厚度，暂不作拟合。**
+3. **脉冲 mA 达不到设定值**：3.3 ms 脉冲下设备 50→140 mA 的报告值只涨 2.25 倍（名义 2.8 倍），
+   即实际 mAs 低于设定值（管电流上升时间）。与设备对账应使用发电机读出的**实际 mAs**，
+   否则高 mA 处本仿真会高估 15–20%。
+4. **模型上限**：无散射（周边/体表剂量偏低、中心偏高）；材料仅 water/bone（未含碘/金属）；
+   体模为均匀 PMMA；32 cm 体模的周边孔（r=150 mm）超出本平板在等中心的扇束（pig 几何 253 mm），
+   故 CTDI 默认取 16 cm 体模；无 bowtie、无床位移动、无探测器模糊/散焦。
+
+> 复现脚本：`scripts/xcist/xlsx_dump.py`（读设备剂量表）、`scripts/xcist/dose_vs_measured.py`（三口径对账）、
+> `scripts/xcist/cu_filter_eval.py`（Cu 过滤评估）。
+> 回归测试：`test/test_xcist.py`（含 `test_xcist_ctdi_slice_thickness_invariance`、
+> `test_xcist_air_kerma_and_dap`、`test_xcist_pig_report`）。
+
+
 ### 造影剂模拟
 
 造影剂（contrast）模拟模块负责将原始 CTA 体积（Hounsfield 单位）转换为适合 DRR 投影的**衰减系数体积**（μ, mm⁻¹），主要代码位于 [generate_4d_heart/rotate_dsa/contrast_simulator](generate_4d_heart/rotate_dsa/contrast_simulator)。
