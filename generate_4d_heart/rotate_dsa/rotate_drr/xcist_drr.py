@@ -261,12 +261,21 @@ class XcistDRR:
         * 角度密度沿用本次协议：每度视角数 = 总帧数 / |扫角|，只是把扫角补成 360°；
         * 平板可降采样（`CtdiConfig.detector_downsample`）：只粗化射线采样，
           面板尺寸与总通量不变（否则在 474×648 平板上 72 视角会很慢）；
-        * 用同一 physics（kVp/滤过/mA/曝光）但**非单能**谱。
+        * 用同一 physics（kVp/滤过/mA/曝光）但**非单能**谱；能量分箱上限 8
+          （实测 8 / 20 分箱差 0.1%，再多只是耗时）。
         """
         c = replace(ctdi_cfg or self.ctdi_cfg or CtdiConfig())
         alphas = np.array([self._alpha_deg(f) for f in range(self.rotate_cfg.total_frame)])
-        span = abs(float(alphas[-1] - alphas[0])) if alphas.size > 1 else 360.0
-        span = span if span > 1e-6 else 360.0
+        span = abs(float(alphas[-1] - alphas[0])) if alphas.size > 1 else 0.0
+        if span < 1e-6:
+            # 固定视角（角速度=0）/ 单帧：没有旋转，"每次旋转的剂量指数"无定义，
+            # 不做任何外推（否则 mAs/rot 会是编出来的）。空气比释动能仍可用。
+            return {
+                "skipped": "固定视角或单帧协议（角速度=0）没有旋转，CTDI 不适用",
+                "n_frames": int(alphas.size),
+                "angular_span_deg": 0.0,
+                "suggestion": "改用 estimate_air_kerma()（Ka,r/DAP），或用旋转协议再算 CTDI",
+            }
         c.view_density_per_360 = alphas.size / span
         n_views_360 = c.n_views()
         mAs_rot = self.physics.mA * self.physics.exposure_s * n_views_360
@@ -280,7 +289,7 @@ class XcistDRR:
             row_size=self.geometry.row_size * d,
         )
         phys = replace(self.physics, monochromatic_kev=None,
-                       energy_count=int(self.dose_energy_bins))
+                       energy_count=int(min(8, max(4, self.dose_energy_bins))))
         sim = XcistSim(geometry=geom, physics=phys, center_offset_mm=(0.0, 0.0, 0.0))
         beam_w = (self.geometry.n_row * self.geometry.row_size
                   * self.geometry.sid / self.geometry.sdd)
@@ -497,6 +506,10 @@ class XcistDRR:
             return torch.from_numpy(e)[None, None].float()
         if contiguous:
             step = float(self.rotate_cfg.angular_velocity) / float(self.rotate_cfg.fps)
+            if abs(step) < 1e-9:
+                # 固定视角（角速度=0）：所有帧完全一致，投一次再复制（兼避免除零）
+                e = self.sim.line_integral(self._alpha_deg(f0), json, center)
+                return torch.from_numpy(np.repeat(e[None], n, axis=0))[:, None].float()
             e = self.sim.line_integral_multi(json, self._alpha_deg(f0), step, n, center)
             return torch.from_numpy(e)[:, None].float()
         out = np.stack([self.sim.line_integral(self._alpha_deg(f), json, center)

@@ -393,6 +393,49 @@ $$E(R) = \|\mathbf{p} - \mathbf{s}\|_2 \int_0^1 V\bigl(\mathbf{s} + \alpha(\math
 > `test_xcist_air_kerma_and_dap`、`test_xcist_pig_report`）。
 
 
+### 固定视角投影（single-angle，`fix_angle_dsa`）
+
+与旋转采集（`RotateDSA`）并列的一种采集模式：**C 臂固定在某个角度**，只有心脏相位/造影剂
+随时间演化。视角完全由 `RotatedParameters` 决定，因此"固定视角" = `angular_velocity=0`
+且 `alpha_start/beta_start` 设为目标角度，**整条 `RotateDSA` 流水线原样复用**
+（静态层批量、逐帧动态层、标签/深度、伪影、可选剂量）。
+
+角度约定（RAS，与 `RotatedParameters` 一致）：
+
+| 方向 | 含义 | 符号 |
+|---|---|---|
+| RAO / LAO | 右前斜 / 左前斜（绕 SI 轴） | alpha 正 / 负 |
+| CRAN / CAUD | 头位 / 足位（绕 RL 轴） | beta 正 / 负 |
+| AP / LAT / RLAT | 正位 / 左侧位 / 右侧位 | (0,0) / (90,0) / (-90,0) |
+
+```python
+from generate_4d_heart.rotate_dsa.fix_angle_dsa import FixAngleDSA, parse_angle
+
+alpha, beta = parse_angle("RAO_30_CRAN_20")      # → (30.0, 20.0)
+dsa = FixAngleDSA.from_angle(reader=reader, drr=torch_drr, angle="RAO_30_CRAN_20")
+dsa.run_and_save(output_dir, coronary_type="LCA")
+```
+
+命令行（`scripts/fix_angle_dsa.py`，支持 `--backend torch|xcist`，`xcist --dose` 可同时出剂量）：
+
+```bash
+pixi run python scripts/fix_angle_dsa.py out/rao30 \
+    --volume-nii image.nii.gz --cavity-nii cavity.nii.gz --coronary-nii coronary.nii.gz \
+    --angle RAO_30_CRAN_20 --total-frame 90 --fps 30
+```
+
+产物命名为 `fix_angle_dsa_raw.tif` / `fix_angle_dsa.gif` / `fix_angle_dsa.json`（png 在
+`fix_angle_dsa/` 子目录），json 额外含 `fixed_angle: {alpha_degree, beta_degree, preset, angular_velocity}`。
+角度解析也接受直接数值（`"30,10"`、`"30 10"`、`"30"`）。回归测试：`test/test_fix_angle_dsa.py`。
+
+> 与剂量口径的配合：固定视角**没有旋转**，因此 `estimate_ctdi()` 会显式返回
+> `{"skipped": ...}`（CTDI 按 360° 单圈定义，外推 `mAs/rot` 会是编造的数据）；
+> 而 `estimate_air_kerma()`（Ka,r / DAP，按帧 mAs 线性累加）仍然有效。
+
+> 说明：该功能移植自 `dev/single-angle` 分支的未提交实现（原实现另写了一份
+> `FixAngleDSA.run/run_and_save`），这里改为薄封装 + `dry-run` 无副作用的角度解析，
+> 以复用已测试的主流水线与剂量/产物逻辑。
+
 ### 造影剂模拟
 
 造影剂（contrast）模拟模块负责将原始 CTA 体积（Hounsfield 单位）转换为适合 DRR 投影的**衰减系数体积**（μ, mm⁻¹），主要代码位于 [generate_4d_heart/rotate_dsa/contrast_simulator](generate_4d_heart/rotate_dsa/contrast_simulator)。

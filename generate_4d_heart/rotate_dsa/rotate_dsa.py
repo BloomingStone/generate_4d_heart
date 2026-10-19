@@ -254,7 +254,15 @@ class RotateDSA:
         gif_fps: int = 30,   # gif may not support too high fps (like fps=60 may cause gif slow)
         phase_0_save_types: tuple[DataReaderResult.SupportedSaveType, ...] = ("coronary", "cor-mesh", "cor-artifacts", "central-line"),
         phase_0_save_coordinate: DataReaderResult.SupportedSaveCoordinate = "centering",
+        prefix: str = "rotate_dsa",
+        extra_json: dict[str, Any] | None = None,
     ) -> RotateDsaOutput:
+        """跑完整流程并落盘。
+
+        `prefix` 控制主产物命名（`{prefix}_raw.tif` / `{prefix}.gif` / `{prefix}.json` 等），
+        默认 `"rotate_dsa"`（行为不变）；固定视角模式用 `"fix_angle_dsa"`。
+        `extra_json` 会合并进最后写出的 `{prefix}.json`（如 `{"fixed_angle": {...}}`）。
+        """
         output = self.run(coronary_type)
         
         video_fps = self.drr.rotate_cfg.fps
@@ -274,8 +282,8 @@ class RotateDSA:
         output_dir.mkdir(parents=True, exist_ok=True)
         with ProcessPoolExecutor(max_workers=4) as executor:
             futures = [
-                executor.submit(save_tif, output_dir / "rotate_dsa_raw.tif", output.raw_frames),
-                executor.submit(save_pngs, output_dir / "rotate_dsa", output.vis_frames),
+                executor.submit(save_tif, output_dir / f"{prefix}_raw.tif", output.raw_frames),
+                executor.submit(save_pngs, output_dir / f"{prefix}", output.vis_frames),
                 executor.submit(save_pngs, output_dir / "label", output.labels * 255),
                 executor.submit(np.savez_compressed, output_dir / "label.npz", output.labels),
                 executor.submit(np.savez_compressed, output_dir / "depth_map.npz", output.depth_maps),
@@ -289,8 +297,8 @@ class RotateDSA:
 
             if total_frame > 60:
                 futures.extend([
-                    executor.submit(save_video, output_dir / "rotate_dsa.mp4", output.vis_frames, video_fps, vmin=0, vmax=255),
-                    executor.submit(save_video, output_dir / "rotate_dsa_raw.mp4", output.raw_frames, video_fps),
+                    executor.submit(save_video, output_dir / f"{prefix}.mp4", output.vis_frames, video_fps, vmin=0, vmax=255),
+                    executor.submit(save_video, output_dir / f"{prefix}_raw.mp4", output.raw_frames, video_fps),
                     executor.submit(save_video, output_dir / "label.mp4", output.labels * 255, video_fps),
                     executor.submit(save_deepthmap_video, output_dir / "depth_map.mp4", output.depth_maps, video_fps),
                 ])
@@ -300,8 +308,8 @@ class RotateDSA:
                     )
             else:
                 futures.extend([
-                    executor.submit(save_gif, output_dir / "rotate_dsa.gif", output.vis_frames, gif_fps, cmap='gray', vmin=0, vmax=255),
-                    executor.submit(save_gif, output_dir / "rotate_dsa_raw.gif", output.raw_frames, gif_fps, cmap='gray'),
+                    executor.submit(save_gif, output_dir / f"{prefix}.gif", output.vis_frames, gif_fps, cmap='gray', vmin=0, vmax=255),
+                    executor.submit(save_gif, output_dir / f"{prefix}_raw.gif", output.raw_frames, gif_fps, cmap='gray'),
                     executor.submit(save_gif, output_dir / "label.gif", output.labels * 255, gif_fps, cmap='gray'),
                     executor.submit(save_deepthmap_gif, output_dir / "depth_map.gif", output.depth_maps, gif_fps, cmap='gray'),
                 ])
@@ -330,7 +338,9 @@ class RotateDSA:
         json_data["reader_meta"] = self.reader.meta
         if dose_result is not None:
             json_data["dose"] = dose_result["meta"]
-        with open(output_dir / "rotate_dsa.json", "w") as f:
+        if extra_json:
+            json_data.update(extra_json)
+        with open(output_dir / f"{prefix}.json", "w") as f:
             json.dump(json_data, f, indent=2)
         
         return output
