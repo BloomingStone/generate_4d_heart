@@ -1,4 +1,4 @@
-from typing import Protocol, Literal, Any
+from typing import Protocol, Literal, Any, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -370,7 +370,7 @@ class DataReaderResult:
         self,
         output_dir: Path,
         *,
-        save_types: tuple[SupportedSaveType, ...],
+        save_types: Sequence[SupportedSaveType],
         coordinate_system: SupportedSaveCoordinate = "centering"
     ) -> dict[str, Any]:
         """
@@ -378,7 +378,7 @@ class DataReaderResult:
         
         Args:
             output_dir (Path): directory to save the data
-            save_types (tuple[SupportedSaveType, ...]): which data to save, include:
+            save_types (Sequence[SupportedSaveType]): which data to save, include:
                 - "cavity": save cavity label as nifti
                 - "volume": save volume with contrast as nifti
                 - "coronary": save coronary label as nifti

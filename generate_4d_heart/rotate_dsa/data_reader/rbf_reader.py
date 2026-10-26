@@ -43,8 +43,7 @@ class RBFReader(DataReader):
     ssm_reader: SSMReader= field(default_factory=SSMReader)
     
     device: torch.device = field(default_factory= lambda: torch.device("cuda:0"))
-    num_components_used: int = 1
-    motion_multiplier: float = 1.3
+
     attenuation_transition: float = 5.0
     
     artifact_manager: ArtifactManager | None = None
@@ -129,8 +128,6 @@ class RBFReader(DataReader):
         ssm_result = self.ssm_reader.load(
             cavity=cavity_np,
             affine=cavity_affine,
-            num_components_used=self.num_components_used,
-            motion_multiplier=self.motion_multiplier
         )
 
         # Extract coronary centre-lines for length-preserving RBF constraints
@@ -529,13 +526,12 @@ class RBFReader(DataReader):
         if self.background_nii is not None:
             source_files["background_nii"] = str(self.background_nii)
         return {
+            "ssm_reader": self.ssm_reader.meta,
             "n_phases": self.n_phases,
             "centering_mode": self.centering_mode,
             "volume_size": self.volume_size,
             "volume_affine": self.volume_affine.tolist(),
             "source_files": source_files,
-            "num_components_used": self.num_components_used,
-            "motion_multiplier": self.motion_multiplier,
             "attenuation_transition": self.attenuation_transition,
             "centerline_constraint_enabled": self.centerline_constraint_enabled,
             "feather_width": self.feather_width,

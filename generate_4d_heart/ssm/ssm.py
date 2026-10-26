@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import logging
+from typing import Any
 
 import numpy as np
 import pyvista as pv
@@ -21,17 +22,27 @@ SSM_DATA_DIR = Path(__file__).parent / "ssm_world"
 
 @dataclass
 class SSMReader:
-    def __init__(
+    ssm_dir: Path = SSM_DATA_DIR
+    """The directory containing the SSM data."""
+    
+    num_components_used: int = 1
+    """The number of principal components to use for deformation."""
+    
+    motion_multiplier: float = 1.3
+    """A multiplier for the motion deformation. defaults to 1.3, make to motion more obvious."""
+
+    refine_steps: int = 200
+    """The number of refinement steps for pytorch3D to refine the mesh."""
+
+    def __post_init__(
         self,
-        ssm_dir: Path=SSM_DATA_DIR
     ):
-        self.ssm_dir = ssm_dir
-        self.ssm_template: pv.PolyData = pv.read(ssm_dir / "ssm_template.vtk")  #type: ignore
+        self.ssm_template: pv.PolyData = pv.read(self.ssm_dir / "ssm_template.vtk")  #type: ignore
         assert isinstance(self.ssm_template, pv.PolyData)
         if  "label" not in self.ssm_template.cell_data:
             raise ValueError("The template surface should have label in cell data or point data")
-        self.b: np.ndarray = np.load(ssm_dir / "b_motion.npy")
-        self.P: np.ndarray = np.load(ssm_dir / "P_motion.npy")
+        self.b: np.ndarray = np.load(self.ssm_dir / "b_motion.npy")
+        self.P: np.ndarray = np.load(self.ssm_dir / "P_motion.npy")
         
                 
         self.n_labels, self.n_phases, self.n_components = self.b.shape
@@ -45,8 +56,6 @@ class SSMReader:
         self, 
         cavity: nib.Nifti1Image|Path|np.ndarray,
         affine: np.ndarray|None = None,
-        num_components_used: int = 1,
-        motion_multiplier: float = 1.0
     ) -> "SSMResult":
         """
         Load SSM data for the given cavity and affine transformation.
@@ -74,15 +83,16 @@ class SSMReader:
                 raise ValueError("Invalid input for cavity and affine.")
         logger.debug(f"Loaded cavity surface with {surface.n_points} points and {surface.n_cells} cells.")
         
-        c = max(num_components_used, self.n_components)
-        k = float((mesh_size(surface) / mesh_size(self.ssm_template)).mean()) * motion_multiplier
+        c = max(self.num_components_used, self.n_components)
+        k = float((mesh_size(surface) / mesh_size(self.ssm_template)).mean()) * self.motion_multiplier
         deforms: np.ndarray = k * np.einsum('LPC, LCND -> LPND', self.b[:, :, :c], self.P[:, :c, :, :])
         deforms = einops.rearrange(deforms, 'l p n d -> p (l n) d')
-        logger.debug(f"Using {num_components_used} components for deformation, motion_multiplier={k:.3f}, deforms shape: {deforms.shape}")
+        logger.debug(f"Using {self.num_components_used} components for deformation, motion_multiplier={k:.3f}, deforms shape: {deforms.shape}")
         
         mesh = deform_surface(
             source_surface=self.ssm_template, 
             target_surface=surface,
+            refine_steps=self.refine_steps,
         )
         
         deformed_cavities: list[pv.PolyData] = []
@@ -95,6 +105,18 @@ class SSMReader:
         landmark = Landmark(mesh, deforms=deforms)
         
         return SSMResult(landmark,  deformed_cavities)
+    
+    @property
+    def meta(self) -> dict[str, Any]:
+        return {
+            "ssm_dir": str(self.ssm_dir),
+            "num_components_used": self.num_components_used,
+            "motion_multiplier": self.motion_multiplier,
+            "refine_steps": self.refine_steps,
+            "n_labels": self.n_labels,
+            "n_phases": self.n_phases,
+            "n_components": self.n_components,
+        }
 
 def mesh_size(mesh: pv.PolyData) -> np.ndarray:
     bounds = np.array(mesh.bounds).reshape(3, 2)
@@ -195,6 +217,7 @@ def deform_surface(
         source_surface: pv.PolyData, 
         target_surface: pv.PolyData, 
         device: int = 0,
+        refine_steps: int = 200,
         **deform_kwargs
     ) -> pv.PolyData:
     """
@@ -222,12 +245,13 @@ def deform_surface(
         new_points, _ = torchcpd.DeformableRegistration(X=target_submesh.points, Y=new_points.cpu().numpy(), device=device, kwargs=deform_kwargs).register()
         source_submesh.points = new_points.cpu().numpy()
         
-        source_submesh = pytorch3d_refine(
-            source_pv=source_submesh, 
-            target_pv=target_submesh, 
-            device=f"cuda:{device}",
-            steps=200,
-        )
+        if refine_steps > 0:
+            source_submesh = pytorch3d_refine(
+                source_pv=source_submesh, 
+                target_pv=target_submesh, 
+                device=f"cuda:{device}",
+                steps=refine_steps,
+            )
         
         new_cloud = new_cloud.merge(source_submesh)
     
